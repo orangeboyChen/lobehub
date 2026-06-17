@@ -1,0 +1,277 @@
+name: Build Patched Docker Image
+
+on:
+  schedule:
+    # Every 30 minutes.
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'LobeHub version to build, for example 2.2.2 or v2.2.3-canary.18. Empty means latest stable.'
+        required: false
+        type: string
+      force:
+        description: 'Rebuild even when the target image tag already exists.'
+        default: false
+        required: false
+        type: boolean
+      push_latest:
+        description: 'Also update the latest tag. Scheduled builds always update latest for stable releases.'
+        default: false
+        required: false
+        type: boolean
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.inputs.version || 'latest-stable' }}
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPOSITORY: lobehub/lobehub
+  REGISTRY_IMAGE: ghcr.io/orangeboychen/lobehub
+
+jobs:
+  prepare:
+    name: Resolve Version
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.resolve.outputs.commit }}
+      ref: ${{ steps.resolve.outputs.ref }}
+      version: ${{ steps.resolve.outputs.version }}
+      should_build: ${{ steps.check.outputs.should_build }}
+      push_latest: ${{ steps.resolve.outputs.push_latest }}
+    steps:
+      - name: Resolve upstream version
+        id: resolve
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_PUSH_LATEST: ${{ github.event.inputs.push_latest }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${INPUT_VERSION:-}" ]; then
+            tag="${INPUT_VERSION#refs/tags/}"
+            tag="${tag#v}"
+            tag="v${tag}"
+          else
+            tag="$(
+              git ls-remote --tags --refs "https://github.com/${UPSTREAM_REPOSITORY}.git" 'refs/tags/v*' |
+                awk '{print $2}' |
+                sed 's#refs/tags/##' |
+                grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' |
+                sort -V |
+                tail -n 1
+            )"
+          fi
+
+          if [ -z "$tag" ]; then
+            echo "No upstream version tag found" >&2
+            exit 1
+          fi
+
+          if ! git ls-remote --exit-code --tags "https://github.com/${UPSTREAM_REPOSITORY}.git" "refs/tags/${tag}" >/dev/null; then
+            echo "Upstream tag ${tag} does not exist" >&2
+            exit 1
+          fi
+
+          commit="$(
+            git ls-remote --tags "https://github.com/${UPSTREAM_REPOSITORY}.git" "refs/tags/${tag}^{}" |
+              awk '{print $1}' |
+              head -n 1
+          )"
+
+          if [ -z "$commit" ]; then
+            commit="$(
+              git ls-remote --tags "https://github.com/${UPSTREAM_REPOSITORY}.git" "refs/tags/${tag}" |
+                awk '{print $1}' |
+                head -n 1
+            )"
+          fi
+
+          if [ -z "$commit" ]; then
+            echo "Unable to resolve commit for ${tag}" >&2
+            exit 1
+          fi
+
+          version="${tag#v}"
+          echo "commit=${commit}" >> "$GITHUB_OUTPUT"
+          echo "ref=refs/tags/${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${INPUT_PUSH_LATEST:-false}" = "true" ]; then
+            echo "push_latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "push_latest=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "Resolved ${tag} to ${commit}"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Check target image tag
+        id: check
+        env:
+          FORCE: ${{ github.event.inputs.force }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [ "${FORCE:-false}" = "true" ]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "Force rebuild requested"
+            exit 0
+          fi
+
+          if docker buildx imagetools inspect "${REGISTRY_IMAGE}:${VERSION}" >/dev/null 2>&1; then
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "${REGISTRY_IMAGE}:${VERSION} already exists; skipping build"
+          else
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "${REGISTRY_IMAGE}:${VERSION} does not exist; building"
+          fi
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            os: ubuntu-latest
+          - platform: linux/arm64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Prepare platform metadata
+        run: |
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
+
+      - name: Checkout automation repository
+        uses: actions/checkout@v6
+        with:
+          path: automation
+
+      - name: Checkout upstream release
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.UPSTREAM_REPOSITORY }}
+          ref: ${{ needs.prepare.outputs.commit }}
+          path: source
+
+      - name: Apply local patches
+        working-directory: source
+        run: |
+          set -euo pipefail
+          git apply --unidiff-zero --check ../automation/patches/ios-viewport.patch
+          git apply --unidiff-zero ../automation/patches/ios-viewport.patch
+
+      - name: Resolve commit SHA
+        id: vars
+        working-directory: source
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          platforms: ${{ matrix.platform }}
+          context: source
+          file: source/Dockerfile
+          build-args: |
+            SHA=${{ steps.vars.outputs.sha_short }}
+          outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          rm -rf /tmp/digests
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: digest-${{ env.PLATFORM_PAIR }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Publish Manifest
+    needs:
+      - prepare
+      - build
+    if: needs.prepare.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v7
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          PUSH_LATEST: ${{ needs.prepare.outputs.push_latest }}
+        run: |
+          set -euo pipefail
+
+          tags=(-t "${REGISTRY_IMAGE}:${VERSION}")
+          if [ "$PUSH_LATEST" = "true" ]; then
+            tags+=(-t "${REGISTRY_IMAGE}:latest")
+          fi
+
+          docker buildx imagetools create "${tags[@]}" \
+            $(printf "${REGISTRY_IMAGE}@sha256:%s " *)
+
+      - name: Inspect image
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          docker buildx imagetools inspect "${REGISTRY_IMAGE}:${VERSION}"
+
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v${{ needs.prepare.outputs.version }}
+          name: v${{ needs.prepare.outputs.version }}
+          generateReleaseNotes: true
+          allowUpdates: true
+          omitBodyDuringUpdate: true
+          makeLatest: ${{ needs.prepare.outputs.push_latest }}

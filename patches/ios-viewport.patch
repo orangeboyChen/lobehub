@@ -1,0 +1,77 @@
+diff --git a/index.html b/index.html
+index 9d53c0707..c74b7efaa 100644
+--- a/index.html
++++ b/index.html
+@@ -5 +5,4 @@
+-    <meta name="viewport" content="width=device-width, initial-scale=1" />
++    <meta
++      name="viewport"
++      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
++    />
+@@ -16,0 +20,10 @@
++      input,
++      textarea,
++      select {
++        font-size: 16px !important;
++      }
++      @supports (-webkit-touch-callout: none) {
++        body {
++          -webkit-text-size-adjust: 100%;
++        }
++      }
+diff --git a/index.mobile.html b/index.mobile.html
+index c2c14c88b..f93c6e3e3 100644
+--- a/index.mobile.html
++++ b/index.mobile.html
+@@ -5 +5,4 @@
+-    <meta name="viewport" content="width=device-width, initial-scale=1" />
++    <meta
++      name="viewport"
++      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
++    />
+@@ -15,0 +19,10 @@
++      input,
++      textarea,
++      select {
++        font-size: 16px !important;
++      }
++      @supports (-webkit-touch-callout: none) {
++        body {
++          -webkit-text-size-adjust: 100%;
++        }
++      }
+diff --git a/src/app/ios-viewport.css b/src/app/ios-viewport.css
+new file mode 100644
+index 000000000..0e4e8f9b7
+--- /dev/null
++++ b/src/app/ios-viewport.css
+@@ -0,0 +1,11 @@
++input,
++textarea,
++select {
++  font-size: 16px !important;
++}
++
++@supports (-webkit-touch-callout: none) {
++  body {
++    -webkit-text-size-adjust: 100%;
++  }
++}
+diff --git a/src/app/layout.tsx b/src/app/layout.tsx
+index 9e7422497..6809bf498 100644
+--- a/src/app/layout.tsx
++++ b/src/app/layout.tsx
+@@ -1,0 +2 @@ import { SpeedInsights } from '@vercel/speed-insights/next';
++import type { Viewport } from 'next';
+@@ -5,0 +7,2 @@ import Analytics from '@/components/Analytics';
++import './ios-viewport.css';
++
+@@ -7,0 +11,8 @@ const inVercel = process.env.VERCEL === '1';
++export const viewport: Viewport = {
++  initialScale: 1,
++  maximumScale: 1,
++  userScalable: false,
++  viewportFit: 'cover',
++  width: 'device-width',
++};
++
