@@ -189,6 +189,8 @@ jobs:
           set -euo pipefail
           git apply --unidiff-zero --check ../automation/patches/ios-viewport.patch
           git apply --unidiff-zero ../automation/patches/ios-viewport.patch
+          git apply --unidiff-zero --check ../automation/patches/sidebar-orphan-agents.patch
+          git apply --unidiff-zero ../automation/patches/sidebar-orphan-agents.patch
 
       - name: Resolve commit SHA
         id: vars
