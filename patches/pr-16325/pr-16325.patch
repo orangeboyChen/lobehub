@@ -1,0 +1,417 @@
+diff --git a/apps/server/src/routers/lambda/aiAgent.ts b/apps/server/src/routers/lambda/aiAgent.ts
+index 3662541321f..c61f842ce0d 100644
+--- a/apps/server/src/routers/lambda/aiAgent.ts
++++ b/apps/server/src/routers/lambda/aiAgent.ts
+@@ -18,6 +18,7 @@ import { wsCompatProcedure } from '@/business/server/trpc-middlewares/workspaceA
+ import { MessageModel } from '@/database/models/message';
+ import { ThreadModel } from '@/database/models/thread';
+ import { TopicModel } from '@/database/models/topic';
++import { UserModel } from '@/database/models/user';
+ import { topics } from '@/database/schemas';
+ import { heteroAuthedProcedure, router } from '@/libs/trpc/lambda';
+ import { serverDatabase } from '@/libs/trpc/lambda/middleware';
+@@ -418,12 +419,26 @@ const aiAgentProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts)
+   const { ctx } = opts;
+   const wsId = ctx.workspaceId ?? undefined;
+ 
++  // Read market accessToken from user_settings.market so server-side agent runtime
++  // can authenticate with the Market API for creds operations.
++  let marketAccessToken: string | undefined;
++  try {
++    const userModel = new UserModel(ctx.serverDB!, ctx.userId);
++    const settings = await userModel.getUserSettings();
++    marketAccessToken = (settings?.market as any)?.accessToken;
++  } catch {
++    // non-fatal — MarketService will fall back to trustedClientToken
++  }
++
+   return opts.next({
+     ctx: {
+       agentRuntimeService: new AgentRuntimeService(ctx.serverDB, ctx.userId, {
+         workspaceId: wsId,
+       }),
+-      aiAgentService: new AiAgentService(ctx.serverDB, ctx.userId, { workspaceId: wsId }),
++      aiAgentService: new AiAgentService(ctx.serverDB, ctx.userId, {
++        marketAccessToken,
++        workspaceId: wsId,
++      }),
+       aiChatService: new AiChatService(ctx.serverDB, ctx.userId, wsId),
+       heterogeneousAgentService: new HeterogeneousAgentService(ctx.serverDB, ctx.userId, {
+         workspaceId: wsId,
+diff --git a/apps/server/src/modules/AgentRuntime/RuntimeExecutors.ts b/apps/server/src/modules/AgentRuntime/RuntimeExecutors.ts
+index 12ad6ba6ffe..216dc233611 100644
+--- a/apps/server/src/modules/AgentRuntime/RuntimeExecutors.ts
++++ b/apps/server/src/modules/AgentRuntime/RuntimeExecutors.ts
+@@ -1218,7 +1218,20 @@ export const createRuntimeExecutors = (
+         let credsListStr = '';
+         if (ctx.userId) {
+           try {
+-            const marketService = new MarketService({ userInfo: { userId: ctx.userId } });
++            let marketAccessToken: string | undefined;
++            if (ctx.serverDB) {
++              try {
++                const userModel = new UserModel(ctx.serverDB, ctx.userId);
++                const settings = await userModel.getUserSettings();
++                marketAccessToken = (settings?.market as any)?.accessToken;
++              } catch {
++                // non-fatal — MarketService will fall back to trustedClientToken
++              }
++            }
++            const marketService = new MarketService({
++              accessToken: marketAccessToken,
++              userInfo: { userId: ctx.userId },
++            });
+             const credsResult = await marketService.market.creds.list();
+             const userCreds = (credsResult as any)?.data ?? [];
+             credsListStr = generateCredsList(
+diff --git a/apps/server/src/services/aiAgent/index.ts b/apps/server/src/services/aiAgent/index.ts
+index 3fd532c11b5..558663f4bbb 100644
+--- a/apps/server/src/services/aiAgent/index.ts
++++ b/apps/server/src/services/aiAgent/index.ts
+@@ -321,7 +321,7 @@ export class AiAgentService {
+   private readonly threadModel: ThreadModel;
+   private readonly topicModel: TopicModel;
+   private readonly agentRuntimeService: AgentRuntimeService;
+-  private readonly marketService: MarketService;
++  private _marketService?: MarketService;
+   private readonly composioService: ComposioService;
+ 
+   private readonly workspaceId?: string;
+@@ -329,7 +329,11 @@ export class AiAgentService {
+   constructor(
+     db: LobeChatDatabase,
+     userId: string,
+-    options?: { runtimeOptions?: AgentRuntimeServiceOptions; workspaceId?: string },
++    options?: {
++      marketAccessToken?: string;
++      runtimeOptions?: AgentRuntimeServiceOptions;
++      workspaceId?: string;
++    },
+   ) {
+     this.userId = userId;
+     this.db = db;
+@@ -363,10 +367,37 @@ export class AiAgentService {
+       },
+       workspaceId: wsId,
+     });
+-    this.marketService = new MarketService({ userInfo: { userId } });
++
++    // marketService is used for creds, sandbox, skills etc.
++    // Read accessToken from DB; if options.marketAccessToken is provided, use it as override.
++    if (options?.marketAccessToken) {
++      this._marketService = new MarketService({
++        accessToken: options.marketAccessToken,
++        userInfo: { userId },
++      });
++    }
+     this.composioService = new ComposioService({ db, userId });
+   }
+ 
++  private async getMarketService(): Promise<MarketService> {
++    if (this._marketService) return this._marketService;
++
++    let accessToken: string | undefined;
++    try {
++      const userModel = new UserModel(this.db, this.userId);
++      const settings = await userModel.getUserSettings();
++      accessToken = (settings?.market as any)?.accessToken;
++    } catch {
++      // non-fatal — MarketService will fall back to trustedClientToken
++    }
++
++    this._marketService = new MarketService({
++      accessToken,
++      userInfo: { userId: this.userId },
++    });
++    return this._marketService;
++  }
++
+   private async resolveOperationTaskId(
+     idOrIdentifier?: string | null,
+   ): Promise<string | undefined> {
+@@ -1430,10 +1454,11 @@ export class AiAgentService {
+       const githubCredKey =
+         agentConfig.agencyConfig?.heterogeneousProvider?.env?.GITHUB_CRED_KEY ?? 'github';
+       try {
+-        const list = await this.marketService.market.creds.list();
++        const marketService = await this.getMarketService();
++        const list = await marketService.market.creds.list();
+         const cred = list.data?.find((c: { key: string }) => c.key === githubCredKey);
+         if (cred) {
+-          const full = await this.marketService.market.creds.get(cred.id, { decrypt: true });
++          const full = await marketService.market.creds.get(cred.id, { decrypt: true });
+           const vals = (full as any).plaintext ?? (full as any).values ?? {};
+           githubToken = vals.access_token ?? vals.token;
+         }
+@@ -1800,11 +1825,12 @@ export class AiAgentService {
+           // `aiAgent` import. Only this cloud-CLI branch needs it.
+           const { spawnHeteroSandbox } =
+             await import('@/server/services/heterogeneousAgent/sandboxRunner');
++          const marketService = await this.getMarketService();
+           spawnHeteroSandbox({
+             ...heteroParams,
+             agentType: heteroType as 'claude-code' | 'codex',
+             args: heteroExecArgs,
+-            marketService: this.marketService,
++            marketService,
+           }).catch(async (err) => {
+             // Fire-and-forget: execAgent has already returned `autoStarted`, and
+             // the sandbox never reached the point of calling heteroFinish. Drive
+@@ -2002,7 +2028,8 @@ export class AiAgentService {
+ 
+       // 5c. Fetch LobeHub Skills manifests
+       try {
+-        lobehubSkillManifests = await this.marketService.getLobehubSkillManifests();
++        const marketService = await this.getMarketService();
++        lobehubSkillManifests = await marketService.getLobehubSkillManifests();
+       } catch (error) {
+         log('execAgent: failed to fetch lobehub skill manifests: %O', error);
+       }
+diff --git a/apps/server/src/services/taskTemplate/index.ts b/apps/server/src/services/taskTemplate/index.ts
+index 4fb771f03ed..cafb95f9ffd 100644
+--- a/apps/server/src/services/taskTemplate/index.ts
++++ b/apps/server/src/services/taskTemplate/index.ts
+@@ -10,8 +10,10 @@ import {
+   TASK_TEMPLATE_RECOMMEND_COUNT,
+   TASK_TEMPLATE_RECOMMEND_MAX_COUNT,
+ } from '@lobechat/const';
++import type { LobeChatDatabase } from '@lobechat/database';
+ import { z } from 'zod';
+ 
++import { UserModel } from '@/database/models/user';
+ import { appEnv } from '@/envs/app';
+ import { isTrustedClientEnabled } from '@/libs/trusted-client';
+ import { MarketService } from '@/server/services/market';
+@@ -111,10 +113,32 @@ const parseTaskTemplateRecommendations = (value: unknown): TaskTemplate[] => {
+ };
+ 
+ export class TaskTemplateService {
+-  private marketService: MarketService;
++  private marketService?: MarketService;
++
++  constructor(
++    private userId: string,
++    private db?: LobeChatDatabase,
++  ) {}
++
++  private async getMarketService(): Promise<MarketService> {
++    if (this.marketService) return this.marketService;
++
++    let accessToken: string | undefined;
++    if (this.db) {
++      try {
++        const userModel = new UserModel(this.db, this.userId);
++        const settings = await userModel.getUserSettings();
++        accessToken = (settings?.market as any)?.accessToken;
++      } catch {
++        // non-fatal — MarketService will fall back to trustedClientToken
++      }
++    }
+ 
+-  constructor(private userId: string) {
+-    this.marketService = new MarketService({ userInfo: { userId } });
++    this.marketService = new MarketService({
++      accessToken,
++      userInfo: { userId: this.userId },
++    });
++    return this.marketService;
+   }
+ 
+   async listDailyRecommend(
+@@ -127,7 +151,8 @@ export class TaskTemplateService {
+     } = {},
+   ): Promise<TaskTemplate[]> {
+     try {
+-      const result = await this.marketService.market.taskTemplates.getTaskTemplateRecommendations({
++      const marketService = await this.getMarketService();
++      const result = await marketService.market.taskTemplates.getTaskTemplateRecommendations({
+         count: clampRecommendationCount(options.count),
+         excludeIds: options.excludeIds,
+         interestKeys,
+diff --git a/apps/server/src/services/toolExecution/builtin.ts b/apps/server/src/services/toolExecution/builtin.ts
+index b51bbac56d4..a17a6f9a44d 100644
+--- a/apps/server/src/services/toolExecution/builtin.ts
++++ b/apps/server/src/services/toolExecution/builtin.ts
+@@ -3,6 +3,7 @@ import { type ChatToolPayload } from '@lobechat/types';
+ import { detectTruncatedJSON, safeParseJSON } from '@lobechat/utils';
+ import debug from 'debug';
+ 
++import { UserModel } from '@/database/models/user';
+ import { ComposioService } from '@/server/services/composio';
+ import { MarketService } from '@/server/services/market';
+ 
+@@ -12,14 +13,36 @@ import { type IToolExecutor, type ToolExecutionContext, type ToolExecutionResult
+ const log = debug('lobe-server:builtin-tools-executor');
+ 
+ export class BuiltinToolsExecutor implements IToolExecutor {
+-  private marketService: MarketService;
++  private db: LobeChatDatabase;
++  private userId: string;
+   private composioService: ComposioService;
++  private _marketService?: MarketService;
+ 
+   constructor(db: LobeChatDatabase, userId: string) {
+-    this.marketService = new MarketService({ userInfo: { userId } });
++    this.db = db;
++    this.userId = userId;
+     this.composioService = new ComposioService({ db, userId });
+   }
+ 
++  private async getMarketService(): Promise<MarketService> {
++    if (this._marketService) return this._marketService;
++
++    let accessToken: string | undefined;
++    try {
++      const userModel = new UserModel(this.db, this.userId);
++      const settings = await userModel.getUserSettings();
++      accessToken = (settings?.market as any)?.accessToken;
++    } catch {
++      // non-fatal — MarketService will fall back to trustedClientToken
++    }
++
++    this._marketService = new MarketService({
++      accessToken,
++      userInfo: { userId: this.userId },
++    });
++    return this._marketService;
++  }
++
+   async execute(
+     payload: ChatToolPayload,
+     context: ToolExecutionContext,
+@@ -68,7 +91,8 @@ export class BuiltinToolsExecutor implements IToolExecutor {
+ 
+     // Route LobeHub Skills to MarketService
+     if (source === 'lobehubSkill') {
+-      return this.marketService.executeLobehubSkill({
++      const marketService = await this.getMarketService();
++      return marketService.executeLobehubSkill({
+         args,
+         context: {
+           topicId: context.topicId,
+diff --git a/apps/server/src/services/toolExecution/serverRuntimes/cloudSandbox.ts b/apps/server/src/services/toolExecution/serverRuntimes/cloudSandbox.ts
+index c2eef901f4f..35af6c5e605 100644
+--- a/apps/server/src/services/toolExecution/serverRuntimes/cloudSandbox.ts
++++ b/apps/server/src/services/toolExecution/serverRuntimes/cloudSandbox.ts
+@@ -3,6 +3,7 @@ import {
+   CloudSandboxIdentifier,
+ } from '@lobechat/builtin-tool-cloud-sandbox';
+ 
++import { UserModel } from '@/database/models/user';
+ import { FileService } from '@/server/services/file';
+ import { MarketService } from '@/server/services/market';
+ import { createSandboxService } from '@/server/services/sandbox';
+@@ -14,7 +15,7 @@ import { type ServerRuntimeRegistration } from './types';
+  * Per-request runtime (needs topicId, userId)
+  */
+ export const cloudSandboxRuntime: ServerRuntimeRegistration = {
+-  factory: (context) => {
++  factory: async (context) => {
+     if (!context.userId || !context.topicId) {
+       throw new Error('userId and topicId are required for Cloud Sandbox execution');
+     }
+@@ -23,7 +24,20 @@ export const cloudSandboxRuntime: ServerRuntimeRegistration = {
+       throw new Error('serverDB is required for Cloud Sandbox execution');
+     }
+ 
+-    const marketService = new MarketService({ userInfo: { userId: context.userId } });
++    // Read market accessToken from DB so server-side sandbox runtime can authenticate.
++    let accessToken: string | undefined;
++    try {
++      const userModel = new UserModel(context.serverDB, context.userId);
++      const settings = await userModel.getUserSettings();
++      accessToken = (settings?.market as any)?.accessToken;
++    } catch {
++      // non-fatal — MarketService will fall back to trustedClientToken
++    }
++
++    const marketService = new MarketService({
++      accessToken,
++      userInfo: { userId: context.userId },
++    });
+     const fileService = new FileService(context.serverDB, context.userId, context.workspaceId);
+     const sandboxService = createSandboxService({
+       fileService,
+diff --git a/apps/server/src/services/toolExecution/serverRuntimes/creds.ts b/apps/server/src/services/toolExecution/serverRuntimes/creds.ts
+index 086eb73c295..fe2f4312576 100644
+--- a/apps/server/src/services/toolExecution/serverRuntimes/creds.ts
++++ b/apps/server/src/services/toolExecution/serverRuntimes/creds.ts
+@@ -5,6 +5,7 @@ import {
+ } from '@lobechat/builtin-tool-creds';
+ import debug from 'debug';
+ 
++import { UserModel } from '@/database/models/user';
+ import { MarketService } from '@/server/services/market';
+ 
+ import { type ServerRuntimeRegistration } from './types';
+@@ -144,7 +145,7 @@ class ServerCredsService implements ICredsService {
+  * Per-request runtime (needs userId, topicId)
+  */
+ export const credsRuntime: ServerRuntimeRegistration = {
+-  factory: (context) => {
++  factory: async (context) => {
+     if (!context.userId) {
+       throw new Error('userId is required for Creds execution');
+     }
+@@ -155,7 +156,19 @@ export const credsRuntime: ServerRuntimeRegistration = {
+       context.topicId,
+     );
+ 
+-    const marketService = new MarketService({ userInfo: { userId: context.userId } });
++    // Read market accessToken from DB so server-side creds runtime can authenticate.
++    let accessToken: string | undefined;
++    if (context.serverDB) {
++      try {
++        const userModel = new UserModel(context.serverDB, context.userId);
++        const settings = await userModel.getUserSettings();
++        accessToken = (settings?.market as any)?.accessToken;
++      } catch {
++        // non-fatal — MarketService will fall back to trustedClientToken
++      }
++    }
++
++    const marketService = new MarketService({ accessToken, userInfo: { userId: context.userId } });
+     const credsService = new ServerCredsService(marketService);
+ 
+     return new CredsExecutionRuntime(credsService, {
+diff --git a/apps/server/src/routers/lambda/taskTemplate.ts b/apps/server/src/routers/lambda/taskTemplate.ts
+index 7c16f22bdde..bae39c73f4b 100644
+--- a/apps/server/src/routers/lambda/taskTemplate.ts
++++ b/apps/server/src/routers/lambda/taskTemplate.ts
+@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
+ import { z } from 'zod';
+ 
+ import { authedProcedure, router } from '@/libs/trpc/lambda';
++import { serverDatabase } from '@/libs/trpc/lambda/middleware';
+ import { TaskTemplateService } from '@/server/services/taskTemplate';
+ 
+ const listDailyRecommendSchema = z.object({
+@@ -16,14 +17,16 @@ const templateIdSchema = z.object({
+   templateId: z.number().int().positive(),
+ });
+ 
++const taskTemplateProcedure = authedProcedure.use(serverDatabase);
++
+ export const taskTemplateRouter = router({
+-  dismiss: authedProcedure.input(templateIdSchema).mutation(async () => ({ success: true })),
++  dismiss: taskTemplateProcedure.input(templateIdSchema).mutation(async () => ({ success: true })),
+ 
+-  listDailyRecommend: authedProcedure
++  listDailyRecommend: taskTemplateProcedure
+     .input(listDailyRecommendSchema)
+     .query(async ({ input, ctx }) => {
+       try {
+-        const service = new TaskTemplateService(ctx.userId);
++        const service = new TaskTemplateService(ctx.userId, ctx.serverDB);
+         const data = await service.listDailyRecommend(input.interestKeys, {
+           count: input.count,
+           locale: input.locale,
+@@ -40,5 +43,7 @@ export const taskTemplateRouter = router({
+       }
+     }),
+ 
+-  recordCreated: authedProcedure.input(templateIdSchema).mutation(async () => ({ success: true })),
++  recordCreated: taskTemplateProcedure
++    .input(templateIdSchema)
++    .mutation(async () => ({ success: true })),
+ });

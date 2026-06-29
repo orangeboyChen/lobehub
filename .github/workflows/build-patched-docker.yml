@@ -191,6 +191,8 @@ jobs:
           git apply --unidiff-zero ../automation/patches/ios-viewport.patch
           git apply --unidiff-zero --check ../automation/patches/sidebar-orphan-agents.patch
           git apply --unidiff-zero ../automation/patches/sidebar-orphan-agents.patch
+          git apply --unidiff-zero --check ../automation/patches/pr-16325/pr-16325.patch
+          git apply --unidiff-zero ../automation/patches/pr-16325/pr-16325.patch
 
       - name: Resolve commit SHA
         id: vars
