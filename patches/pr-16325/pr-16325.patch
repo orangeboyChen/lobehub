@@ -38,11 +38,11 @@ index 3662541321f..c61f842ce0d 100644
        aiChatService: new AiChatService(ctx.serverDB, ctx.userId, wsId),
        heterogeneousAgentService: new HeterogeneousAgentService(ctx.serverDB, ctx.userId, {
          workspaceId: wsId,
-diff --git a/apps/server/src/modules/AgentRuntime/RuntimeExecutors.ts b/apps/server/src/modules/AgentRuntime/RuntimeExecutors.ts
-index 12ad6ba6ffe..216dc233611 100644
---- a/apps/server/src/modules/AgentRuntime/RuntimeExecutors.ts
-+++ b/apps/server/src/modules/AgentRuntime/RuntimeExecutors.ts
-@@ -1218,7 +1218,20 @@ export const createRuntimeExecutors = (
+diff --git a/apps/server/src/modules/AgentRuntime/executors/callLlm.ts b/apps/server/src/modules/AgentRuntime/executors/callLlm.ts
+index 00000000000..00000000000 100644
+--- a/apps/server/src/modules/AgentRuntime/executors/callLlm.ts
++++ b/apps/server/src/modules/AgentRuntime/executors/callLlm.ts
+@@ -569,7 +569,20 @@
          let credsListStr = '';
          if (ctx.userId) {
            try {
