@@ -1,0 +1,37 @@
+diff --git a/apps/server/src/globalConfig/index.ts b/apps/server/src/globalConfig/index.ts
+--- a/apps/server/src/globalConfig/index.ts
++++ b/apps/server/src/globalConfig/index.ts
+@@ -107,7 +107,7 @@
+     enableComposio: !!composioEnv.COMPOSIO_API_KEY,
+     enableGatewayMode:
+       ENABLE_BUSINESS_FEATURES || (!!appEnv.ENABLE_AGENT_GATEWAY && !!appEnv.AGENT_GATEWAY_URL),
+-    enableLobehubSkill: !!(appEnv.MARKET_TRUSTED_CLIENT_SECRET && appEnv.MARKET_TRUSTED_CLIENT_ID),
++    enableLobehubSkill: true,
+     enableMagicLink: authEnv.AUTH_ENABLE_MAGIC_LINK,
+     enableMarketTrustedClient: !!(
+       appEnv.MARKET_TRUSTED_CLIENT_SECRET && appEnv.MARKET_TRUSTED_CLIENT_ID
+diff --git a/apps/server/src/globalConfig/getServerAuthConfig.ts b/apps/server/src/globalConfig/getServerAuthConfig.ts
+--- a/apps/server/src/globalConfig/getServerAuthConfig.ts
++++ b/apps/server/src/globalConfig/getServerAuthConfig.ts
+@@ -15,6 +15,7 @@
+     disableEmailPassword: authEnv.AUTH_DISABLE_EMAIL_PASSWORD,
+     enableBusinessFeatures: ENABLE_BUSINESS_FEATURES,
+     enableEmailVerification: authEnv.AUTH_EMAIL_VERIFICATION,
++    enableLobehubSkill: true,
+     enableMagicLink: authEnv.AUTH_ENABLE_MAGIC_LINK,
+     enableMarketTrustedClient: !!(
+       appEnv.MARKET_TRUSTED_CLIENT_SECRET && appEnv.MARKET_TRUSTED_CLIENT_ID
+diff --git a/apps/server/src/globalConfig/getServerGlobalConfig.test.ts b/apps/server/src/globalConfig/getServerGlobalConfig.test.ts
+--- a/apps/server/src/globalConfig/getServerGlobalConfig.test.ts
++++ b/apps/server/src/globalConfig/getServerGlobalConfig.test.ts
+@@ -196,4 +196,10 @@
+       enableGatewayMode: false,
+     });
+   });
++
++  it('should always expose LobeHub skill', async () => {
++    await expect(loadServerConfig(false)).resolves.toMatchObject({
++      enableLobehubSkill: true,
++    });
++  });
+ });
