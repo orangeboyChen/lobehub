@@ -2,23 +2,7 @@ diff --git a/src/libs/next/config/define-config.ts b/src/libs/next/config/define
 index 6b0a6b4f8c..0000000000 100644
 --- a/src/libs/next/config/define-config.ts
 +++ b/src/libs/next/config/define-config.ts
-@@ -44,15 +44,7 @@ export function defineConfig(config: CustomNextConfig) {
-               'dist/mobile/**',
-
-               'packages/database/migrations/**',
-
--              // Ensure native bindings are included in standalone output.
--              // `@napi-rs/canvas` is loaded via dynamic `require()` (see packages/file-loaders),
--              // which may not be picked up by Next.js output tracing.
--              'node_modules/@napi-rs/canvas/**/*',
--              'node_modules/@napi-rs/canvas-*/**/*',
--              // pnpm real package locations (including platform-specific bindings with `.node`)
--              'node_modules/.pnpm/@napi-rs+canvas*/**/*',
--              'node_modules/.pnpm/@napi-rs+canvas-*/**/*',
-             ]
-           : []),
-       ],
-@@ -357,6 +349,8 @@ export function defineConfig(config: CustomNextConfig) {
+@@ -357,6 +357,8 @@ export function defineConfig(config: CustomNextConfig) {
      serverExternalPackages: config.serverExternalPackages ?? [
        'pdfkit',
        '@napi-rs/canvas',

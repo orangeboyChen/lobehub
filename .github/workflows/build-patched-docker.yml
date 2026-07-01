@@ -193,10 +193,12 @@ jobs:
           git apply --unidiff-zero ../automation/patches/sidebar-orphan-agents.patch
           git apply --unidiff-zero --check ../automation/patches/pr-16325/pr-16325.patch
           git apply --unidiff-zero ../automation/patches/pr-16325/pr-16325.patch
+          git apply --unidiff-zero --check ../automation/patches/bug/composio-onedrive-toolkit-slug.patch
+          git apply --unidiff-zero ../automation/patches/bug/composio-onedrive-toolkit-slug.patch
           git apply --unidiff-zero --check ../automation/patches/docker-canvas-native-packages.patch
           git apply --unidiff-zero ../automation/patches/docker-canvas-native-packages.patch
-          git apply --unidiff-zero --check ../automation/patches/messenger-telegram-slash-commands.patch
-          git apply --unidiff-zero ../automation/patches/messenger-telegram-slash-commands.patch
+          git apply --unidiff-zero --check ../automation/patches/bug/messenger-telegram-slash-commands.patch
+          git apply --unidiff-zero ../automation/patches/bug/messenger-telegram-slash-commands.patch
 
       - name: Resolve commit SHA
         id: vars
