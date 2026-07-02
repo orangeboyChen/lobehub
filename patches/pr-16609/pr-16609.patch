@@ -1,0 +1,246 @@
+diff --git a/src/features/Connectors/ConnectorDetail/index.test.tsx b/src/features/Connectors/ConnectorDetail/index.test.tsx
+index 8fa1757247..e9d1b3a098 100644
+--- a/src/features/Connectors/ConnectorDetail/index.test.tsx
++++ b/src/features/Connectors/ConnectorDetail/index.test.tsx
+@@ -12,0 +13 @@ const mocks = vi.hoisted(() => ({
++  headerWidth: 1024,
+@@ -41,0 +43,4 @@ const mocks = vi.hoisted(() => ({
++vi.mock('ahooks', () => ({
++  useSize: () => ({ height: 42, width: mocks.headerWidth }),
++}));
++
+@@ -55,0 +61 @@ vi.mock('antd', () => ({
++    'aria-label': ariaLabel,
+@@ -57,0 +64 @@ vi.mock('antd', () => ({
++    title,
+@@ -60,3 +67,5 @@ vi.mock('antd', () => ({
+-    children?: ReactNode;
+-    disabled?: boolean;
+-    onClick?: () => void;
++    'aria-label'?: string;
++    'children'?: ReactNode;
++    'disabled'?: boolean;
++    'title'?: string;
++    'onClick'?: () => void;
+@@ -64 +73 @@ vi.mock('antd', () => ({
+-    <button disabled={disabled} onClick={onClick}>
++    <button aria-label={ariaLabel} disabled={disabled} title={title} onClick={onClick}>
+@@ -97,0 +107 @@ describe('ConnectorDetail', () => {
++    mocks.headerWidth = 1024;
+@@ -134,0 +145,25 @@ describe('ConnectorDetail', () => {
++
++  it('collapses icon buttons when the header is narrow', () => {
++    mocks.headerWidth = 500;
++    mocks.toolState.connectors = [
++      {
++        id: 'connector-1',
++        identifier: 'custom-id',
++        metadata: { description: 'Workspace notes' },
++        mcpConnectionType: 'http',
++        name: 'Custom',
++        sourceType: ConnectorSourceType.custom,
++      },
++    ];
++
++    render(<ConnectorDetail connectorId="connector-1" />);
++
++    expect(screen.getByText('Custom')).toBeInTheDocument();
++    expect(screen.getByRole('button', { name: 'Reset permissions' })).toBeInTheDocument();
++    expect(screen.queryByText('Sync')).not.toBeInTheDocument();
++    expect(screen.queryByText('Edit')).not.toBeInTheDocument();
++    expect(screen.queryByText('Delete')).not.toBeInTheDocument();
++    expect(screen.getByRole('button', { name: 'Sync' })).toBeInTheDocument();
++    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
++    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
++  });
+diff --git a/src/features/Connectors/ConnectorDetail/index.tsx b/src/features/Connectors/ConnectorDetail/index.tsx
+index 0fdcc0844b..6a184aca67 100644
+--- a/src/features/Connectors/ConnectorDetail/index.tsx
++++ b/src/features/Connectors/ConnectorDetail/index.tsx
+@@ -2,0 +3 @@ import { confirmModal } from '@lobehub/ui/base-ui';
++import { useSize } from 'ahooks';
+@@ -4 +5,2 @@ import { Button } from 'antd';
+-import { PencilIcon, RefreshCwIcon, Trash2 } from 'lucide-react';
++import { createStaticStyles } from 'antd-style';
++import { PencilIcon, RefreshCwIcon, Trash2, Unplug } from 'lucide-react';
+@@ -6 +8 @@ import type { ReactNode } from 'react';
+-import { memo, useCallback, useState } from 'react';
++import { memo, useCallback, useRef, useState } from 'react';
+@@ -17,0 +20,50 @@ import ToolPermissionGroup from './ToolPermissionGroup';
++const COMPACT_HEADER_WIDTH = 760;
++
++const styles = createStaticStyles(({ css, cssVar }) => ({
++  actionButton: css`
++    display: inline-flex;
++    flex-shrink: 0;
++    align-items: center;
++    justify-content: center;
++
++    line-height: 1;
++  `,
++  actionLabel: css`
++    white-space: nowrap;
++  `,
++  actions: css`
++    display: flex;
++    flex-shrink: 0;
++    flex-wrap: wrap;
++    gap: 8px;
++    align-items: center;
++    justify-content: flex-end;
++
++    max-width: 100%;
++  `,
++  header: css`
++    display: flex;
++    gap: 12px;
++    align-items: center;
++    justify-content: space-between;
++
++    min-height: 42px;
++    padding-block: 12px;
++    padding-inline: 16px;
++    border-block-end: 1px solid ${cssVar.colorBorderSecondary};
++  `,
++  headerTitle: css`
++    overflow: hidden;
++    flex: 1 1 auto;
++
++    min-width: 0;
++
++    font-size: 14px;
++    font-weight: 500;
++    line-height: 1.5;
++    color: ${cssVar.colorText};
++    text-overflow: ellipsis;
++    white-space: nowrap;
++  `,
++}));
++
+@@ -27,0 +80 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
++    const headerRef = useRef<HTMLDivElement | null>(null);
+@@ -28,0 +82 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
++    const headerSize = useSize(headerRef);
+@@ -49,0 +104 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
++    const isCompactHeader = (headerSize?.width ?? Number.POSITIVE_INFINITY) < COMPACT_HEADER_WIDTH;
+@@ -112,0 +168,30 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
++    const renderCompactableButton = ({
++      danger,
++      disabled,
++      icon,
++      label,
++      loading,
++      onClick,
++    }: {
++      danger?: boolean;
++      disabled?: boolean;
++      icon: ReactNode;
++      label: string;
++      loading?: boolean;
++      onClick: () => void | Promise<void>;
++    }) => (
++      <Button
++        aria-label={label}
++        className={styles.actionButton}
++        danger={danger}
++        disabled={disabled}
++        icon={icon}
++        loading={loading}
++        size="small"
++        title={isCompactHeader ? label : undefined}
++        onClick={onClick}
++      >
++        {!isCompactHeader && <span className={styles.actionLabel}>{label}</span>}
++      </Button>
++    );
++
+@@ -116,14 +201,3 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+-        <div
+-          style={{
+-            alignItems: 'center',
+-            borderBlockEnd: '1px solid var(--ant-color-border-secondary)',
+-            display: 'flex',
+-            flexShrink: 0,
+-            gap: 8,
+-            height: 42,
+-            justifyContent: 'space-between',
+-            paddingInline: 16,
+-          }}
+-        >
+-          <div style={{ fontSize: 14, fontWeight: 500 }}>{connectorName}</div>
+-          <div style={{ display: 'flex', gap: 8 }}>
++        <div className={styles.header} ref={headerRef}>
++          <div className={styles.headerTitle}>{connectorName}</div>
++          <div className={styles.actions}>
+@@ -135,8 +209,6 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+-            <Button
+-              icon={<RefreshCwIcon size={14} />}
+-              loading={syncing}
+-              size="small"
+-              onClick={handleSync}
+-            >
+-              {syncLabel}
+-            </Button>
++            {renderCompactableButton({
++              icon: <RefreshCwIcon size={14} />,
++              label: syncLabel,
++              loading: syncing,
++              onClick: handleSync,
++            })}
+@@ -144,9 +216,7 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+-            {isMcpConnector && connector?.mcpConnectionType === 'http' && (
+-              <Button
+-                icon={<PencilIcon size={14} />}
+-                size="small"
+-                onClick={() => setCustomModalOpen(true)}
+-              >
+-                {t('connector.edit', 'Edit')}
+-              </Button>
+-            )}
++            {isMcpConnector &&
++              connector?.mcpConnectionType === 'http' &&
++              renderCompactableButton({
++                icon: <PencilIcon size={14} />,
++                label: t('connector.edit', 'Edit'),
++                onClick: () => setCustomModalOpen(true),
++              })}
+@@ -160,8 +230,11 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+-                    <Button danger size="small" onClick={() => disconnectConnector(connectorId)}>
+-                      {t('connector.disconnect', 'Disconnect')}
+-                    </Button>
+-                    <Button
+-                      danger
+-                      icon={<Trash2 size={14} />}
+-                      size="small"
+-                      onClick={() => {
++                    {renderCompactableButton({
++                      danger: true,
++                      icon: <Unplug size={14} />,
++                      label: t('connector.disconnect', 'Disconnect'),
++                      onClick: () => disconnectConnector(connectorId),
++                    })}
++                    {renderCompactableButton({
++                      danger: true,
++                      icon: <Trash2 size={14} />,
++                      label: t('connector.delete', 'Delete'),
++                      onClick: () => {
+@@ -176,4 +249,2 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+-                      }}
+-                    >
+-                      {t('connector.delete', 'Delete')}
+-                    </Button>
++                      },
++                    })}
+@@ -183,5 +254,7 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+-                {(isBuiltin || isMarketplace) && (
+-                  <Button danger icon={<Trash2 size={14} />} size="small" onClick={handleUninstall}>
+-                    {t('connector.uninstall', 'Uninstall')}
+-                  </Button>
+-                )}
++                {(isBuiltin || isMarketplace) &&
++                  renderCompactableButton({
++                    danger: true,
++                    icon: <Trash2 size={14} />,
++                    label: t('connector.uninstall', 'Uninstall'),
++                    onClick: handleUninstall,
++                  })}

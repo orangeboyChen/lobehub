@@ -75,4 +75,3 @@ index 056bd0ac3e..f03a545940 100644
 +      userId: this.userId,
 +    } as unknown as LobeAgentSession;
 +  };
-+
