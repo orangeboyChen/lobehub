@@ -151,7 +151,7 @@ index 804c35ed73..d4eb35407f 100644
 +
 @@ -238,0 +272 @@ type AiProviderRuntimeStateWithBuiltinModels = AiProviderRuntimeState & {
 +  enabledEmbeddingModelList?: EnabledProviderWithModels[];
-@@ -483,6 +517,14 @@ export class AiProviderActionImpl {
+@@ -483,6 +517,15 @@ export class AiProviderActionImpl {
 -          const [enabledChatModelList, enabledImageModelList, enabledVideoModelList] =
 -            await Promise.all([
 -              buildChatProviderModelLists(data.enabledChatAiProviders, data.enabledAiModels),
@@ -168,7 +168,8 @@ index 804c35ed73..d4eb35407f 100644
 +            buildImageProviderModelLists(data.enabledImageAiProviders, data.enabledAiModels),
 +            buildVideoProviderModelLists(data.enabledVideoAiProviders, data.enabledAiModels),
 +            buildEmbeddingProviderModelLists(
-+              data.enabledEmbeddingAiProviders,
++              // Older server/runtime payloads may not include the new embedding provider bucket yet.
++              data.enabledEmbeddingAiProviders ?? [],
 +              data.enabledAiModels,
 +            ),
 +          ]);
