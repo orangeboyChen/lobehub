@@ -10,4 +10,4 @@ The upstream image needs a small patch set for iOS viewport behavior, input zoom
 
 ## Trigger
 
-Runs automatically every 30 minutes in Asia/Shanghai. If several upstream releases land between runs, the workflow catches up and builds every missed version.
+Runs automatically every 30 minutes in Asia/Shanghai. If several upstream releases land between runs, the workflow catches up and builds every missed version. Manual dispatch builds the version you specify.
