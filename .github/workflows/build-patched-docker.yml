@@ -207,14 +207,15 @@ jobs:
           echo "should_build=true" >> "$GITHUB_OUTPUT"
 
   build:
-    name: Build ${{ matrix.release.version }}
+    name: Build ${{ matrix.release.version }} (${{ matrix.platform }})
     needs: prepare
     if: needs.prepare.outputs.should_build == 'true'
     strategy:
       fail-fast: false
       matrix:
         release: ${{ fromJson(needs.prepare.outputs.matrix) }}
-    runs-on: ubuntu-latest
+        platform: [linux/amd64, linux/arm64]
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
       - name: Checkout automation repository
         uses: actions/checkout@v6
@@ -256,9 +257,6 @@ jobs:
         working-directory: source
         run: echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -273,8 +271,63 @@ jobs:
         working-directory: source
         env:
           SHA_SHORT: ${{ steps.vars.outputs.sha_short }}
-          PUSH_LATEST: ${{ matrix.release.push_latest || false }}
           VERSION: ${{ matrix.release.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+
+          case "$PLATFORM" in
+            linux/amd64) arch_tag="${REGISTRY_IMAGE}:${VERSION}-amd64" ;;
+            linux/arm64) arch_tag="${REGISTRY_IMAGE}:${VERSION}-arm64" ;;
+            *) echo "Unsupported platform: ${PLATFORM}" >&2; exit 1 ;;
+          esac
+
+          docker buildx build \
+            --platform "$PLATFORM" \
+            --build-arg SHA="${SHA_SHORT}" \
+            -t "$arch_tag" \
+            --push \
+            .
+
+      - name: Inspect image
+        env:
+          VERSION: ${{ matrix.release.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          case "$PLATFORM" in
+            linux/amd64) arch_tag="${REGISTRY_IMAGE}:${VERSION}-amd64" ;;
+            linux/arm64) arch_tag="${REGISTRY_IMAGE}:${VERSION}-arm64" ;;
+            *) echo "Unsupported platform: ${PLATFORM}" >&2; exit 1 ;;
+          esac
+
+          docker buildx imagetools inspect "$arch_tag"
+
+  publish:
+    name: Publish ${{ matrix.release.version }}
+    needs:
+      - prepare
+      - build
+    if: needs.prepare.outputs.should_build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        release: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish manifest
+        env:
+          VERSION: ${{ matrix.release.version }}
+          PUSH_LATEST: ${{ matrix.release.push_latest || false }}
         run: |
           set -euo pipefail
 
@@ -283,12 +336,10 @@ jobs:
             tags+=(-t "${REGISTRY_IMAGE}:latest")
           fi
 
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --build-arg SHA="${SHA_SHORT}" \
+          docker buildx imagetools create \
             "${tags[@]}" \
-            --push \
-            .
+            "${REGISTRY_IMAGE}:${VERSION}-amd64" \
+            "${REGISTRY_IMAGE}:${VERSION}-arm64"
 
       - name: Inspect image
         env:
