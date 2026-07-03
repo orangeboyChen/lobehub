@@ -113,7 +113,10 @@ diff --git a/src/store/aiInfra/slices/aiProvider/action.ts b/src/store/aiInfra/s
 index 804c35ed73..d4eb35407f 100644
 --- a/src/store/aiInfra/slices/aiProvider/action.ts
 +++ b/src/store/aiInfra/slices/aiProvider/action.ts
-@@ -101,0 +102,21 @@ export const normalizeChatModel = async (model: EnabledAiModel): Promise<Provide
+@@ -99,6 +99,27 @@
+   };
+ };
+
 +export const normalizeEmbeddingModel = async (
 +  model: EnabledAiModel,
 +): Promise<ProviderModelListItem> => {
@@ -135,12 +138,25 @@ index 804c35ed73..d4eb35407f 100644
 +  };
 +};
 +
-@@ -182,0 +204,4 @@ export const getChatModelList = createProviderModelCollector('chat', async (mode
+ export const normalizeImageModel = async (
+   model: EnabledAiModel,
+ ): Promise<ProviderModelListItem> => {
+@@ -180,6 +201,10 @@
+   normalizeChatModel(model),
+ );
+ 
 +export const getEmbeddingModelList = createProviderModelCollector('embedding', async (model) =>
 +  normalizeEmbeddingModel(model),
 +);
 +
-@@ -227,0 +253,8 @@ const buildVideoProviderModelLists = async (
+ export const getImageModelList = createProviderModelCollector('image', normalizeImageModel);
+ 
+ export const getVideoModelList = createProviderModelCollector('video', normalizeVideoModel);
+@@ -224,6 +249,14 @@
+   providers: EnabledProvider[],
+   enabledAiModels: EnabledAiModel[],
+ ) => buildProviderModelLists(providers, enabledAiModels, getVideoModelList);
++
 +/**
 + * Build embedding provider model lists with proper async handling
 + */
@@ -148,10 +164,21 @@ index 804c35ed73..d4eb35407f 100644
 +  providers: EnabledProvider[],
 +  enabledAiModels: EnabledAiModel[],
 +) => buildProviderModelLists(providers, enabledAiModels, getEmbeddingModelList);
-+
-@@ -238,0 +272 @@ type AiProviderRuntimeStateWithBuiltinModels = AiProviderRuntimeState & {
+ 
+ enum AiProviderSwrKey {
+   fetchAiProviderItem = 'FETCH_AI_PROVIDER_ITEM',
+@@ -236,6 +269,7 @@
+   enabledChatModelList?: EnabledProviderWithModels[];
+   enabledImageModelList?: EnabledProviderWithModels[];
+   enabledVideoModelList?: EnabledProviderWithModels[];
 +  enabledEmbeddingModelList?: EnabledProviderWithModels[];
-@@ -483,6 +517,15 @@ export class AiProviderActionImpl {
+ };
+ 
+ type Setter = StoreSetter<AiInfraStore>;
+@@ -503,12 +537,21 @@
+           const data = await aiProviderService.getAiProviderRuntimeState();
+ 
+           // Build model lists with proper async handling
 -          const [enabledChatModelList, enabledImageModelList, enabledVideoModelList] =
 -            await Promise.all([
 -              buildChatProviderModelLists(data.enabledChatAiProviders, data.enabledAiModels),
@@ -173,16 +200,34 @@ index 804c35ed73..d4eb35407f 100644
 +              data.enabledAiModels,
 +            ),
 +          ]);
-@@ -495,0 +538 @@ export class AiProviderActionImpl {
+ 
+           return {
+             ...data,
+@@ -516,6 +559,7 @@
+             enabledChatModelList,
+             enabledImageModelList,
+             enabledVideoModelList,
 +            enabledEmbeddingModelList,
-@@ -524,0 +568,6 @@ export class AiProviderActionImpl {
+           };
+         }
+ 
+@@ -523,6 +567,12 @@
+           (provider) => provider.enabled,
+         ).map((item) => ({ id: item.id, name: item.name, source: AiProviderSourceEnum.Builtin }));
+ 
 +        const enabledEmbeddingAiProviders = enabledAiProviders.filter((provider) => {
 +          return builtinAiModelList.some(
 +            (model) => model.providerId === provider.id && model.type === 'embedding',
 +          );
 +        });
 +
-@@ -527,6 +576,11 @@ export class AiProviderActionImpl {
+         const enabledChatAiProviders = enabledAiProviders.filter((provider) => {
+           return builtinAiModelList.some(
+             (model) => model.providerId === provider.id && model.type === 'chat',
+@@ -547,12 +597,17 @@
+ 
+         // Build model lists for non-login state as well
+         const enabledAiModels = builtinAiModelList.filter((m) => m.enabled);
 -        const [enabledChatModelList, enabledImageModelList, enabledVideoModelList] =
 -          await Promise.all([
 -            buildChatProviderModelLists(enabledChatAiProviders, enabledAiModels),
@@ -200,11 +245,26 @@ index 804c35ed73..d4eb35407f 100644
 +          buildVideoProviderModelLists(enabledVideoAiProviders, enabledAiModels),
 +          buildEmbeddingProviderModelLists(enabledEmbeddingAiProviders, enabledAiModels),
 +        ]);
-@@ -543,0 +598,2 @@ export class AiProviderActionImpl {
+ 
+         return {
+           builtinAiModelList,
+@@ -560,6 +615,8 @@
+           enabledAiProviders,
+           enabledChatAiProviders,
+           enabledChatModelList,
 +          enabledEmbeddingAiProviders,
 +          enabledEmbeddingModelList,
-@@ -559,0 +616 @@ export class AiProviderActionImpl {
+           enabledImageAiProviders,
+           enabledImageModelList,
+           enabledVideoAiProviders,
+@@ -578,6 +635,7 @@
+               enabledAiModels: data.enabledAiModels,
+               enabledAiProviders: data.enabledAiProviders,
+               enabledChatModelList: data.enabledChatModelList || [],
 +              enabledEmbeddingModelList: data.enabledEmbeddingModelList || [],
+               enabledImageModelList: data.enabledImageModelList || [],
+               enabledVideoModelList: data.enabledVideoModelList || [],
+               isInitAiProviderRuntimeState: true,
 diff --git a/apps/server/src/routers/lambda/__tests__/aiProvider.test.ts b/apps/server/src/routers/lambda/__tests__/aiProvider.test.ts
 index 57b7c44974..d31259d768 100644
 --- a/apps/server/src/routers/lambda/__tests__/aiProvider.test.ts
