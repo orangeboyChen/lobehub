@@ -7,10 +7,10 @@ index 3662541321f..c61f842ce0d 100644
  import { ThreadModel } from '@/database/models/thread';
  import { TopicModel } from '@/database/models/topic';
 +import { UserModel } from '@/database/models/user';
- import { topics } from '@/database/schemas';
+ import { agentOperations, topics } from '@/database/schemas';
  import { heteroAuthedProcedure, router } from '@/libs/trpc/lambda';
  import { serverDatabase } from '@/libs/trpc/lambda/middleware';
-@@ -418,12 +419,26 @@ const aiAgentProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts)
+@@ -460,12 +461,26 @@ const aiAgentProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts)
    const { ctx } = opts;
    const wsId = ctx.workspaceId ?? undefined;
  

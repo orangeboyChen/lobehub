@@ -303,21 +303,6 @@ diff --git a/packages/database/src/repositories/aiInfra/index.ts b/packages/data
 index 6e618106b1..45d194923a 100644
 --- a/packages/database/src/repositories/aiInfra/index.ts
 +++ b/packages/database/src/repositories/aiInfra/index.ts
-@@ -181,8 +181,6 @@ export class AiInfraRepos {
--      .map(
--        (item): EnabledProvider => ({
--          id: item.id,
--          logo: item.logo,
--          name: item.name,
--          source: item.source,
--        }),
--      );
-+      .map((item): EnabledProvider => ({
-+        id: item.id,
-+        logo: item.logo,
-+        name: item.name,
-+        source: item.source,
-+      }));
 @@ -286,0 +285,5 @@ export class AiInfraRepos {
 +    const enabledEmbeddingAiProviders = enabledAiProviders.filter((provider) => {
 +      return allModels.some(
