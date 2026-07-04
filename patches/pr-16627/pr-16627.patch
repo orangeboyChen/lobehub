@@ -303,14 +303,60 @@ diff --git a/packages/database/src/repositories/aiInfra/index.ts b/packages/data
 index 6e618106b1..45d194923a 100644
 --- a/packages/database/src/repositories/aiInfra/index.ts
 +++ b/packages/database/src/repositories/aiInfra/index.ts
-@@ -286,0 +285,5 @@ export class AiInfraRepos {
+@@ -266,47 +266,53 @@ export class AiInfraRepos {
+     const [result, enabledAiProviders, allModels] = await Promise.all([
+       this.aiProviderModel.getAiProviderRuntimeConfig(decryptor),
+       this.getUserEnabledProviderList(),
+       this.getEnabledModels(false),
+     ]);
+ 
+     const runtimeConfig = result;
+     Object.entries(result).forEach(([key, value]) => {
+       runtimeConfig[key] = merge(this.providerConfigs[key] || {}, value);
+     });
+     const enabledAiModels = allModels.filter((model) => model.enabled);
+     const enabledChatAiProviders = enabledAiProviders.filter((provider) => {
+       return allModels.some((model) => model.providerId === provider.id && model.type === 'chat');
+     });
+     const enabledImageAiProviders = enabledAiProviders.filter((provider) => {
+       return allModels.some((model) => model.providerId === provider.id && model.type === 'image');
+     });
+     const enabledVideoAiProviders = enabledAiProviders.filter((provider) => {
+       return allModels.some((model) => model.providerId === provider.id && model.type === 'video');
+     });
 +    const enabledEmbeddingAiProviders = enabledAiProviders.filter((provider) => {
 +      return allModels.some(
 +        (model) => model.providerId === provider.id && model.type === 'embedding',
 +      );
 +    });
-@@ -293,0 +297 @@ export class AiInfraRepos {
+ 
+     return {
+       enabledAiModels,
+       enabledAiProviders,
+       enabledChatAiProviders,
+       enabledImageAiProviders,
+       enabledVideoAiProviders,
 +      enabledEmbeddingAiProviders,
+       runtimeConfig,
+     };
+   };
+ 
+   /**
+    * Resolve the best provider for a given model.
+    *
+    * Matching pipeline:
+    * 1) Build a map of provider -> enabled model ids (disabled models are ignored).
+    * 2) Walk providers in priority order: preferred providers (if any) -> explicit fallback provider -> remaining providers that have enabled models.
+    * 3) For each provider, look for an exact modelId match or any preferred model alias.
+    * 4) If nothing matches, fall back to the configured provider (with a warning) or throw when no fallback exists.
+    *
+    * Handles:
+    * - Preferred provider ordering (case-insensitive).
+    * - Preferred model aliases.
+    * - Disabled models are skipped.
+    * - Missing matches: falls back when possible, otherwise surfaces an error.
+    *
+    * Edge cases to note:
 diff --git a/packages/model-bank/src/aiModels/__tests__/index.test.ts b/packages/model-bank/src/aiModels/__tests__/index.test.ts
 index d9081213f6..8d252b75e2 100644
 --- a/packages/model-bank/src/aiModels/__tests__/index.test.ts
