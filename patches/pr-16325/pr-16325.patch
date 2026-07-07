@@ -1,5 +1,31 @@
+diff --git a/apps/server/src/modules/AgentRuntime/executors/callLlm.ts b/apps/server/src/modules/AgentRuntime/executors/callLlm.ts
+index c2e15993a8cced268812fc08b514cb9eacbacd93..ee38c979972d2975ea6ce9b4fa0b7acc84dc9938 100644
+--- a/apps/server/src/modules/AgentRuntime/executors/callLlm.ts
++++ b/apps/server/src/modules/AgentRuntime/executors/callLlm.ts
+@@ -587,7 +587,20 @@ export const callLlm =
+         let credsListStr = '';
+         if (ctx.userId) {
+           try {
+-            const marketService = new MarketService({ userInfo: { userId: ctx.userId } });
++            let marketAccessToken: string | undefined;
++            if (ctx.serverDB) {
++              try {
++                const userModel = new UserModel(ctx.serverDB, ctx.userId);
++                const settings = await userModel.getUserSettings();
++                marketAccessToken = (settings?.market as any)?.accessToken;
++              } catch {
++                // non-fatal — MarketService will fall back to trustedClientToken
++              }
++            }
++            const marketService = new MarketService({
++              accessToken: marketAccessToken,
++              userInfo: { userId: ctx.userId },
++            });
+             const credsResult = await marketService.market.creds.list();
+             const userCreds = (credsResult as any)?.data ?? [];
+             credsListStr = generateCredsList(
 diff --git a/apps/server/src/routers/lambda/aiAgent.ts b/apps/server/src/routers/lambda/aiAgent.ts
-index 3662541321f..c61f842ce0d 100644
+index 83dafdf13beac5bea825022f321954be975f5950..e23bc30f4a40d4a768e6195676bcba50fcf874f2 100644
 --- a/apps/server/src/routers/lambda/aiAgent.ts
 +++ b/apps/server/src/routers/lambda/aiAgent.ts
 @@ -18,6 +18,7 @@ import { wsCompatProcedure } from '@/business/server/trpc-middlewares/workspaceA
@@ -10,7 +36,7 @@ index 3662541321f..c61f842ce0d 100644
  import { agentOperations, topics } from '@/database/schemas';
  import { heteroAuthedProcedure, router } from '@/libs/trpc/lambda';
  import { serverDatabase } from '@/libs/trpc/lambda/middleware';
-@@ -460,12 +461,26 @@ const aiAgentProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts)
+@@ -491,12 +492,26 @@ const aiAgentProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts)
    const { ctx } = opts;
    const wsId = ctx.workspaceId ?? undefined;
  
@@ -38,37 +64,52 @@ index 3662541321f..c61f842ce0d 100644
        aiChatService: new AiChatService(ctx.serverDB, ctx.userId, wsId),
        heterogeneousAgentService: new HeterogeneousAgentService(ctx.serverDB, ctx.userId, {
          workspaceId: wsId,
-diff --git a/apps/server/src/modules/AgentRuntime/executors/callLlm.ts b/apps/server/src/modules/AgentRuntime/executors/callLlm.ts
-index 00000000000..00000000000 100644
---- a/apps/server/src/modules/AgentRuntime/executors/callLlm.ts
-+++ b/apps/server/src/modules/AgentRuntime/executors/callLlm.ts
-@@ -569,7 +569,20 @@
-         let credsListStr = '';
-         if (ctx.userId) {
-           try {
--            const marketService = new MarketService({ userInfo: { userId: ctx.userId } });
-+            let marketAccessToken: string | undefined;
-+            if (ctx.serverDB) {
-+              try {
-+                const userModel = new UserModel(ctx.serverDB, ctx.userId);
-+                const settings = await userModel.getUserSettings();
-+                marketAccessToken = (settings?.market as any)?.accessToken;
-+              } catch {
-+                // non-fatal — MarketService will fall back to trustedClientToken
-+              }
-+            }
-+            const marketService = new MarketService({
-+              accessToken: marketAccessToken,
-+              userInfo: { userId: ctx.userId },
-+            });
-             const credsResult = await marketService.market.creds.list();
-             const userCreds = (credsResult as any)?.data ?? [];
-             credsListStr = generateCredsList(
+diff --git a/apps/server/src/routers/lambda/taskTemplate.ts b/apps/server/src/routers/lambda/taskTemplate.ts
+index 7c16f22bddeacaceab043fb1f50e7744885199f7..bae39c73f4b3c2b4ad18b9a3817e98f5237f5174 100644
+--- a/apps/server/src/routers/lambda/taskTemplate.ts
++++ b/apps/server/src/routers/lambda/taskTemplate.ts
+@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
+ import { z } from 'zod';
+ 
+ import { authedProcedure, router } from '@/libs/trpc/lambda';
++import { serverDatabase } from '@/libs/trpc/lambda/middleware';
+ import { TaskTemplateService } from '@/server/services/taskTemplate';
+ 
+ const listDailyRecommendSchema = z.object({
+@@ -16,14 +17,16 @@ const templateIdSchema = z.object({
+   templateId: z.number().int().positive(),
+ });
+ 
++const taskTemplateProcedure = authedProcedure.use(serverDatabase);
++
+ export const taskTemplateRouter = router({
+-  dismiss: authedProcedure.input(templateIdSchema).mutation(async () => ({ success: true })),
++  dismiss: taskTemplateProcedure.input(templateIdSchema).mutation(async () => ({ success: true })),
+ 
+-  listDailyRecommend: authedProcedure
++  listDailyRecommend: taskTemplateProcedure
+     .input(listDailyRecommendSchema)
+     .query(async ({ input, ctx }) => {
+       try {
+-        const service = new TaskTemplateService(ctx.userId);
++        const service = new TaskTemplateService(ctx.userId, ctx.serverDB);
+         const data = await service.listDailyRecommend(input.interestKeys, {
+           count: input.count,
+           locale: input.locale,
+@@ -40,5 +43,7 @@ export const taskTemplateRouter = router({
+       }
+     }),
+ 
+-  recordCreated: authedProcedure.input(templateIdSchema).mutation(async () => ({ success: true })),
++  recordCreated: taskTemplateProcedure
++    .input(templateIdSchema)
++    .mutation(async () => ({ success: true })),
+ });
 diff --git a/apps/server/src/services/aiAgent/index.ts b/apps/server/src/services/aiAgent/index.ts
-index 3fd532c11b5..558663f4bbb 100644
+index 4b1bb243255a7e830a6cef7831c7c249f42280a8..449f4bf2e2c23d70afb6eb8cd8e1bcfbf5f590f5 100644
 --- a/apps/server/src/services/aiAgent/index.ts
 +++ b/apps/server/src/services/aiAgent/index.ts
-@@ -321,7 +321,7 @@ export class AiAgentService {
+@@ -432,7 +432,7 @@ export class AiAgentService {
    private readonly threadModel: ThreadModel;
    private readonly topicModel: TopicModel;
    private readonly agentRuntimeService: AgentRuntimeService;
@@ -77,7 +118,7 @@ index 3fd532c11b5..558663f4bbb 100644
    private readonly composioService: ComposioService;
  
    private readonly workspaceId?: string;
-@@ -329,7 +329,11 @@ export class AiAgentService {
+@@ -440,7 +440,11 @@ export class AiAgentService {
    constructor(
      db: LobeChatDatabase,
      userId: string,
@@ -90,7 +131,7 @@ index 3fd532c11b5..558663f4bbb 100644
    ) {
      this.userId = userId;
      this.db = db;
-@@ -363,10 +367,37 @@ export class AiAgentService {
+@@ -474,10 +478,37 @@ export class AiAgentService {
        },
        workspaceId: wsId,
      });
@@ -129,7 +170,7 @@ index 3fd532c11b5..558663f4bbb 100644
    private async resolveOperationTaskId(
      idOrIdentifier?: string | null,
    ): Promise<string | undefined> {
-@@ -1430,10 +1454,11 @@ export class AiAgentService {
+@@ -1627,10 +1658,11 @@ export class AiAgentService {
        const githubCredKey =
          agentConfig.agencyConfig?.heterogeneousProvider?.env?.GITHUB_CRED_KEY ?? 'github';
        try {
@@ -143,21 +184,24 @@ index 3fd532c11b5..558663f4bbb 100644
            const vals = (full as any).plaintext ?? (full as any).values ?? {};
            githubToken = vals.access_token ?? vals.token;
          }
-@@ -1800,11 +1825,12 @@ export class AiAgentService {
+@@ -2031,6 +2063,7 @@ export class AiAgentService {
            // `aiAgent` import. Only this cloud-CLI branch needs it.
            const { spawnHeteroSandbox } =
              await import('@/server/services/heterogeneousAgent/sandboxRunner');
 +          const marketService = await this.getMarketService();
-           spawnHeteroSandbox({
-             ...heteroParams,
+           // The sandbox authenticates its nested `lh` calls with this JWT. The
+           // narrow `hetero-operation` token (used for the device-dispatch path
+           // above) is rejected by `oidcAuth`, so CC capabilities that hit
+@@ -2045,7 +2078,7 @@ export class AiAgentService {
              agentType: heteroType as 'claude-code' | 'codex',
              args: heteroExecArgs,
+             jwt: sandboxJwt,
 -            marketService: this.marketService,
 +            marketService,
            }).catch(async (err) => {
              // Fire-and-forget: execAgent has already returned `autoStarted`, and
              // the sandbox never reached the point of calling heteroFinish. Drive
-@@ -2002,7 +2028,8 @@ export class AiAgentService {
+@@ -2299,7 +2332,8 @@ export class AiAgentService {
  
        // 5c. Fetch LobeHub Skills manifests
        try {
@@ -168,7 +212,7 @@ index 3fd532c11b5..558663f4bbb 100644
          log('execAgent: failed to fetch lobehub skill manifests: %O', error);
        }
 diff --git a/apps/server/src/services/taskTemplate/index.ts b/apps/server/src/services/taskTemplate/index.ts
-index 4fb771f03ed..cafb95f9ffd 100644
+index 4fb771f03edd8fcc4ccf40bffa22db42199b4545..cafb95f9ffd5e3f7e23ec744386652cd0a9992c9 100644
 --- a/apps/server/src/services/taskTemplate/index.ts
 +++ b/apps/server/src/services/taskTemplate/index.ts
 @@ -10,8 +10,10 @@ import {
@@ -229,7 +273,7 @@ index 4fb771f03ed..cafb95f9ffd 100644
          excludeIds: options.excludeIds,
          interestKeys,
 diff --git a/apps/server/src/services/toolExecution/builtin.ts b/apps/server/src/services/toolExecution/builtin.ts
-index b51bbac56d4..a17a6f9a44d 100644
+index 1b229112cb010cada939c33932e08a86676482cb..7b595752f9782853b4dcf18a37290b4d31cc49a5 100644
 --- a/apps/server/src/services/toolExecution/builtin.ts
 +++ b/apps/server/src/services/toolExecution/builtin.ts
 @@ -4,6 +4,7 @@ import { type ChatToolPayload } from '@lobechat/types';
@@ -290,7 +334,7 @@ index b51bbac56d4..a17a6f9a44d 100644
          context: {
            topicId: context.topicId,
 diff --git a/apps/server/src/services/toolExecution/serverRuntimes/cloudSandbox.ts b/apps/server/src/services/toolExecution/serverRuntimes/cloudSandbox.ts
-index c2eef901f4f..35af6c5e605 100644
+index c2eef901f4f6648856b6181429dc67c5c6023a1b..35af6c5e6050875c054ceee811503d3b8509fe55 100644
 --- a/apps/server/src/services/toolExecution/serverRuntimes/cloudSandbox.ts
 +++ b/apps/server/src/services/toolExecution/serverRuntimes/cloudSandbox.ts
 @@ -3,6 +3,7 @@ import {
@@ -333,7 +377,7 @@ index c2eef901f4f..35af6c5e605 100644
      const sandboxService = createSandboxService({
        fileService,
 diff --git a/apps/server/src/services/toolExecution/serverRuntimes/creds.ts b/apps/server/src/services/toolExecution/serverRuntimes/creds.ts
-index 086eb73c295..fe2f4312576 100644
+index 086eb73c2958b25b193b854d1fd248a2d40dadd9..fe2f4312576164dd2f32734620706decfc55bdb4 100644
 --- a/apps/server/src/services/toolExecution/serverRuntimes/creds.ts
 +++ b/apps/server/src/services/toolExecution/serverRuntimes/creds.ts
 @@ -5,6 +5,7 @@ import {
@@ -374,44 +418,3 @@ index 086eb73c295..fe2f4312576 100644
      const credsService = new ServerCredsService(marketService);
  
      return new CredsExecutionRuntime(credsService, {
-diff --git a/apps/server/src/routers/lambda/taskTemplate.ts b/apps/server/src/routers/lambda/taskTemplate.ts
-index 7c16f22bdde..bae39c73f4b 100644
---- a/apps/server/src/routers/lambda/taskTemplate.ts
-+++ b/apps/server/src/routers/lambda/taskTemplate.ts
-@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
- import { z } from 'zod';
- 
- import { authedProcedure, router } from '@/libs/trpc/lambda';
-+import { serverDatabase } from '@/libs/trpc/lambda/middleware';
- import { TaskTemplateService } from '@/server/services/taskTemplate';
- 
- const listDailyRecommendSchema = z.object({
-@@ -16,14 +17,16 @@ const templateIdSchema = z.object({
-   templateId: z.number().int().positive(),
- });
- 
-+const taskTemplateProcedure = authedProcedure.use(serverDatabase);
-+
- export const taskTemplateRouter = router({
--  dismiss: authedProcedure.input(templateIdSchema).mutation(async () => ({ success: true })),
-+  dismiss: taskTemplateProcedure.input(templateIdSchema).mutation(async () => ({ success: true })),
- 
--  listDailyRecommend: authedProcedure
-+  listDailyRecommend: taskTemplateProcedure
-     .input(listDailyRecommendSchema)
-     .query(async ({ input, ctx }) => {
-       try {
--        const service = new TaskTemplateService(ctx.userId);
-+        const service = new TaskTemplateService(ctx.userId, ctx.serverDB);
-         const data = await service.listDailyRecommend(input.interestKeys, {
-           count: input.count,
-           locale: input.locale,
-@@ -40,5 +43,7 @@ export const taskTemplateRouter = router({
-       }
-     }),
- 
--  recordCreated: authedProcedure.input(templateIdSchema).mutation(async () => ({ success: true })),
-+  recordCreated: taskTemplateProcedure
-+    .input(templateIdSchema)
-+    .mutation(async () => ({ success: true })),
- });
