@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'LobeHub version to build, for example 2.2.2 or v2.2.3-canary.18. Empty means the latest upstream release tag and newer missed versions.'
+        description: 'LobeHub version to build, for example 2.2.2 or v2.2.3-canary.18. Empty means only the latest upstream release tag.'
         required: false
         type: string
       force:
@@ -68,16 +68,6 @@ jobs:
             printf 'v%s' "$value"
           }
 
-          is_newer() {
-            local base="$1"
-            local candidate="$2"
-            if [ "$base" = "$candidate" ]; then
-              return 1
-            fi
-
-            [ "$(printf '%s\n%s\n' "$base" "$candidate" | sort -V | tail -n 1)" = "$candidate" ]
-          }
-
           resolve_commit() {
             local tag="$1"
             local commit
@@ -113,15 +103,8 @@ jobs:
           )
 
           latest_upstream_tag="${upstream_tags[-1]}"
-          latest_repo_tag="$(
-            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '.[].tag_name' |
-              grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-canary\.[0-9]+)?$' |
-              sort -V |
-              tail -n 1 || true
-          )"
 
           build_tags=()
-          base_tag=""
 
           if [ -n "${INPUT_VERSION:-}" ]; then
             base_tag="$(normalize_tag "${INPUT_VERSION}")"
@@ -131,16 +114,9 @@ jobs:
             fi
             build_tags=("${base_tag}")
           else
-            base_tag="${latest_repo_tag:-}"
-            if [ -z "$base_tag" ]; then
-              build_tags=("${latest_upstream_tag}")
-            else
-              for tag in "${upstream_tags[@]}"; do
-                if is_newer "$base_tag" "$tag"; then
-                  build_tags+=("$tag")
-                fi
-              done
-            fi
+            # Patches are only validated against the current upstream canary tree,
+            # so automatic builds must target the latest upstream tag only.
+            build_tags=("${latest_upstream_tag}")
           fi
 
           matrix_tags=()
