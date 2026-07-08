@@ -1,8 +1,449 @@
+diff --git a/apps/server/src/routers/lambda/__tests__/aiProvider.test.ts b/apps/server/src/routers/lambda/__tests__/aiProvider.test.ts
+index 57b7c44974f894b1e8a12de2107988a076886a13..d31259d768eb67d9907c79d0d882430632d36167 100644
+--- a/apps/server/src/routers/lambda/__tests__/aiProvider.test.ts
++++ b/apps/server/src/routers/lambda/__tests__/aiProvider.test.ts
+@@ -58,6 +58,7 @@ describe('aiProviderRouter', () => {
+     enabledChatAiProviders: [],
+     enabledImageAiProviders: [],
+     enabledVideoAiProviders: [],
++    enabledEmbeddingAiProviders: [],
+     runtimeConfig: {},
+   };
+ 
+diff --git a/apps/server/src/services/memory/userMemory/__tests__/extract.runtime.test.ts b/apps/server/src/services/memory/userMemory/__tests__/extract.runtime.test.ts
+index f13f659c980ffbd4c688d3f7f35b618fc7c50d5e..79494e8f9bb3061f64d020b5d3c61d54ea274f25 100644
+--- a/apps/server/src/services/memory/userMemory/__tests__/extract.runtime.test.ts
++++ b/apps/server/src/services/memory/userMemory/__tests__/extract.runtime.test.ts
+@@ -13,6 +13,7 @@ const createRuntimeState = (models: EnabledAiModel[], keyVaults: Record<string,
+     enabledChatAiProviders: [],
+     enabledImageAiProviders: [],
+     enabledVideoAiProviders: [],
++    enabledEmbeddingAiProviders: [],
+     runtimeConfig: Object.fromEntries(
+       Object.entries(keyVaults).map(([providerId, vault]) => [
+         providerId,
+diff --git a/apps/server/src/services/memory/userMemory/persona/__tests__/service.test.ts b/apps/server/src/services/memory/userMemory/persona/__tests__/service.test.ts
+index 87fe7eacf64e6ee65c2d5c3c8b61e2ee62006f7e..dcbd409297d64b43d4ed0b2c46c65c65a95d20f5 100644
+--- a/apps/server/src/services/memory/userMemory/persona/__tests__/service.test.ts
++++ b/apps/server/src/services/memory/userMemory/persona/__tests__/service.test.ts
+@@ -90,6 +90,7 @@ beforeEach(async () => {
+     enabledAiProviders: [],
+     enabledChatAiProviders: [],
+     enabledImageAiProviders: [],
++    enabledEmbeddingAiProviders: [],
+     runtimeConfig: {
+       openai: { keyVaults: { apiKey: 'vault-key', baseURL: 'https://vault.example.com' } },
+     },
+@@ -153,6 +154,7 @@ describe('UserPersonaService', () => {
+       ],
+       enabledAiProviders: [],
+       enabledChatAiProviders: [],
++      enabledEmbeddingAiProviders: [],
+       enabledImageAiProviders: [],
+       runtimeConfig: {},
+     });
+diff --git a/packages/database/src/repositories/aiInfra/__tests__/getAiProviderRuntimeState.test.ts b/packages/database/src/repositories/aiInfra/__tests__/getAiProviderRuntimeState.test.ts
+index f63f79f111bcd148b9d8d80c86cf50a0b37b83a9..0212445606ed6272b1de26971476af7acaad8b10 100644
+--- a/packages/database/src/repositories/aiInfra/__tests__/getAiProviderRuntimeState.test.ts
++++ b/packages/database/src/repositories/aiInfra/__tests__/getAiProviderRuntimeState.test.ts
+@@ -91,6 +91,7 @@ describe('AiInfraRepos', () => {
+         ],
+         enabledImageAiProviders: [],
+         enabledVideoAiProviders: [],
++        enabledEmbeddingAiProviders: [],
+         runtimeConfig: {
+           openai: {
+             apiKey: 'test-key',
+@@ -175,6 +176,7 @@ describe('AiInfraRepos', () => {
+         enabledChatAiProviders: [
+           { id: 'openai', logo: 'openai-logo', name: 'OpenAI', source: 'builtin' },
+         ],
++        enabledEmbeddingAiProviders: [],
+         enabledImageAiProviders: [
+           expect.objectContaining({
+             id: 'fal',
+diff --git a/packages/database/src/repositories/aiInfra/__tests__/tryMatchingProviderFrom.test.ts b/packages/database/src/repositories/aiInfra/__tests__/tryMatchingProviderFrom.test.ts
+index 1cf3050b64efb13dcccfd7b8c8f72c9112de5b6b..12c47b329d2e2f4ab5997db2c72019a66826f0c5 100644
+--- a/packages/database/src/repositories/aiInfra/__tests__/tryMatchingProviderFrom.test.ts
++++ b/packages/database/src/repositories/aiInfra/__tests__/tryMatchingProviderFrom.test.ts
+@@ -30,6 +30,7 @@ describe('AiInfraRepos', () => {
+       enabledAiModels: models,
+       enabledAiProviders: [],
+       enabledChatAiProviders: [],
++      enabledEmbeddingAiProviders: [],
+       enabledImageAiProviders: [],
+       enabledVideoAiProviders: [],
+       runtimeConfig: {},
+diff --git a/packages/database/src/repositories/aiInfra/index.ts b/packages/database/src/repositories/aiInfra/index.ts
+index 49e8ce814374517ef9d0214195eb09341a40930f..582c4d24b822af8e8dbe708144706c903d824b4c 100644
+--- a/packages/database/src/repositories/aiInfra/index.ts
++++ b/packages/database/src/repositories/aiInfra/index.ts
+@@ -283,6 +283,11 @@ export class AiInfraRepos {
+     const enabledVideoAiProviders = enabledAiProviders.filter((provider) => {
+       return allModels.some((model) => model.providerId === provider.id && model.type === 'video');
+     });
++    const enabledEmbeddingAiProviders = enabledAiProviders.filter((provider) => {
++      return allModels.some(
++        (model) => model.providerId === provider.id && model.type === 'embedding',
++      );
++    });
+ 
+     return {
+       enabledAiModels,
+@@ -290,6 +295,7 @@ export class AiInfraRepos {
+       enabledChatAiProviders,
+       enabledImageAiProviders,
+       enabledVideoAiProviders,
++      enabledEmbeddingAiProviders,
+       runtimeConfig,
+     };
+   };
+diff --git a/packages/model-bank/src/aiModels/__tests__/index.test.ts b/packages/model-bank/src/aiModels/__tests__/index.test.ts
+index d9081213f69672691c2039bc8b9396432ad0a071..8d252b75e244fb415139da77c7eba160689097ef 100644
+--- a/packages/model-bank/src/aiModels/__tests__/index.test.ts
++++ b/packages/model-bank/src/aiModels/__tests__/index.test.ts
+@@ -84,6 +84,20 @@ describe('knowledgeCutoff backfill', () => {
+     expect(vertexGemini3Pro?.knowledgeCutoff).toBe('2025-01');
+   });
+ 
++  it('keeps builtin embedding models enabled', () => {
++    const openaiEmbeddingModels = LOBE_DEFAULT_MODEL_LIST.filter(
++      (m) => m.providerId === ModelProvider.OpenAI && m.type === 'embedding',
++    );
++    expect(openaiEmbeddingModels.length).toBeGreaterThan(0);
++    expect(openaiEmbeddingModels.every((m) => m.enabled)).toBe(true);
++
++    const vercelEmbeddingModels = LOBE_DEFAULT_MODEL_LIST.filter(
++      (m) => m.providerId === ModelProvider.VercelAIGateway && m.type === 'embedding',
++    );
++    expect(vercelEmbeddingModels.length).toBeGreaterThan(0);
++    expect(vercelEmbeddingModels.every((m) => m.enabled)).toBe(true);
++  });
++
+   it('keeps an explicit knowledgeCutoff over the map value', async () => {
+     const loader = vi.fn().mockResolvedValue([
+       { enabled: true, id: 'gpt-5', knowledgeCutoff: '2020-01', type: 'chat' },
+diff --git a/packages/model-bank/src/aiModels/openai.ts b/packages/model-bank/src/aiModels/openai.ts
+index f74b0d79d6b51adddb7addaeee58f9e308f41d66..ce3dac8d427f04c74c867d72b8a5f73da1d0b1f8 100644
+--- a/packages/model-bank/src/aiModels/openai.ts
++++ b/packages/model-bank/src/aiModels/openai.ts
+@@ -1494,6 +1494,7 @@ export const openaiEmbeddingModels: AIEmbeddingModelCard[] = [
+     contextWindowTokens: 8192,
+     description: 'The most capable embedding model for English and non-English tasks.',
+     displayName: 'Text Embedding 3 Large',
++    enabled: true,
+     id: 'text-embedding-3-large',
+     maxDimension: 3072,
+     pricing: {
+@@ -1508,6 +1509,7 @@ export const openaiEmbeddingModels: AIEmbeddingModelCard[] = [
+     description:
+       'An efficient, cost-effective next-generation embedding model for retrieval and RAG scenarios.',
+     displayName: 'Text Embedding 3 Small',
++    enabled: true,
+     id: 'text-embedding-3-small',
+     maxDimension: 1536,
+     pricing: {
+diff --git a/packages/model-bank/src/aiModels/vercelaigateway.ts b/packages/model-bank/src/aiModels/vercelaigateway.ts
+index 11d3c0c1e4a2a95211e8f90ff730579e1a77fb38..1db471f6646534e3bbfda3e171511c59aadc438b 100644
+--- a/packages/model-bank/src/aiModels/vercelaigateway.ts
++++ b/packages/model-bank/src/aiModels/vercelaigateway.ts
+@@ -1682,6 +1682,7 @@ const vercelAIGatewayEmbeddingModels: AIEmbeddingModelCard[] = [
+     description:
+       'Amazon Titan Text Embeddings V2 is a lightweight, efficient multilingual embedding model supporting 1024, 512, and 256 dimensions.',
+     displayName: 'Titan Text Embeddings V2',
++    enabled: true,
+     id: 'amazon/titan-embed-text-v2',
+     maxDimension: 1024,
+     pricing: {
+@@ -1693,6 +1694,7 @@ const vercelAIGatewayEmbeddingModels: AIEmbeddingModelCard[] = [
+     description:
+       'A state-of-the-art embedding model with strong performance in English, multilingual, and code tasks.',
+     displayName: 'Gemini Embedding 001',
++    enabled: true,
+     id: 'google/gemini-embedding-001',
+     maxDimension: 768,
+     pricing: {
+@@ -1704,6 +1706,7 @@ const vercelAIGatewayEmbeddingModels: AIEmbeddingModelCard[] = [
+     description:
+       'An English-focused text embedding model optimized for code and English language tasks.',
+     displayName: 'Text Embedding 005',
++    enabled: true,
+     id: 'google/text-embedding-005',
+     maxDimension: 768,
+     pricing: {
+@@ -1715,6 +1718,7 @@ const vercelAIGatewayEmbeddingModels: AIEmbeddingModelCard[] = [
+     description:
+       'A multilingual text embedding model optimized for cross-lingual tasks across many languages.',
+     displayName: 'Text Multilingual Embedding 002',
++    enabled: true,
+     id: 'google/text-multilingual-embedding-002',
+     maxDimension: 768,
+     pricing: {
+@@ -1726,6 +1730,7 @@ const vercelAIGatewayEmbeddingModels: AIEmbeddingModelCard[] = [
+     description:
+       'A model that classifies or converts text, images, or mixed content into embeddings.',
+     displayName: 'Embed v4.0',
++    enabled: true,
+     id: 'cohere/embed-v4.0',
+     maxDimension: 1024,
+     pricing: {
+@@ -1737,6 +1742,7 @@ const vercelAIGatewayEmbeddingModels: AIEmbeddingModelCard[] = [
+     description:
+       'A code embedding model for embedding codebases and repositories to support coding assistants.',
+     displayName: 'Codestral Embed',
++    enabled: true,
+     id: 'mistral/codestral-embed',
+     maxDimension: 1024,
+     pricing: {
+@@ -1748,6 +1754,7 @@ const vercelAIGatewayEmbeddingModels: AIEmbeddingModelCard[] = [
+     description:
+       'A general text embedding model for semantic search, similarity, clustering, and RAG workflows.',
+     displayName: 'Mistral Embed',
++    enabled: true,
+     id: 'mistral/mistral-embed',
+     maxDimension: 1024,
+     pricing: {
+@@ -1758,6 +1765,7 @@ const vercelAIGatewayEmbeddingModels: AIEmbeddingModelCard[] = [
+   {
+     description: 'OpenAI’s most capable embedding model for English and non-English tasks.',
+     displayName: 'text-embedding-3-large',
++    enabled: true,
+     id: 'openai/text-embedding-3-large',
+     maxDimension: 3072,
+     pricing: {
+@@ -1768,6 +1776,7 @@ const vercelAIGatewayEmbeddingModels: AIEmbeddingModelCard[] = [
+   {
+     description: 'OpenAI’s improved, higher-performance ada embedding model variant.',
+     displayName: 'text-embedding-3-small',
++    enabled: true,
+     id: 'openai/text-embedding-3-small',
+     maxDimension: 1536,
+     pricing: {
+@@ -1778,6 +1787,7 @@ const vercelAIGatewayEmbeddingModels: AIEmbeddingModelCard[] = [
+   {
+     description: 'OpenAI’s legacy text embedding model.',
+     displayName: 'text-embedding-ada-002',
++    enabled: true,
+     id: 'openai/text-embedding-ada-002',
+     maxDimension: 1536,
+     pricing: {
+diff --git a/packages/types/src/aiProvider.ts b/packages/types/src/aiProvider.ts
+index 490c0cb0d2f7b5a4c782ed9443f930500865515a..ce456856fa8a45dde1ba47f5e0b6212cff22ad55 100644
+--- a/packages/types/src/aiProvider.ts
++++ b/packages/types/src/aiProvider.ts
+@@ -395,6 +395,7 @@ export interface AiProviderRuntimeState {
+   enabledAiModels: EnabledAiModel[];
+   enabledAiProviders: EnabledProvider[];
+   enabledChatAiProviders: EnabledProvider[];
++  enabledEmbeddingAiProviders: EnabledProvider[];
+   enabledImageAiProviders: EnabledProvider[];
+   enabledVideoAiProviders: EnabledProvider[];
+   runtimeConfig: Record<string, AiProviderRuntimeConfig>;
+diff --git a/src/features/ModelSelect/index.tsx b/src/features/ModelSelect/index.tsx
+index 9146dc462a0c41fc9f9d2123760f676822ef0cb2..dee340fca26a010d38fcafebe5e3260a3fa3b7f7 100644
+--- a/src/features/ModelSelect/index.tsx
++++ b/src/features/ModelSelect/index.tsx
+@@ -1,12 +1,13 @@
+ import { TooltipGroup } from '@lobehub/ui';
+ import { Select, type SelectProps } from '@lobehub/ui/base-ui';
+ import { createStaticStyles } from 'antd-style';
+-import { type ReactNode } from 'react';
++import type { ReactNode } from 'react';
+ import { memo, useMemo } from 'react';
+ 
+ import { ModelItemRender, ProviderItemRender, TAG_CLASSNAME } from '@/components/ModelSelect';
+-import { aiProviderSelectors, useAiInfraStore } from '@/store/aiInfra';
+-import { type EnabledProviderWithModels } from '@/types/aiProvider';
++import type { EnabledModelListType } from '@/hooks/useEnabledModels';
++import { useEnabledModels } from '@/hooks/useEnabledModels';
++import type { EnabledProviderWithModels } from '@/types/aiProvider';
+ 
+ const prefixCls = 'ant';
+ 
+@@ -41,7 +42,7 @@ interface ModelSelectProps extends Pick<
+ > {
+   defaultValue?: { model: string; provider?: string };
+   initialWidth?: boolean;
+-  modelType?: 'chat' | 'embedding';
++  modelType?: EnabledModelListType;
+   onChange?: (props: { model: string; provider: string }) => void;
+   popupWidth?: number;
+   requiredAbilities?: (keyof EnabledProviderWithModels['children'][number]['abilities'])[];
+@@ -64,11 +65,7 @@ const ModelSelect = memo<ModelSelectProps>(
+     popupWidth,
+     modelType = 'chat',
+   }) => {
+-    const enabledList = useAiInfraStore((s) =>
+-      modelType === 'embedding'
+-        ? aiProviderSelectors.enabledEmbeddingModelList(s)
+-        : s.enabledChatModelList || [],
+-    );
++    const enabledList = useEnabledModels(modelType ?? 'chat');
+ 
+     const options = useMemo<SelectProps['options']>(() => {
+       const getChatModels = (provider: EnabledProviderWithModels) => {
+diff --git a/src/features/ServiceModel/ModelAssignmentsForm.tsx b/src/features/ServiceModel/ModelAssignmentsForm.tsx
+index 946e8ef9be2bc747319631d50b0857690b050644..35899ae3e9960fd13ed2e0d159d86ff74355c635 100644
+--- a/src/features/ServiceModel/ModelAssignmentsForm.tsx
++++ b/src/features/ServiceModel/ModelAssignmentsForm.tsx
+@@ -12,6 +12,7 @@ import AsyncError from '@/components/AsyncError';
+ import AutoSaveHint from '@/components/Editor/AutoSaveHint';
+ import { FORM_STYLE } from '@/const/layoutTokens';
+ import ModelSelect from '@/features/ModelSelect';
++import type { EnabledModelListType } from '@/hooks/useEnabledModels';
+ import { usePermission } from '@/hooks/usePermission';
+ import { useSaveState } from '@/hooks/useSaveState';
+ import { useUserStore } from '@/store/user';
+@@ -21,7 +22,6 @@ import type { SystemAgentItem, UserServiceModelConfigKey } from '@/types/user/se
+ interface SystemAgentModelItem {
+   contextLimit?: boolean;
+   key: UserServiceModelConfigKey;
+-  modelType?: 'chat' | 'embedding';
+ }
+ 
+ type LoadingKey = 'defaultAgent' | UserServiceModelConfigKey;
+@@ -45,9 +45,13 @@ const OPTIONAL_FEATURE_ITEMS: SystemAgentModelItem[] = [
+ const MEMORY_MODEL_ITEMS: SystemAgentModelItem[] = [
+   { contextLimit: true, key: 'memoryAnalysisAgentConfig' },
+   { contextLimit: true, key: 'userMemoryPersonaWriter' },
+-  { contextLimit: true, key: 'userMemoryEmbedding', modelType: 'embedding' },
++  { contextLimit: true, key: 'userMemoryEmbedding' },
+ ];
+ 
++const MEMORY_MODEL_TYPE_MAP: Partial<Record<UserServiceModelConfigKey, EnabledModelListType>> = {
++  userMemoryEmbedding: 'embedding',
++};
++
+ const ModelAssignmentsForm = memo(() => {
+   const { t } = useTranslation('setting');
+   const { allowed: canManageServiceModel, reason } = usePermission('manage_settings');
+@@ -180,42 +184,40 @@ const ModelAssignmentsForm = memo(() => {
+     } satisfies FormItemProps;
+   });
+ 
+-  const memoryModelItems: FormItemProps[] = MEMORY_MODEL_ITEMS.map(
+-    ({ contextLimit, key, modelType }) => {
+-      const value = systemAgentSettings[key];
++  const memoryModelItems: FormItemProps[] = MEMORY_MODEL_ITEMS.map(({ contextLimit, key }) => {
++    const value = systemAgentSettings[key];
+ 
+-      return {
+-        children: (
+-          <Flexbox direction="vertical" gap={8} style={{ width: 448 }}>
+-            <ModelSelect
+-              modelType={modelType}
+-              showAbility={false}
+-              style={{ minWidth: 0, width: '100%' }}
+-              value={value}
+-              onChange={(props) => updateSystemAgentModel(key, props)}
+-            />
+-            {contextLimit && (
+-              <ConfigProvider theme={{ token: { controlHeight: 32 } }}>
+-                <InputNumber
+-                  min={1}
+-                  placeholder={t('serviceModel.contextLimit.placeholder')}
+-                  style={{ alignSelf: 'flex-end', width: 180 }}
+-                  value={value.contextLimit}
+-                  onChange={(contextLimit) =>
+-                    updateSystemAgentModel(key, {
+-                      contextLimit: typeof contextLimit === 'number' ? contextLimit : undefined,
+-                    })
+-                  }
+-                />
+-              </ConfigProvider>
+-            )}
+-          </Flexbox>
+-        ),
+-        desc: t(`systemAgent.${key}.modelDesc`),
+-        label: t(`systemAgent.${key}.title`),
+-      } satisfies FormItemProps;
+-    },
+-  );
++    return {
++      children: (
++        <Flexbox direction="vertical" gap={8} style={{ width: 448 }}>
++          <ModelSelect
++            modelType={MEMORY_MODEL_TYPE_MAP[key]}
++            showAbility={false}
++            style={{ minWidth: 0, width: '100%' }}
++            value={value}
++            onChange={(props) => updateSystemAgentModel(key, props)}
++          />
++          {contextLimit && (
++            <ConfigProvider theme={{ token: { controlHeight: 32 } }}>
++              <InputNumber
++                min={1}
++                placeholder={t('serviceModel.contextLimit.placeholder')}
++                style={{ alignSelf: 'flex-end', width: 180 }}
++                value={value.contextLimit}
++                onChange={(contextLimit) =>
++                  updateSystemAgentModel(key, {
++                    contextLimit: typeof contextLimit === 'number' ? contextLimit : undefined,
++                  })
++                }
++              />
++            </ConfigProvider>
++          )}
++        </Flexbox>
++      ),
++      desc: t(`systemAgent.${key}.modelDesc`),
++      label: t(`systemAgent.${key}.title`),
++    } satisfies FormItemProps;
++  });
+ 
+   const optionalFeatureItems: FormItemProps[] = OPTIONAL_FEATURE_ITEMS.map(({ key }) => {
+     const value = systemAgentSettings[key];
+diff --git a/src/hooks/useEnabledChatModels.ts b/src/hooks/useEnabledChatModels.ts
+index 37e0ec807dd09256b2d47f979cad92404c7317ac..abd259611fe10cf322f7ed7a8f54ecf673c3175e 100644
+--- a/src/hooks/useEnabledChatModels.ts
++++ b/src/hooks/useEnabledChatModels.ts
+@@ -1,10 +1,7 @@
+-import isEqual from 'fast-deep-equal';
++import type { EnabledProviderWithModels } from '@/types/aiProvider';
+ 
+-import { useAiInfraStore } from '@/store/aiInfra';
+-import { type EnabledProviderWithModels } from '@/types/aiProvider';
++import { useEnabledModels } from './useEnabledModels';
+ 
+ export const useEnabledChatModels = (): EnabledProviderWithModels[] => {
+-  const enabledChatModelList = useAiInfraStore((s) => s.enabledChatModelList, isEqual);
+-
+-  return enabledChatModelList || [];
++  return useEnabledModels('chat');
+ };
+diff --git a/src/hooks/useEnabledModels.ts b/src/hooks/useEnabledModels.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..8b92972455200d8aae5e619a4d57b1941e6e45f6
+--- /dev/null
++++ b/src/hooks/useEnabledModels.ts
+@@ -0,0 +1,21 @@
++import isEqual from 'fast-deep-equal';
++
++import { aiProviderSelectors, useAiInfraStore } from '@/store/aiInfra';
++import type { AIProviderStoreState } from '@/store/aiInfra/initialState';
++import type { EnabledProviderWithModels } from '@/types/aiProvider';
++
++export type EnabledModelListType = 'chat' | 'embedding' | 'image' | 'video';
++
++const enabledModelListSelectorMap = {
++  chat: aiProviderSelectors.enabledChatModelList,
++  image: aiProviderSelectors.enabledImageModelList,
++  video: aiProviderSelectors.enabledVideoModelList,
++  embedding: aiProviderSelectors.enabledEmbeddingModelList,
++} satisfies Record<EnabledModelListType, (s: AIProviderStoreState) => EnabledProviderWithModels[]>;
++
++export const useEnabledModels = (modelType: EnabledModelListType): EnabledProviderWithModels[] => {
++  const selector = enabledModelListSelectorMap[modelType];
++  const enabledModelList = useAiInfraStore(selector, isEqual);
++
++  return enabledModelList || [];
++};
 diff --git a/src/store/aiInfra/slices/aiProvider/__tests__/action.test.ts b/src/store/aiInfra/slices/aiProvider/__tests__/action.test.ts
-index fb07ca2929..b4948f7d3f 100644
+index bf2ecf6ffcd3dffa3e4128d489e2a8869416f3b0..90b5a8710c6cacc4d9f1e83748a2cd05cd300eb2 100644
 --- a/src/store/aiInfra/slices/aiProvider/__tests__/action.test.ts
 +++ b/src/store/aiInfra/slices/aiProvider/__tests__/action.test.ts
-@@ -2 +2,7 @@ import * as runtimeModule from '@lobechat/model-runtime';
+@@ -1,5 +1,11 @@
+ import * as runtimeModule from '@lobechat/model-runtime';
 -import type { AIImageModelCard, EnabledAiModel, ModelParamsSchema, Pricing } from 'model-bank';
 +import type {
 +  AIEmbeddingModelCard,
@@ -11,31 +452,68 @@ index fb07ca2929..b4948f7d3f 100644
 +  ModelParamsSchema,
 +  Pricing,
 +} from 'model-bank';
-@@ -6,0 +13 @@ import {
-+  getEmbeddingModelList,
-@@ -8,0 +16 @@ import {
-+  normalizeEmbeddingModel,
-@@ -35,0 +44,16 @@ const createImageModel = (overrides: Partial<ImageEnabledModel> = {}): ImageEnab
-+type EmbeddingEnabledModel = EnabledAiModel & AIEmbeddingModelCard;
+ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+ 
+ import {
+@@ -22,27 +28,32 @@ const createChatModel = (overrides: Partial<EnabledAiModel> = {}): EnabledAiMode
+   ...overrides,
+ });
+ 
+-const createEmbeddingModel = (overrides: Partial<EnabledAiModel> = {}): EnabledAiModel => ({
++type ImageEnabledModel = EnabledAiModel & AIImageModelCard;
 +
++const createImageModel = (overrides: Partial<ImageEnabledModel> = {}): ImageEnabledModel => ({
+   abilities: overrides.abilities ?? {},
+   contextWindowTokens: overrides.contextWindowTokens,
+-  displayName: overrides.displayName ?? 'Embedding Model',
++  displayName: overrides.displayName ?? 'Image Model',
+   enabled: overrides.enabled ?? true,
+-  id: overrides.id ?? 'embedding-model',
++  id: overrides.id ?? 'image-model',
+   providerId: overrides.providerId ?? 'openai',
+-  type: 'embedding',
++  type: 'image',
+   ...overrides,
+ });
+ 
+-type ImageEnabledModel = EnabledAiModel & AIImageModelCard;
++type EmbeddingEnabledModel = EnabledAiModel & AIEmbeddingModelCard;
+ 
+-const createImageModel = (overrides: Partial<ImageEnabledModel> = {}): ImageEnabledModel => ({
 +const createEmbeddingModel = (
 +  overrides: Partial<EmbeddingEnabledModel> = {},
 +): EmbeddingEnabledModel => ({
-+  abilities: overrides.abilities ?? {},
+   abilities: overrides.abilities ?? {},
+-  contextWindowTokens: overrides.contextWindowTokens,
+-  displayName: overrides.displayName ?? 'Image Model',
 +  contextWindowTokens: overrides.contextWindowTokens ?? 8192,
 +  displayName: overrides.displayName ?? 'Embedding Model',
-+  enabled: overrides.enabled ?? true,
+   enabled: overrides.enabled ?? true,
+-  id: overrides.id ?? 'image-model',
 +  id: overrides.id ?? 'embedding-model',
 +  maxDimension: overrides.maxDimension ?? 1536,
-+  providerId: overrides.providerId ?? 'openai',
+   providerId: overrides.providerId ?? 'openai',
+-  type: 'image',
 +  type: 'embedding',
-+  ...overrides,
-+});
-+
-@@ -164,0 +189,55 @@ describe('aiProvider action helpers', () => {
-+  describe('normalizeEmbeddingModel', () => {
+   ...overrides,
+ });
+ 
+@@ -176,25 +187,58 @@ describe('aiProvider action helpers', () => {
+   });
+ 
+   describe('normalizeEmbeddingModel', () => {
+-    it('preserves inline embedding metadata without loading fallback model config', async () => {
 +    it('preserves inline metadata without fallback lookup', async () => {
-+      const fallbackSpy = vi.spyOn(runtimeModule, 'getModelPropertyWithFallback');
+       const fallbackSpy = vi.spyOn(runtimeModule, 'getModelPropertyWithFallback');
+-      const pricing: Pricing = {
+-        units: [{ name: 'textInput', rate: 0.02, strategy: 'fixed', unit: 'millionTokens' }],
+-      };
+-      const model = {
+-        ...createEmbeddingModel({ id: 'text-embedding-3-small', providerId: 'openai' }),
+-        description: 'Inline embedding description',
+-        knowledgeCutoff: '2024-01',
+-        pricing,
+-      };
 +      const model = createEmbeddingModel({
 +        description: 'Inline embedding',
 +        knowledgeCutoff: '2024-06',
@@ -43,9 +521,12 @@ index fb07ca2929..b4948f7d3f 100644
 +          units: [{ name: 'textInput', rate: 0.02, strategy: 'fixed', unit: 'millionTokens' }],
 +        },
 +      });
-+
-+      const result = await normalizeEmbeddingModel(model);
-+
+ 
+       const result = await normalizeEmbeddingModel(model);
+ 
+-      expect(result.description).toBe('Inline embedding description');
+-      expect(result.knowledgeCutoff).toBe('2024-01');
+-      expect(result.pricing).toBe(pricing);
 +      expect(result).toMatchObject({
 +        description: 'Inline embedding',
 +        knowledgeCutoff: '2024-06',
@@ -53,8 +534,8 @@ index fb07ca2929..b4948f7d3f 100644
 +          units: [{ name: 'textInput', rate: 0.02, strategy: 'fixed', unit: 'millionTokens' }],
 +        },
 +      });
-+      expect(fallbackSpy).not.toHaveBeenCalled();
-+    });
+       expect(fallbackSpy).not.toHaveBeenCalled();
+     });
 +
 +    it('fetches fallback description/knowledge cutoff/pricing when missing', async () => {
 +      const fallbackSpy = vi
@@ -86,9 +567,13 @@ index fb07ca2929..b4948f7d3f 100644
 +      expect(fallbackSpy).toHaveBeenCalledWith('embedding-model', 'knowledgeCutoff', 'openai');
 +      expect(fallbackSpy).toHaveBeenCalledWith('embedding-model', 'pricing', 'openai');
 +    });
-+  });
-+
-@@ -230,0 +310,20 @@ describe('aiProvider action helpers', () => {
+   });
+ 
+   describe('getChatModelList', () => {
+@@ -296,4 +340,24 @@ describe('aiProvider action helpers', () => {
+       expect(result).toEqual([]);
+     });
+   });
 +
 +  describe('getEmbeddingModelList', () => {
 +    const embeddingModels = [
@@ -109,404 +594,67 @@ index fb07ca2929..b4948f7d3f 100644
 +      expect(result).toEqual([]);
 +    });
 +  });
+ });
 diff --git a/src/store/aiInfra/slices/aiProvider/action.ts b/src/store/aiInfra/slices/aiProvider/action.ts
-index 804c35ed73..d4eb35407f 100644
+index 5d2bf1a7c5164f5b449f787a2300e6951ff991a7..b6cf391ba239406e08fc7b776fca6f79cfc628d9 100644
 --- a/src/store/aiInfra/slices/aiProvider/action.ts
 +++ b/src/store/aiInfra/slices/aiProvider/action.ts
-@@ -99,6 +99,27 @@
-   };
- };
-
-+export const normalizeEmbeddingModel = async (
-+  model: EnabledAiModel,
-+): Promise<ProviderModelListItem> => {
-+  const [description, knowledgeCutoff, pricing] = await Promise.all([
-+    getModelProperty<string>(model, 'description'),
-+    getModelProperty<string>(model, 'knowledgeCutoff'),
-+    getModelProperty<Pricing>(model, 'pricing'),
-+  ]);
-+
-+  return {
-+    abilities: (model.abilities || {}) as ModelAbilities,
-+    contextWindowTokens: model.contextWindowTokens,
-+    displayName: model.displayName ?? '',
-+    id: model.id,
-+    releasedAt: model.releasedAt,
-+    ...(description && { description }),
-+    ...(knowledgeCutoff && { knowledgeCutoff }),
-+    ...(pricing && { pricing }),
-+  };
-+};
-+
- export const normalizeImageModel = async (
-   model: EnabledAiModel,
- ): Promise<ProviderModelListItem> => {
-@@ -180,6 +201,10 @@
-   normalizeChatModel(model),
- );
- 
-+export const getEmbeddingModelList = createProviderModelCollector('embedding', async (model) =>
-+  normalizeEmbeddingModel(model),
-+);
-+
- export const getImageModelList = createProviderModelCollector('image', normalizeImageModel);
- 
- export const getVideoModelList = createProviderModelCollector('video', normalizeVideoModel);
-@@ -224,6 +249,14 @@
-   providers: EnabledProvider[],
-   enabledAiModels: EnabledAiModel[],
- ) => buildProviderModelLists(providers, enabledAiModels, getVideoModelList);
-+
-+/**
-+ * Build embedding provider model lists with proper async handling
-+ */
-+const buildEmbeddingProviderModelLists = async (
-+  providers: EnabledProvider[],
-+  enabledAiModels: EnabledAiModel[],
-+) => buildProviderModelLists(providers, enabledAiModels, getEmbeddingModelList);
- 
- enum AiProviderSwrKey {
-   fetchAiProviderItem = 'FETCH_AI_PROVIDER_ITEM',
-@@ -236,6 +269,7 @@
-   enabledChatModelList?: EnabledProviderWithModels[];
-   enabledImageModelList?: EnabledProviderWithModels[];
-   enabledVideoModelList?: EnabledProviderWithModels[];
-+  enabledEmbeddingModelList?: EnabledProviderWithModels[];
- };
- 
- type Setter = StoreSetter<AiInfraStore>;
-@@ -503,12 +537,21 @@
+@@ -548,11 +548,13 @@ export class AiProviderActionImpl {
+         if (isLogin) {
            const data = await aiProviderService.getAiProviderRuntimeState();
  
+-          const enabledEmbeddingAiProviders = data.enabledAiProviders.filter((provider) => {
+-            return data.enabledAiModels.some(
+-              (model) => model.providerId === provider.id && model.type === 'embedding',
+-            );
+-          });
++          const enabledEmbeddingAiProviders =
++            data.enabledEmbeddingAiProviders ??
++            data.enabledAiProviders.filter((provider) => {
++              return data.enabledAiModels.some(
++                (model) => model.providerId === provider.id && model.type === 'embedding',
++              );
++            });
+ 
            // Build model lists with proper async handling
--          const [enabledChatModelList, enabledImageModelList, enabledVideoModelList] =
--            await Promise.all([
--              buildChatProviderModelLists(data.enabledChatAiProviders, data.enabledAiModels),
--              buildImageProviderModelLists(data.enabledImageAiProviders, data.enabledAiModels),
--              buildVideoProviderModelLists(data.enabledVideoAiProviders, data.enabledAiModels),
--            ]);
-+          const [
-+            enabledChatModelList,
-+            enabledImageModelList,
-+            enabledVideoModelList,
-+            enabledEmbeddingModelList,
-+          ] = await Promise.all([
-+            buildChatProviderModelLists(data.enabledChatAiProviders, data.enabledAiModels),
-+            buildImageProviderModelLists(data.enabledImageAiProviders, data.enabledAiModels),
-+            buildVideoProviderModelLists(data.enabledVideoAiProviders, data.enabledAiModels),
-+            buildEmbeddingProviderModelLists(
-+              // Older server/runtime payloads may not include the new embedding provider bucket yet.
-+              data.enabledEmbeddingAiProviders ?? [],
-+              data.enabledAiModels,
-+            ),
-+          ]);
- 
-           return {
-             ...data,
-@@ -516,6 +559,7 @@
-             enabledChatModelList,
-             enabledImageModelList,
-             enabledVideoModelList,
-+            enabledEmbeddingModelList,
-           };
-         }
- 
-@@ -523,6 +567,12 @@
-           (provider) => provider.enabled,
-         ).map((item) => ({ id: item.id, name: item.name, source: AiProviderSourceEnum.Builtin }));
- 
-+        const enabledEmbeddingAiProviders = enabledAiProviders.filter((provider) => {
-+          return builtinAiModelList.some(
-+            (model) => model.providerId === provider.id && model.type === 'embedding',
-+          );
-+        });
-+
-         const enabledChatAiProviders = enabledAiProviders.filter((provider) => {
-           return builtinAiModelList.some(
-             (model) => model.providerId === provider.id && model.type === 'chat',
-@@ -547,12 +597,17 @@
- 
-         // Build model lists for non-login state as well
-         const enabledAiModels = builtinAiModelList.filter((m) => m.enabled);
--        const [enabledChatModelList, enabledImageModelList, enabledVideoModelList] =
--          await Promise.all([
--            buildChatProviderModelLists(enabledChatAiProviders, enabledAiModels),
--            buildImageProviderModelLists(enabledImageAiProviders, enabledAiModels),
--            buildVideoProviderModelLists(enabledVideoAiProviders, enabledAiModels),
--          ]);
-+        const [
-+          enabledChatModelList,
-+          enabledImageModelList,
-+          enabledVideoModelList,
-+          enabledEmbeddingModelList,
-+        ] = await Promise.all([
-+          buildChatProviderModelLists(enabledChatAiProviders, enabledAiModels),
-+          buildImageProviderModelLists(enabledImageAiProviders, enabledAiModels),
-+          buildVideoProviderModelLists(enabledVideoAiProviders, enabledAiModels),
-+          buildEmbeddingProviderModelLists(enabledEmbeddingAiProviders, enabledAiModels),
-+        ]);
- 
-         return {
-           builtinAiModelList,
-@@ -560,6 +615,8 @@
-           enabledAiProviders,
-           enabledChatAiProviders,
-           enabledChatModelList,
-+          enabledEmbeddingAiProviders,
-+          enabledEmbeddingModelList,
-           enabledImageAiProviders,
+           const [
+@@ -636,6 +638,7 @@ export class AiProviderActionImpl {
            enabledImageModelList,
            enabledVideoAiProviders,
-@@ -578,6 +635,7 @@
-               enabledAiModels: data.enabledAiModels,
-               enabledAiProviders: data.enabledAiProviders,
-               enabledChatModelList: data.enabledChatModelList || [],
-+              enabledEmbeddingModelList: data.enabledEmbeddingModelList || [],
-               enabledImageModelList: data.enabledImageModelList || [],
-               enabledVideoModelList: data.enabledVideoModelList || [],
-               isInitAiProviderRuntimeState: true,
-diff --git a/apps/server/src/routers/lambda/__tests__/aiProvider.test.ts b/apps/server/src/routers/lambda/__tests__/aiProvider.test.ts
-index 57b7c44974..d31259d768 100644
---- a/apps/server/src/routers/lambda/__tests__/aiProvider.test.ts
-+++ b/apps/server/src/routers/lambda/__tests__/aiProvider.test.ts
-@@ -60,0 +61 @@ describe('aiProviderRouter', () => {
-+    enabledEmbeddingAiProviders: [],
-diff --git a/apps/server/src/services/memory/userMemory/__tests__/extract.runtime.test.ts b/apps/server/src/services/memory/userMemory/__tests__/extract.runtime.test.ts
-index f13f659c98..79494e8f9b 100644
---- a/apps/server/src/services/memory/userMemory/__tests__/extract.runtime.test.ts
-+++ b/apps/server/src/services/memory/userMemory/__tests__/extract.runtime.test.ts
-@@ -15,0 +16 @@ const createRuntimeState = (models: EnabledAiModel[], keyVaults: Record<string,
-+    enabledEmbeddingAiProviders: [],
-diff --git a/apps/server/src/services/memory/userMemory/persona/__tests__/service.test.ts b/apps/server/src/services/memory/userMemory/persona/__tests__/service.test.ts
-index 87fe7eacf6..dcbd409297 100644
---- a/apps/server/src/services/memory/userMemory/persona/__tests__/service.test.ts
-+++ b/apps/server/src/services/memory/userMemory/persona/__tests__/service.test.ts
-@@ -92,0 +93 @@ beforeEach(async () => {
-+    enabledEmbeddingAiProviders: [],
-@@ -155,0 +157 @@ describe('UserPersonaService', () => {
-+      enabledEmbeddingAiProviders: [],
-diff --git a/packages/database/src/repositories/aiInfra/__tests__/getAiProviderRuntimeState.test.ts b/packages/database/src/repositories/aiInfra/__tests__/getAiProviderRuntimeState.test.ts
-index f63f79f111..0212445606 100644
---- a/packages/database/src/repositories/aiInfra/__tests__/getAiProviderRuntimeState.test.ts
-+++ b/packages/database/src/repositories/aiInfra/__tests__/getAiProviderRuntimeState.test.ts
-@@ -93,0 +94 @@ describe('AiInfraRepos', () => {
-+        enabledEmbeddingAiProviders: [],
-@@ -177,0 +179 @@ describe('AiInfraRepos', () => {
-+        enabledEmbeddingAiProviders: [],
-diff --git a/packages/database/src/repositories/aiInfra/__tests__/tryMatchingProviderFrom.test.ts b/packages/database/src/repositories/aiInfra/__tests__/tryMatchingProviderFrom.test.ts
-index 1cf3050b64..12c47b329d 100644
---- a/packages/database/src/repositories/aiInfra/__tests__/tryMatchingProviderFrom.test.ts
-+++ b/packages/database/src/repositories/aiInfra/__tests__/tryMatchingProviderFrom.test.ts
-@@ -32,0 +33 @@ describe('AiInfraRepos', () => {
-+      enabledEmbeddingAiProviders: [],
-diff --git a/packages/database/src/repositories/aiInfra/index.ts b/packages/database/src/repositories/aiInfra/index.ts
-index 6e618106b1..45d194923a 100644
---- a/packages/database/src/repositories/aiInfra/index.ts
-+++ b/packages/database/src/repositories/aiInfra/index.ts
-@@ -266,47 +266,53 @@ export class AiInfraRepos {
-     const [result, enabledAiProviders, allModels] = await Promise.all([
-       this.aiProviderModel.getAiProviderRuntimeConfig(decryptor),
-       this.getUserEnabledProviderList(),
-       this.getEnabledModels(false),
-     ]);
- 
-     const runtimeConfig = result;
-     Object.entries(result).forEach(([key, value]) => {
-       runtimeConfig[key] = merge(this.providerConfigs[key] || {}, value);
-     });
-     const enabledAiModels = allModels.filter((model) => model.enabled);
-     const enabledChatAiProviders = enabledAiProviders.filter((provider) => {
-       return allModels.some((model) => model.providerId === provider.id && model.type === 'chat');
-     });
-     const enabledImageAiProviders = enabledAiProviders.filter((provider) => {
-       return allModels.some((model) => model.providerId === provider.id && model.type === 'image');
-     });
-     const enabledVideoAiProviders = enabledAiProviders.filter((provider) => {
-       return allModels.some((model) => model.providerId === provider.id && model.type === 'video');
-     });
-+    const enabledEmbeddingAiProviders = enabledAiProviders.filter((provider) => {
-+      return allModels.some(
-+        (model) => model.providerId === provider.id && model.type === 'embedding',
-+      );
-+    });
- 
-     return {
-       enabledAiModels,
-       enabledAiProviders,
-       enabledChatAiProviders,
-       enabledImageAiProviders,
-       enabledVideoAiProviders,
-+      enabledEmbeddingAiProviders,
-       runtimeConfig,
-     };
-   };
- 
-   /**
-    * Resolve the best provider for a given model.
-    *
-    * Matching pipeline:
-    * 1) Build a map of provider -> enabled model ids (disabled models are ignored).
-    * 2) Walk providers in priority order: preferred providers (if any) -> explicit fallback provider -> remaining providers that have enabled models.
-    * 3) For each provider, look for an exact modelId match or any preferred model alias.
-    * 4) If nothing matches, fall back to the configured provider (with a warning) or throw when no fallback exists.
-    *
-    * Handles:
-    * - Preferred provider ordering (case-insensitive).
-    * - Preferred model aliases.
-    * - Disabled models are skipped.
-    * - Missing matches: falls back when possible, otherwise surfaces an error.
-    *
-    * Edge cases to note:
-diff --git a/packages/model-bank/src/aiModels/__tests__/index.test.ts b/packages/model-bank/src/aiModels/__tests__/index.test.ts
-index d9081213f6..8d252b75e2 100644
---- a/packages/model-bank/src/aiModels/__tests__/index.test.ts
-+++ b/packages/model-bank/src/aiModels/__tests__/index.test.ts
-@@ -86,0 +87,14 @@ describe('knowledgeCutoff backfill', () => {
-+  it('keeps builtin embedding models enabled', () => {
-+    const openaiEmbeddingModels = LOBE_DEFAULT_MODEL_LIST.filter(
-+      (m) => m.providerId === ModelProvider.OpenAI && m.type === 'embedding',
-+    );
-+    expect(openaiEmbeddingModels.length).toBeGreaterThan(0);
-+    expect(openaiEmbeddingModels.every((m) => m.enabled)).toBe(true);
-+
-+    const vercelEmbeddingModels = LOBE_DEFAULT_MODEL_LIST.filter(
-+      (m) => m.providerId === ModelProvider.VercelAIGateway && m.type === 'embedding',
-+    );
-+    expect(vercelEmbeddingModels.length).toBeGreaterThan(0);
-+    expect(vercelEmbeddingModels.every((m) => m.enabled)).toBe(true);
-+  });
-+
-diff --git a/packages/model-bank/src/aiModels/openai.ts b/packages/model-bank/src/aiModels/openai.ts
-index f74b0d79d6..ce3dac8d42 100644
---- a/packages/model-bank/src/aiModels/openai.ts
-+++ b/packages/model-bank/src/aiModels/openai.ts
-@@ -1496,0 +1497 @@ export const openaiEmbeddingModels: AIEmbeddingModelCard[] = [
-+    enabled: true,
-@@ -1510,0 +1512 @@ export const openaiEmbeddingModels: AIEmbeddingModelCard[] = [
-+    enabled: true,
-diff --git a/packages/model-bank/src/aiModels/vercelaigateway.ts b/packages/model-bank/src/aiModels/vercelaigateway.ts
-index 11d3c0c1e4..1db471f664 100644
---- a/packages/model-bank/src/aiModels/vercelaigateway.ts
-+++ b/packages/model-bank/src/aiModels/vercelaigateway.ts
-@@ -1684,0 +1685 @@ const vercelAIGatewayEmbeddingModels: AIEmbeddingModelCard[] = [
-+    enabled: true,
-@@ -1695,0 +1697 @@ const vercelAIGatewayEmbeddingModels: AIEmbeddingModelCard[] = [
-+    enabled: true,
-@@ -1706,0 +1709 @@ const vercelAIGatewayEmbeddingModels: AIEmbeddingModelCard[] = [
-+    enabled: true,
-@@ -1717,0 +1721 @@ const vercelAIGatewayEmbeddingModels: AIEmbeddingModelCard[] = [
-+    enabled: true,
-@@ -1728,0 +1733 @@ const vercelAIGatewayEmbeddingModels: AIEmbeddingModelCard[] = [
-+    enabled: true,
-@@ -1739,0 +1745 @@ const vercelAIGatewayEmbeddingModels: AIEmbeddingModelCard[] = [
-+    enabled: true,
-@@ -1750,0 +1757 @@ const vercelAIGatewayEmbeddingModels: AIEmbeddingModelCard[] = [
-+    enabled: true,
-@@ -1760,0 +1768 @@ const vercelAIGatewayEmbeddingModels: AIEmbeddingModelCard[] = [
-+    enabled: true,
-@@ -1770,0 +1779 @@ const vercelAIGatewayEmbeddingModels: AIEmbeddingModelCard[] = [
-+    enabled: true,
-@@ -1780,0 +1790 @@ const vercelAIGatewayEmbeddingModels: AIEmbeddingModelCard[] = [
-+    enabled: true,
-diff --git a/packages/types/src/aiProvider.ts b/packages/types/src/aiProvider.ts
-index 490c0cb0d2..ce456856fa 100644
---- a/packages/types/src/aiProvider.ts
-+++ b/packages/types/src/aiProvider.ts
-@@ -397,0 +398 @@ export interface AiProviderRuntimeState {
-+  enabledEmbeddingAiProviders: EnabledProvider[];
-diff --git a/src/features/ModelSelect/index.tsx b/src/features/ModelSelect/index.tsx
-index 8c3a6fa07e..50b5788317 100644
---- a/src/features/ModelSelect/index.tsx
-+++ b/src/features/ModelSelect/index.tsx
-@@ -4 +4 @@ import { createStaticStyles } from 'antd-style';
--import { type ReactNode } from 'react';
-+import type { ReactNode } from 'react';
-@@ -8,2 +8,3 @@ import { ModelItemRender, ProviderItemRender, TAG_CLASSNAME } from '@/components
--import { useEnabledChatModels } from '@/hooks/useEnabledChatModels';
--import { type EnabledProviderWithModels } from '@/types/aiProvider';
-+import type { EnabledModelListType } from '@/hooks/useEnabledModels';
-+import { useEnabledModels } from '@/hooks/useEnabledModels';
-+import type { EnabledProviderWithModels } from '@/types/aiProvider';
-@@ -43,0 +45 @@ interface ModelSelectProps extends Pick<
-+  modelType?: EnabledModelListType;
-@@ -62,0 +65 @@ const ModelSelect = memo<ModelSelectProps>(
-+    modelType,
-@@ -65 +68 @@ const ModelSelect = memo<ModelSelectProps>(
--    const enabledList = useEnabledChatModels();
-+    const enabledList = useEnabledModels(modelType ?? 'chat');
-diff --git a/src/features/ServiceModel/ModelAssignmentsForm.tsx b/src/features/ServiceModel/ModelAssignmentsForm.tsx
-index 8fda96653f..d650219b8f 100644
---- a/src/features/ServiceModel/ModelAssignmentsForm.tsx
-+++ b/src/features/ServiceModel/ModelAssignmentsForm.tsx
-@@ -13,0 +14 @@ import ModelSelect from '@/features/ModelSelect';
-+import type { EnabledModelListType } from '@/hooks/useEnabledModels';
-@@ -45,0 +47,4 @@ const MEMORY_MODEL_ITEMS: SystemAgentModelItem[] = [
-+const MEMORY_MODEL_TYPE_MAP: Partial<Record<UserServiceModelConfigKey, EnabledModelListType>> = {
-+  userMemoryEmbedding: 'embedding',
-+};
-+
-@@ -153,0 +159 @@ const ModelAssignmentsForm = memo(() => {
-+            modelType={MEMORY_MODEL_TYPE_MAP[key]}
-diff --git a/src/hooks/useEnabledChatModels.ts b/src/hooks/useEnabledChatModels.ts
-index 37e0ec807d..abd259611f 100644
---- a/src/hooks/useEnabledChatModels.ts
-+++ b/src/hooks/useEnabledChatModels.ts
-@@ -1 +1 @@
--import isEqual from 'fast-deep-equal';
-+import type { EnabledProviderWithModels } from '@/types/aiProvider';
-@@ -3,2 +3 @@ import isEqual from 'fast-deep-equal';
--import { useAiInfraStore } from '@/store/aiInfra';
--import { type EnabledProviderWithModels } from '@/types/aiProvider';
-+import { useEnabledModels } from './useEnabledModels';
-@@ -7,3 +6 @@ export const useEnabledChatModels = (): EnabledProviderWithModels[] => {
--  const enabledChatModelList = useAiInfraStore((s) => s.enabledChatModelList, isEqual);
--
--  return enabledChatModelList || [];
-+  return useEnabledModels('chat');
-diff --git a/src/hooks/useEnabledModels.ts b/src/hooks/useEnabledModels.ts
-new file mode 100644
-index 0000000000..8b92972455
---- /dev/null
-+++ b/src/hooks/useEnabledModels.ts
-@@ -0,0 +1,21 @@
-+import isEqual from 'fast-deep-equal';
-+
-+import { aiProviderSelectors, useAiInfraStore } from '@/store/aiInfra';
-+import type { AIProviderStoreState } from '@/store/aiInfra/initialState';
-+import type { EnabledProviderWithModels } from '@/types/aiProvider';
-+
-+export type EnabledModelListType = 'chat' | 'embedding' | 'image' | 'video';
-+
-+const enabledModelListSelectorMap = {
-+  chat: aiProviderSelectors.enabledChatModelList,
-+  image: aiProviderSelectors.enabledImageModelList,
-+  video: aiProviderSelectors.enabledVideoModelList,
-+  embedding: aiProviderSelectors.enabledEmbeddingModelList,
-+} satisfies Record<EnabledModelListType, (s: AIProviderStoreState) => EnabledProviderWithModels[]>;
-+
-+export const useEnabledModels = (modelType: EnabledModelListType): EnabledProviderWithModels[] => {
-+  const selector = enabledModelListSelectorMap[modelType];
-+  const enabledModelList = useAiInfraStore(selector, isEqual);
-+
-+  return enabledModelList || [];
-+};
-diff --git a/src/store/aiInfra/slices/aiProvider/initialState.ts b/src/store/aiInfra/slices/aiProvider/initialState.ts
-index 7a7bb6949c..39edcb3e58 100644
---- a/src/store/aiInfra/slices/aiProvider/initialState.ts
-+++ b/src/store/aiInfra/slices/aiProvider/initialState.ts
-@@ -26,0 +27 @@ export interface AIProviderState {
-+  enabledEmbeddingModelList?: EnabledProviderWithModels[];
+           enabledVideoModelList,
++          enabledEmbeddingAiProviders,
+           runtimeConfig: {},
+         };
+       },
 diff --git a/src/store/aiInfra/slices/aiProvider/selectors.ts b/src/store/aiInfra/slices/aiProvider/selectors.ts
-index 3f67cd34d5..54bba9622d 100644
+index 30f9ee25244f7222d1fa8f6ebea329e731acb907..54bba9622d0215a18be2faa3c077391e70f3c67e 100644
 --- a/src/store/aiInfra/slices/aiProvider/selectors.ts
 +++ b/src/store/aiInfra/slices/aiProvider/selectors.ts
-@@ -17,0 +18,2 @@ const disabledCustomAiProviderList = (s: AIProviderStoreState) =>
+@@ -15,12 +15,14 @@ const disabledAiProviderList = (s: AIProviderStoreState) =>
+ const disabledCustomAiProviderList = (s: AIProviderStoreState) =>
+   s.aiProviderList.filter((item) => !item.enabled && item.source === AiProviderSourceEnum.Custom);
+ 
+-const enabledEmbeddingModelList = (s: AIProviderStoreState) => s.enabledEmbeddingModelList || [];
 +const enabledChatModelList = (s: AIProviderStoreState) => s.enabledChatModelList || [];
-+
-@@ -21,0 +24,2 @@ const enabledVideoModelList = (s: AIProviderStoreState) => s.enabledVideoModelLi
+ 
+ const enabledImageModelList = (s: AIProviderStoreState) => s.enabledImageModelList || [];
+ 
+ const enabledVideoModelList = (s: AIProviderStoreState) => s.enabledVideoModelList || [];
+ 
 +const enabledEmbeddingModelList = (s: AIProviderStoreState) => s.enabledEmbeddingModelList || [];
 +
-@@ -139,0 +144 @@ export const aiProviderSelectors = {
+ const isProviderEnabled = (id: string) => (s: AIProviderStoreState) =>
+   enabledAiProviderList(s).some((i) => i.id === id);
+ 
+@@ -139,9 +141,10 @@ export const aiProviderSelectors = {
+   disabledAiProviderList,
+   disabledCustomAiProviderList,
+   enabledAiProviderList,
+-  enabledEmbeddingModelList,
 +  enabledChatModelList,
-@@ -141,0 +147 @@ export const aiProviderSelectors = {
+   enabledImageModelList,
+   enabledVideoModelList,
 +  enabledEmbeddingModelList,
+   isActiveProviderApiKeyNotEmpty,
+   isActiveProviderEndpointNotEmpty,
+   isAiProviderConfigLoading,

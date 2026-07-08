@@ -1,8 +1,8 @@
 diff --git a/apps/server/src/modules/AgentRuntime/executors/callLlm.ts b/apps/server/src/modules/AgentRuntime/executors/callLlm.ts
-index c2e15993a8cced268812fc08b514cb9eacbacd93..ee38c979972d2975ea6ce9b4fa0b7acc84dc9938 100644
+index f67d6b8a4024a8c19c8c349086ce7948e65eaa1f..216d27b303cfcc4c93f3c06483140a137577434b 100644
 --- a/apps/server/src/modules/AgentRuntime/executors/callLlm.ts
 +++ b/apps/server/src/modules/AgentRuntime/executors/callLlm.ts
-@@ -587,7 +587,20 @@ export const callLlm =
+@@ -602,7 +602,20 @@ export const callLlm =
          let credsListStr = '';
          if (ctx.userId) {
            try {
@@ -21,9 +21,9 @@ index c2e15993a8cced268812fc08b514cb9eacbacd93..ee38c979972d2975ea6ce9b4fa0b7acc
 +              accessToken: marketAccessToken,
 +              userInfo: { userId: ctx.userId },
 +            });
-             const credsResult = await marketService.market.creds.list();
-             const userCreds = (credsResult as any)?.data ?? [];
-             credsListStr = generateCredsList(
+             // Inside a workspace, the agent must only see the workspace's shared
+             // organization credentials — personal creds are not visible here (LOBE-10978).
+             const credsResult = ctx.workspaceId
 diff --git a/apps/server/src/routers/lambda/aiAgent.ts b/apps/server/src/routers/lambda/aiAgent.ts
 index 83dafdf13beac5bea825022f321954be975f5950..e23bc30f4a40d4a768e6195676bcba50fcf874f2 100644
 --- a/apps/server/src/routers/lambda/aiAgent.ts
@@ -106,10 +106,10 @@ index 7c16f22bddeacaceab043fb1f50e7744885199f7..bae39c73f4b3c2b4ad18b9a3817e98f5
 +    .mutation(async () => ({ success: true })),
  });
 diff --git a/apps/server/src/services/aiAgent/index.ts b/apps/server/src/services/aiAgent/index.ts
-index 4b1bb243255a7e830a6cef7831c7c249f42280a8..449f4bf2e2c23d70afb6eb8cd8e1bcfbf5f590f5 100644
+index a98a1f35eb85727832121b2eecabdcbacfd33e70..0852ab5b67b206dbee972d22b239da9ab045dd6f 100644
 --- a/apps/server/src/services/aiAgent/index.ts
 +++ b/apps/server/src/services/aiAgent/index.ts
-@@ -432,7 +432,7 @@ export class AiAgentService {
+@@ -437,7 +437,7 @@ export class AiAgentService {
    private readonly threadModel: ThreadModel;
    private readonly topicModel: TopicModel;
    private readonly agentRuntimeService: AgentRuntimeService;
@@ -118,7 +118,7 @@ index 4b1bb243255a7e830a6cef7831c7c249f42280a8..449f4bf2e2c23d70afb6eb8cd8e1bcfb
    private readonly composioService: ComposioService;
  
    private readonly workspaceId?: string;
-@@ -440,7 +440,11 @@ export class AiAgentService {
+@@ -445,7 +445,11 @@ export class AiAgentService {
    constructor(
      db: LobeChatDatabase,
      userId: string,
@@ -131,7 +131,7 @@ index 4b1bb243255a7e830a6cef7831c7c249f42280a8..449f4bf2e2c23d70afb6eb8cd8e1bcfb
    ) {
      this.userId = userId;
      this.db = db;
-@@ -474,10 +478,37 @@ export class AiAgentService {
+@@ -479,10 +483,37 @@ export class AiAgentService {
        },
        workspaceId: wsId,
      });
@@ -170,21 +170,22 @@ index 4b1bb243255a7e830a6cef7831c7c249f42280a8..449f4bf2e2c23d70afb6eb8cd8e1bcfb
    private async resolveOperationTaskId(
      idOrIdentifier?: string | null,
    ): Promise<string | undefined> {
-@@ -1627,10 +1658,11 @@ export class AiAgentService {
+@@ -1632,11 +1663,12 @@ export class AiAgentService {
        const githubCredKey =
          agentConfig.agencyConfig?.heterogeneousProvider?.env?.GITHUB_CRED_KEY ?? 'github';
        try {
--        const list = await this.marketService.market.creds.list();
 +        const marketService = await this.getMarketService();
-+        const list = await marketService.market.creds.list();
+         // Inside a workspace, the GitHub cred must come from the workspace's shared
+         // organization credentials, not the operator's personal creds (LOBE-10978).
+         const credsAccessor = this.workspaceId
+-          ? this.marketService.market.organizations.creds({ workspaceId: this.workspaceId })
+-          : this.marketService.market.creds;
++          ? marketService.market.organizations.creds({ workspaceId: this.workspaceId })
++          : marketService.market.creds;
+         const list = await credsAccessor.list();
          const cred = list.data?.find((c: { key: string }) => c.key === githubCredKey);
          if (cred) {
--          const full = await this.marketService.market.creds.get(cred.id, { decrypt: true });
-+          const full = await marketService.market.creds.get(cred.id, { decrypt: true });
-           const vals = (full as any).plaintext ?? (full as any).values ?? {};
-           githubToken = vals.access_token ?? vals.token;
-         }
-@@ -2031,6 +2063,7 @@ export class AiAgentService {
+@@ -2041,6 +2073,7 @@ export class AiAgentService {
            // `aiAgent` import. Only this cloud-CLI branch needs it.
            const { spawnHeteroSandbox } =
              await import('@/server/services/heterogeneousAgent/sandboxRunner');
@@ -192,7 +193,7 @@ index 4b1bb243255a7e830a6cef7831c7c249f42280a8..449f4bf2e2c23d70afb6eb8cd8e1bcfb
            // The sandbox authenticates its nested `lh` calls with this JWT. The
            // narrow `hetero-operation` token (used for the device-dispatch path
            // above) is rejected by `oidcAuth`, so CC capabilities that hit
-@@ -2045,7 +2078,7 @@ export class AiAgentService {
+@@ -2055,7 +2088,7 @@ export class AiAgentService {
              agentType: heteroType as 'claude-code' | 'codex',
              args: heteroExecArgs,
              jwt: sandboxJwt,
@@ -201,7 +202,7 @@ index 4b1bb243255a7e830a6cef7831c7c249f42280a8..449f4bf2e2c23d70afb6eb8cd8e1bcfb
            }).catch(async (err) => {
              // Fire-and-forget: execAgent has already returned `autoStarted`, and
              // the sandbox never reached the point of calling heteroFinish. Drive
-@@ -2299,7 +2332,8 @@ export class AiAgentService {
+@@ -2309,7 +2342,8 @@ export class AiAgentService {
  
        // 5c. Fetch LobeHub Skills manifests
        try {
@@ -377,7 +378,7 @@ index c2eef901f4f6648856b6181429dc67c5c6023a1b..35af6c5e6050875c054ceee811503d3b
      const sandboxService = createSandboxService({
        fileService,
 diff --git a/apps/server/src/services/toolExecution/serverRuntimes/creds.ts b/apps/server/src/services/toolExecution/serverRuntimes/creds.ts
-index 086eb73c2958b25b193b854d1fd248a2d40dadd9..fe2f4312576164dd2f32734620706decfc55bdb4 100644
+index 0adff7b833bb82b0d31d460e2288f0dda0358b93..f62f01aaeba61acafa2bed1f41b15ba8f36d9f30 100644
 --- a/apps/server/src/services/toolExecution/serverRuntimes/creds.ts
 +++ b/apps/server/src/services/toolExecution/serverRuntimes/creds.ts
 @@ -5,6 +5,7 @@ import {
@@ -388,7 +389,7 @@ index 086eb73c2958b25b193b854d1fd248a2d40dadd9..fe2f4312576164dd2f32734620706dec
  import { MarketService } from '@/server/services/market';
  
  import { type ServerRuntimeRegistration } from './types';
-@@ -144,7 +145,7 @@ class ServerCredsService implements ICredsService {
+@@ -161,7 +162,7 @@ class ServerCredsService implements ICredsService {
   * Per-request runtime (needs userId, topicId)
   */
  export const credsRuntime: ServerRuntimeRegistration = {
@@ -397,8 +398,8 @@ index 086eb73c2958b25b193b854d1fd248a2d40dadd9..fe2f4312576164dd2f32734620706dec
      if (!context.userId) {
        throw new Error('userId is required for Creds execution');
      }
-@@ -155,7 +156,19 @@ export const credsRuntime: ServerRuntimeRegistration = {
-       context.topicId,
+@@ -173,7 +174,19 @@ export const credsRuntime: ServerRuntimeRegistration = {
+       context.workspaceId,
      );
  
 -    const marketService = new MarketService({ userInfo: { userId: context.userId } });
@@ -415,6 +416,6 @@ index 086eb73c2958b25b193b854d1fd248a2d40dadd9..fe2f4312576164dd2f32734620706dec
 +    }
 +
 +    const marketService = new MarketService({ accessToken, userInfo: { userId: context.userId } });
-     const credsService = new ServerCredsService(marketService);
+     const credsService = new ServerCredsService(marketService, context.workspaceId);
  
      return new CredsExecutionRuntime(credsService, {
