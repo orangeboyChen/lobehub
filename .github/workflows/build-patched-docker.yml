@@ -221,8 +221,6 @@ jobs:
           git apply --unidiff-zero ../automation/patches/bug/lobehub-skill.patch
           git apply --unidiff-zero --check ../automation/patches/bug/docker-canvas-native-packages.patch
           git apply --unidiff-zero ../automation/patches/bug/docker-canvas-native-packages.patch
-          git apply --unidiff-zero --check ../automation/patches/pr-16627/pr-16627.patch
-          git apply --unidiff-zero ../automation/patches/pr-16627/pr-16627.patch
           git apply --unidiff-zero --check ../automation/patches/pr-16609/pr-16609.patch
           git apply --unidiff-zero ../automation/patches/pr-16609/pr-16609.patch
           git apply --unidiff-zero --check ../automation/patches/pr-16616/pr-16616.patch
