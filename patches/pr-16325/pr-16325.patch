@@ -351,3 +351,85 @@ index c2eef901f4f6648856b6181429dc67c5c6023a1b..35af6c5e6050875c054ceee811503d3b
      const fileService = new FileService(context.serverDB, context.userId, context.workspaceId);
      const sandboxService = createSandboxService({
        fileService,
+       marketService,
+       serverDB: context.serverDB,
+       topicId: context.topicId,
+       userId: context.userId,
+     });
+ 
+     return new CloudSandboxExecutionRuntime(sandboxService);
+   },
+   identifier: CloudSandboxIdentifier,
+ };
+diff --git a/apps/server/src/services/toolExecution/serverRuntimes/creds.ts b/apps/server/src/services/toolExecution/serverRuntimes/creds.ts
+index b651c28317669871ec66db585994ce13f895fbee..53827722b34c25580f20b788baaa459d2ce6958a 100644
+--- a/apps/server/src/services/toolExecution/serverRuntimes/creds.ts
++++ b/apps/server/src/services/toolExecution/serverRuntimes/creds.ts
+@@ -5,6 +5,8 @@ import {
+ } from '@lobechat/builtin-tool-creds';
+ import debug from 'debug';
+ 
++import { UserModel } from '@/database/models/user';
++
+ import { MarketService } from '@/server/services/market';
+ 
+ import { type ServerRuntimeRegistration } from './types';
+@@ -161,7 +163,7 @@ class ServerCredsService implements ICredsService {
+  * Per-request runtime (needs userId, topicId)
+  */
+ export const credsRuntime: ServerRuntimeRegistration = {
+-  factory: (context) => {
++  factory: async (context) => {
+     if (!context.userId) {
+       throw new Error('userId is required for Creds execution');
+     }
+@@ -173,7 +175,21 @@ export const credsRuntime: ServerRuntimeRegistration = {
+       context.workspaceId,
+     );
+ 
+-    const marketService = new MarketService({ userInfo: { userId: context.userId } });
++    let accessToken: string | undefined;
++    if (context.serverDB) {
++      try {
++        const userModel = new UserModel(context.serverDB, context.userId);
++        const userSettings = await userModel.getUserSettings();
++        accessToken = (userSettings?.market as any)?.accessToken;
++      } catch {
++        // non-fatal — MarketService will fall back to trustedClientToken
++      }
++    }
++
++    const marketService = new MarketService({
++      accessToken,
++      userInfo: { userId: context.userId },
++    });
+     const credsService = new ServerCredsService(marketService, context.workspaceId);
+ 
+     return new CredsExecutionRuntime(credsService, {
+diff --git a/apps/server/src/modules/AgentRuntime/adapters/serverCallLlmContextBuilder.ts b/apps/server/src/modules/AgentRuntime/adapters/serverCallLlmContextBuilder.ts
+index ccd66f4a432cb1a5ce50bfdb2ae84e2c1dbcf552..98624fcc0c4ff784395e7228f13f63077ce37758 100644
+--- a/apps/server/src/modules/AgentRuntime/adapters/serverCallLlmContextBuilder.ts
++++ b/apps/server/src/modules/AgentRuntime/adapters/serverCallLlmContextBuilder.ts
+@@ -282,7 +282,20 @@ export const buildServerCallLlmContext = async ({
+   let credsListStr = '';
+   if (ctx.userId) {
+     try {
+-      const marketService = new MarketService({ userInfo: { userId: ctx.userId } });
++      let accessToken: string | undefined;
++      if (ctx.serverDB) {
++        try {
++          const userModel = new UserModel(ctx.serverDB, ctx.userId);
++          const userSettings = await userModel.getUserSettings();
++          accessToken = (userSettings?.market as any)?.accessToken;
++        } catch {
++          // non-fatal — MarketService will fall back to trustedClientToken
++        }
++      }
++      const marketService = new MarketService({
++        accessToken,
++        userInfo: { userId: ctx.userId },
++      });
+       // Inside a workspace, the agent must only see the workspace's shared
+       // organization credentials — personal creds are not visible here (LOBE-10978).
+       const credsResult = ctx.workspaceId
+         ? await marketService.market.organizations.creds({ workspaceId: ctx.workspaceId }).list()
