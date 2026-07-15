@@ -1,8 +1,34 @@
+diff --git a/apps/server/src/modules/AgentRuntime/adapters/serverCallLlmContextBuilder.ts b/apps/server/src/modules/AgentRuntime/adapters/serverCallLlmContextBuilder.ts
+index f45794417b..aa2e0d25c3 100644
+--- a/apps/server/src/modules/AgentRuntime/adapters/serverCallLlmContextBuilder.ts
++++ b/apps/server/src/modules/AgentRuntime/adapters/serverCallLlmContextBuilder.ts
+@@ -282,7 +282,20 @@ export const buildServerCallLlmContext = async ({
+   let credsListStr = '';
+   if (ctx.userId) {
+     try {
+-      const marketService = new MarketService({ userInfo: { userId: ctx.userId } });
++      let accessToken: string | undefined;
++      if (ctx.serverDB) {
++        try {
++          const userModel = new UserModel(ctx.serverDB, ctx.userId);
++          const userSettings = await userModel.getUserSettings();
++          accessToken = (userSettings?.market as any)?.accessToken;
++        } catch {
++          // non-fatal — MarketService will fall back to trustedClientToken
++        }
++      }
++      const marketService = new MarketService({
++        accessToken,
++        userInfo: { userId: ctx.userId },
++      });
+       // Inside a workspace, the agent must only see the workspace's shared
+       // organization credentials — personal creds are not visible here (LOBE-10978).
+       const credsResult = ctx.workspaceId
 diff --git a/apps/server/src/routers/lambda/aiAgent.ts b/apps/server/src/routers/lambda/aiAgent.ts
-index 83dafdf13beac5bea825022f321954be975f5950..e23bc30f4a40d4a768e6195676bcba50fcf874f2 100644
+index 52cdeb60ae..d398b034af 100644
 --- a/apps/server/src/routers/lambda/aiAgent.ts
 +++ b/apps/server/src/routers/lambda/aiAgent.ts
-@@ -18,6 +18,7 @@ import { wsCompatProcedure } from '@/business/server/trpc-middlewares/workspaceA
+@@ -19,6 +19,7 @@ import { wsCompatProcedure } from '@/business/server/trpc-middlewares/workspaceA
  import { MessageModel } from '@/database/models/message';
  import { ThreadModel } from '@/database/models/thread';
  import { TopicModel } from '@/database/models/topic';
@@ -10,7 +36,7 @@ index 83dafdf13beac5bea825022f321954be975f5950..e23bc30f4a40d4a768e6195676bcba50
  import { agentOperations, topics } from '@/database/schemas';
  import { heteroAuthedProcedure, router } from '@/libs/trpc/lambda';
  import { serverDatabase } from '@/libs/trpc/lambda/middleware';
-@@ -491,12 +492,26 @@ const aiAgentProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts)
+@@ -519,12 +520,26 @@ const aiAgentProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts)
    const { ctx } = opts;
    const wsId = ctx.workspaceId ?? undefined;
  
@@ -39,7 +65,7 @@ index 83dafdf13beac5bea825022f321954be975f5950..e23bc30f4a40d4a768e6195676bcba50
        heterogeneousAgentService: new HeterogeneousAgentService(ctx.serverDB, ctx.userId, {
          workspaceId: wsId,
 diff --git a/apps/server/src/routers/lambda/taskTemplate.ts b/apps/server/src/routers/lambda/taskTemplate.ts
-index 7c16f22bddeacaceab043fb1f50e7744885199f7..bae39c73f4b3c2b4ad18b9a3817e98f5237f5174 100644
+index 7c16f22bdd..bae39c73f4 100644
 --- a/apps/server/src/routers/lambda/taskTemplate.ts
 +++ b/apps/server/src/routers/lambda/taskTemplate.ts
 @@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
@@ -80,10 +106,10 @@ index 7c16f22bddeacaceab043fb1f50e7744885199f7..bae39c73f4b3c2b4ad18b9a3817e98f5
 +    .mutation(async () => ({ success: true })),
  });
 diff --git a/apps/server/src/services/aiAgent/index.ts b/apps/server/src/services/aiAgent/index.ts
-index a98a1f35eb85727832121b2eecabdcbacfd33e70..0852ab5b67b206dbee972d22b239da9ab045dd6f 100644
+index e508c3b7f6..6ce5dd4a7e 100644
 --- a/apps/server/src/services/aiAgent/index.ts
 +++ b/apps/server/src/services/aiAgent/index.ts
-@@ -437,7 +437,7 @@ export class AiAgentService {
+@@ -480,7 +480,7 @@ export class AiAgentService {
    private readonly threadModel: ThreadModel;
    private readonly topicModel: TopicModel;
    private readonly agentRuntimeService: AgentRuntimeService;
@@ -92,7 +118,7 @@ index a98a1f35eb85727832121b2eecabdcbacfd33e70..0852ab5b67b206dbee972d22b239da9a
    private readonly composioService: ComposioService;
  
    private readonly workspaceId?: string;
-@@ -445,7 +445,11 @@ export class AiAgentService {
+@@ -488,7 +488,11 @@ export class AiAgentService {
    constructor(
      db: LobeChatDatabase,
      userId: string,
@@ -105,21 +131,18 @@ index a98a1f35eb85727832121b2eecabdcbacfd33e70..0852ab5b67b206dbee972d22b239da9a
    ) {
      this.userId = userId;
      this.db = db;
-@@ -479,10 +483,37 @@ export class AiAgentService {
+@@ -523,10 +527,34 @@ export class AiAgentService {
        },
        workspaceId: wsId,
      });
 -    this.marketService = new MarketService({ userInfo: { userId } });
-+
-+    // marketService is used for creds, sandbox, skills etc.
-+    // Read accessToken from DB; if options.marketAccessToken is provided, use it as override.
 +    if (options?.marketAccessToken) {
 +      this._marketService = new MarketService({
 +        accessToken: options.marketAccessToken,
 +        userInfo: { userId },
 +      });
 +    }
-     this.composioService = new ComposioService({ db, userId });
+     this.composioService = new ComposioService({ db, userId, workspaceId: wsId });
    }
  
 +  private async getMarketService(): Promise<MarketService> {
@@ -131,7 +154,7 @@ index a98a1f35eb85727832121b2eecabdcbacfd33e70..0852ab5b67b206dbee972d22b239da9a
 +      const settings = await userModel.getUserSettings();
 +      accessToken = (settings?.market as any)?.accessToken;
 +    } catch {
-+      // non-fatal — MarketService will fall back to trustedClientToken
++      // non-fatal - MarketService falls back to trustedClientToken
 +    }
 +
 +    this._marketService = new MarketService({
@@ -144,7 +167,7 @@ index a98a1f35eb85727832121b2eecabdcbacfd33e70..0852ab5b67b206dbee972d22b239da9a
    private async resolveOperationTaskId(
      idOrIdentifier?: string | null,
    ): Promise<string | undefined> {
-@@ -1632,11 +1663,12 @@ export class AiAgentService {
+@@ -1828,11 +1856,12 @@ export class AiAgentService {
        const githubCredKey =
          agentConfig.agencyConfig?.heterogeneousProvider?.env?.GITHUB_CRED_KEY ?? 'github';
        try {
@@ -159,7 +182,7 @@ index a98a1f35eb85727832121b2eecabdcbacfd33e70..0852ab5b67b206dbee972d22b239da9a
          const list = await credsAccessor.list();
          const cred = list.data?.find((c: { key: string }) => c.key === githubCredKey);
          if (cred) {
-@@ -2041,6 +2073,7 @@ export class AiAgentService {
+@@ -2238,6 +2267,7 @@ export class AiAgentService {
            // `aiAgent` import. Only this cloud-CLI branch needs it.
            const { spawnHeteroSandbox } =
              await import('@/server/services/heterogeneousAgent/sandboxRunner');
@@ -167,7 +190,7 @@ index a98a1f35eb85727832121b2eecabdcbacfd33e70..0852ab5b67b206dbee972d22b239da9a
            // The sandbox authenticates its nested `lh` calls with this JWT. The
            // narrow `hetero-operation` token (used for the device-dispatch path
            // above) is rejected by `oidcAuth`, so CC capabilities that hit
-@@ -2055,7 +2088,7 @@ export class AiAgentService {
+@@ -2252,7 +2282,7 @@ export class AiAgentService {
              agentType: heteroType as 'claude-code' | 'codex',
              args: heteroExecArgs,
              jwt: sandboxJwt,
@@ -176,7 +199,7 @@ index a98a1f35eb85727832121b2eecabdcbacfd33e70..0852ab5b67b206dbee972d22b239da9a
            }).catch(async (err) => {
              // Fire-and-forget: execAgent has already returned `autoStarted`, and
              // the sandbox never reached the point of calling heteroFinish. Drive
-@@ -2309,7 +2342,8 @@ export class AiAgentService {
+@@ -2523,7 +2553,8 @@ export class AiAgentService {
  
        // 5c. Fetch LobeHub Skills manifests
        try {
@@ -187,7 +210,7 @@ index a98a1f35eb85727832121b2eecabdcbacfd33e70..0852ab5b67b206dbee972d22b239da9a
          log('execAgent: failed to fetch lobehub skill manifests: %O', error);
        }
 diff --git a/apps/server/src/services/taskTemplate/index.ts b/apps/server/src/services/taskTemplate/index.ts
-index 4fb771f03edd8fcc4ccf40bffa22db42199b4545..cafb95f9ffd5e3f7e23ec744386652cd0a9992c9 100644
+index 4fb771f03e..cafb95f9ff 100644
 --- a/apps/server/src/services/taskTemplate/index.ts
 +++ b/apps/server/src/services/taskTemplate/index.ts
 @@ -10,8 +10,10 @@ import {
@@ -248,7 +271,7 @@ index 4fb771f03edd8fcc4ccf40bffa22db42199b4545..cafb95f9ffd5e3f7e23ec744386652cd
          excludeIds: options.excludeIds,
          interestKeys,
 diff --git a/apps/server/src/services/toolExecution/builtin.ts b/apps/server/src/services/toolExecution/builtin.ts
-index 1b229112cb010cada939c33932e08a86676482cb..7b595752f9782853b4dcf18a37290b4d31cc49a5 100644
+index 8c9f9a6450..d6a3b067bc 100644
 --- a/apps/server/src/services/toolExecution/builtin.ts
 +++ b/apps/server/src/services/toolExecution/builtin.ts
 @@ -4,6 +4,7 @@ import { type ChatToolPayload } from '@lobechat/types';
@@ -259,23 +282,21 @@ index 1b229112cb010cada939c33932e08a86676482cb..7b595752f9782853b4dcf18a37290b4d
  import { ComposioService } from '@/server/services/composio';
  import { MarketService } from '@/server/services/market';
  
-@@ -44,14 +45,36 @@ const collectRuntimeApiNames = (runtime: Record<string, any>): string[] => {
+@@ -44,14 +45,32 @@ const collectRuntimeApiNames = (runtime: Record<string, any>): string[] => {
  };
  
  export class BuiltinToolsExecutor implements IToolExecutor {
 -  private marketService: MarketService;
-+  private db: LobeChatDatabase;
-+  private userId: string;
-   private composioService: ComposioService;
 +  private _marketService?: MarketService;
+   private db: LobeChatDatabase;
+   private userId: string;
  
    constructor(db: LobeChatDatabase, userId: string) {
+     this.db = db;
+     this.userId = userId;
 -    this.marketService = new MarketService({ userInfo: { userId } });
-+    this.db = db;
-+    this.userId = userId;
-     this.composioService = new ComposioService({ db, userId });
-   }
- 
++  }
++
 +  private async getMarketService(): Promise<MarketService> {
 +    if (this._marketService) return this._marketService;
 +
@@ -285,7 +306,7 @@ index 1b229112cb010cada939c33932e08a86676482cb..7b595752f9782853b4dcf18a37290b4d
 +      const settings = await userModel.getUserSettings();
 +      accessToken = (settings?.market as any)?.accessToken;
 +    } catch {
-+      // non-fatal — MarketService will fall back to trustedClientToken
++      // non-fatal - MarketService falls back to trustedClientToken
 +    }
 +
 +    this._marketService = new MarketService({
@@ -293,12 +314,10 @@ index 1b229112cb010cada939c33932e08a86676482cb..7b595752f9782853b4dcf18a37290b4d
 +      userInfo: { userId: this.userId },
 +    });
 +    return this._marketService;
-+  }
-+
+   }
+ 
    async execute(
-     payload: ChatToolPayload,
-     context: ToolExecutionContext,
-@@ -100,7 +123,8 @@ export class BuiltinToolsExecutor implements IToolExecutor {
+@@ -102,7 +121,8 @@ export class BuiltinToolsExecutor implements IToolExecutor {
  
      // Route LobeHub Skills to MarketService
      if (source === 'lobehubSkill') {
@@ -309,7 +328,7 @@ index 1b229112cb010cada939c33932e08a86676482cb..7b595752f9782853b4dcf18a37290b4d
          context: {
            topicId: context.topicId,
 diff --git a/apps/server/src/services/toolExecution/serverRuntimes/cloudSandbox.ts b/apps/server/src/services/toolExecution/serverRuntimes/cloudSandbox.ts
-index c2eef901f4f6648856b6181429dc67c5c6023a1b..35af6c5e6050875c054ceee811503d3b8509fe55 100644
+index c2eef901f4..35af6c5e60 100644
 --- a/apps/server/src/services/toolExecution/serverRuntimes/cloudSandbox.ts
 +++ b/apps/server/src/services/toolExecution/serverRuntimes/cloudSandbox.ts
 @@ -3,6 +3,7 @@ import {
@@ -351,18 +370,8 @@ index c2eef901f4f6648856b6181429dc67c5c6023a1b..35af6c5e6050875c054ceee811503d3b
      const fileService = new FileService(context.serverDB, context.userId, context.workspaceId);
      const sandboxService = createSandboxService({
        fileService,
-       marketService,
-       serverDB: context.serverDB,
-       topicId: context.topicId,
-       userId: context.userId,
-     });
- 
-     return new CloudSandboxExecutionRuntime(sandboxService);
-   },
-   identifier: CloudSandboxIdentifier,
- };
 diff --git a/apps/server/src/services/toolExecution/serverRuntimes/creds.ts b/apps/server/src/services/toolExecution/serverRuntimes/creds.ts
-index b651c28317669871ec66db585994ce13f895fbee..53827722b34c25580f20b788baaa459d2ce6958a 100644
+index 0adff7b833..c1501ab2a3 100644
 --- a/apps/server/src/services/toolExecution/serverRuntimes/creds.ts
 +++ b/apps/server/src/services/toolExecution/serverRuntimes/creds.ts
 @@ -5,6 +5,8 @@ import {
@@ -406,30 +415,3 @@ index b651c28317669871ec66db585994ce13f895fbee..53827722b34c25580f20b788baaa459d
      const credsService = new ServerCredsService(marketService, context.workspaceId);
  
      return new CredsExecutionRuntime(credsService, {
-diff --git a/apps/server/src/modules/AgentRuntime/adapters/serverCallLlmContextBuilder.ts b/apps/server/src/modules/AgentRuntime/adapters/serverCallLlmContextBuilder.ts
-index ccd66f4a432cb1a5ce50bfdb2ae84e2c1dbcf552..98624fcc0c4ff784395e7228f13f63077ce37758 100644
---- a/apps/server/src/modules/AgentRuntime/adapters/serverCallLlmContextBuilder.ts
-+++ b/apps/server/src/modules/AgentRuntime/adapters/serverCallLlmContextBuilder.ts
-@@ -282,7 +282,20 @@ export const buildServerCallLlmContext = async ({
-   let credsListStr = '';
-   if (ctx.userId) {
-     try {
--      const marketService = new MarketService({ userInfo: { userId: ctx.userId } });
-+      let accessToken: string | undefined;
-+      if (ctx.serverDB) {
-+        try {
-+          const userModel = new UserModel(ctx.serverDB, ctx.userId);
-+          const userSettings = await userModel.getUserSettings();
-+          accessToken = (userSettings?.market as any)?.accessToken;
-+        } catch {
-+          // non-fatal — MarketService will fall back to trustedClientToken
-+        }
-+      }
-+      const marketService = new MarketService({
-+        accessToken,
-+        userInfo: { userId: ctx.userId },
-+      });
-       // Inside a workspace, the agent must only see the workspace's shared
-       // organization credentials — personal creds are not visible here (LOBE-10978).
-       const credsResult = ctx.workspaceId
-         ? await marketService.market.organizations.creds({ workspaceId: ctx.workspaceId }).list()
