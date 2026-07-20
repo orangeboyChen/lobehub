@@ -25,7 +25,7 @@ index a614874ba6..d1b0810472 100644
        // organization credentials — personal creds are not visible here (LOBE-10978).
        const credsResult = ctx.workspaceId
 diff --git a/apps/server/src/routers/lambda/aiAgent.ts b/apps/server/src/routers/lambda/aiAgent.ts
-index 9289d36f01..2cc5ebae0e 100644
+index 33c9ae933e..cf054369aa 100644
 --- a/apps/server/src/routers/lambda/aiAgent.ts
 +++ b/apps/server/src/routers/lambda/aiAgent.ts
 @@ -19,6 +19,7 @@ import { wsCompatProcedure } from '@/business/server/trpc-middlewares/workspaceA
@@ -34,12 +34,12 @@ index 9289d36f01..2cc5ebae0e 100644
  import { TopicModel } from '@/database/models/topic';
 +import { UserModel } from '@/database/models/user';
  import { agentOperations, topics } from '@/database/schemas';
+ import type { LobeChatDatabase } from '@/database/type';
  import { heteroAuthedProcedure, router } from '@/libs/trpc/lambda';
- import { serverDatabase } from '@/libs/trpc/lambda/middleware';
-@@ -528,12 +529,26 @@ const aiAgentProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts)
+@@ -587,12 +588,26 @@ const aiAgentProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts)
    const { ctx } = opts;
    const wsId = ctx.workspaceId ?? undefined;
- 
+
 +  // Read market accessToken from user_settings.market so server-side agent runtime
 +  // can authenticate with the Market API for creds operations.
 +  let marketAccessToken: string | undefined;
@@ -70,22 +70,22 @@ index 7c16f22bdd..bae39c73f4 100644
 +++ b/apps/server/src/routers/lambda/taskTemplate.ts
 @@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
  import { z } from 'zod';
- 
+
  import { authedProcedure, router } from '@/libs/trpc/lambda';
 +import { serverDatabase } from '@/libs/trpc/lambda/middleware';
  import { TaskTemplateService } from '@/server/services/taskTemplate';
- 
+
  const listDailyRecommendSchema = z.object({
 @@ -16,14 +17,16 @@ const templateIdSchema = z.object({
    templateId: z.number().int().positive(),
  });
- 
+
 +const taskTemplateProcedure = authedProcedure.use(serverDatabase);
 +
  export const taskTemplateRouter = router({
 -  dismiss: authedProcedure.input(templateIdSchema).mutation(async () => ({ success: true })),
 +  dismiss: taskTemplateProcedure.input(templateIdSchema).mutation(async () => ({ success: true })),
- 
+
 -  listDailyRecommend: authedProcedure
 +  listDailyRecommend: taskTemplateProcedure
      .input(listDailyRecommendSchema)
@@ -99,26 +99,26 @@ index 7c16f22bdd..bae39c73f4 100644
 @@ -40,5 +43,7 @@ export const taskTemplateRouter = router({
        }
      }),
- 
+
 -  recordCreated: authedProcedure.input(templateIdSchema).mutation(async () => ({ success: true })),
 +  recordCreated: taskTemplateProcedure
 +    .input(templateIdSchema)
 +    .mutation(async () => ({ success: true })),
  });
 diff --git a/apps/server/src/services/aiAgent/index.ts b/apps/server/src/services/aiAgent/index.ts
-index a44dfbac94..0e8fa3dd96 100644
+index abafa81595..84bacd8620 100644
 --- a/apps/server/src/services/aiAgent/index.ts
 +++ b/apps/server/src/services/aiAgent/index.ts
-@@ -489,7 +489,7 @@ export class AiAgentService {
+@@ -521,7 +521,7 @@ export class AiAgentService {
    private readonly threadModel: ThreadModel;
    private readonly topicModel: TopicModel;
    private readonly agentRuntimeService: AgentRuntimeService;
 -  private readonly marketService: MarketService;
 +  private _marketService?: MarketService;
    private readonly composioService: ComposioService;
- 
+
    private readonly workspaceId?: string;
-@@ -497,7 +497,11 @@ export class AiAgentService {
+@@ -529,7 +529,11 @@ export class AiAgentService {
    constructor(
      db: LobeChatDatabase,
      userId: string,
@@ -131,7 +131,7 @@ index a44dfbac94..0e8fa3dd96 100644
    ) {
      this.userId = userId;
      this.db = db;
-@@ -532,10 +536,34 @@ export class AiAgentService {
+@@ -564,10 +568,34 @@ export class AiAgentService {
        },
        workspaceId: wsId,
      });
@@ -144,7 +144,7 @@ index a44dfbac94..0e8fa3dd96 100644
 +    }
      this.composioService = new ComposioService({ db, userId, workspaceId: wsId });
    }
- 
+
 +  private async getMarketService(): Promise<MarketService> {
 +    if (this._marketService) return this._marketService;
 +
@@ -154,7 +154,7 @@ index a44dfbac94..0e8fa3dd96 100644
 +      const settings = await userModel.getUserSettings();
 +      accessToken = (settings?.market as any)?.accessToken;
 +    } catch {
-+      // non-fatal - MarketService falls back to trustedClientToken
++      // non-fatal — MarketService will fall back to trustedClientToken
 +    }
 +
 +    this._marketService = new MarketService({
@@ -167,13 +167,11 @@ index a44dfbac94..0e8fa3dd96 100644
    private async resolveOperationTaskId(
      idOrIdentifier?: string | null,
    ): Promise<string | undefined> {
-@@ -1842,11 +1870,12 @@ export class AiAgentService {
-       const githubCredKey =
-         agentConfig.agencyConfig?.heterogeneousProvider?.env?.GITHUB_CRED_KEY ?? 'github';
+@@ -1903,9 +1931,10 @@ export class AiAgentService {
        try {
-+        const marketService = await this.getMarketService();
          // Inside a workspace, the GitHub cred must come from the workspace's shared
          // organization credentials, not the operator's personal creds (LOBE-10978).
++        const marketService = await this.getMarketService();
          const credsAccessor = this.workspaceId
 -          ? this.marketService.market.organizations.creds({ workspaceId: this.workspaceId })
 -          : this.marketService.market.creds;
@@ -182,7 +180,7 @@ index a44dfbac94..0e8fa3dd96 100644
          const list = await credsAccessor.list();
          const cred = list.data?.find((c: { key: string }) => c.key === githubCredKey);
          if (cred) {
-@@ -2282,6 +2311,7 @@ export class AiAgentService {
+@@ -2346,6 +2375,7 @@ export class AiAgentService {
            // `aiAgent` import. Only this cloud-CLI branch needs it.
            const { spawnHeteroSandbox } =
              await import('@/server/services/heterogeneousAgent/sandboxRunner');
@@ -190,7 +188,7 @@ index a44dfbac94..0e8fa3dd96 100644
            // The sandbox authenticates its nested `lh` calls with this JWT. The
            // narrow `hetero-operation` token (used for the device-dispatch path
            // above) is rejected by `oidcAuth`, so CC capabilities that hit
-@@ -2296,7 +2326,7 @@ export class AiAgentService {
+@@ -2360,7 +2390,7 @@ export class AiAgentService {
              agentType: heteroType as 'claude-code' | 'codex',
              args: heteroExecArgs,
              jwt: sandboxJwt,
@@ -199,8 +197,8 @@ index a44dfbac94..0e8fa3dd96 100644
            }).catch(async (err) => {
              // Fire-and-forget: execAgent has already returned `autoStarted`, and
              // the sandbox never reached the point of calling heteroFinish. Drive
-@@ -2617,7 +2647,8 @@ export class AiAgentService {
- 
+@@ -2681,7 +2711,8 @@ export class AiAgentService {
+
        // 5c. Fetch LobeHub Skills manifests
        try {
 -        lobehubSkillManifests = await this.marketService.getLobehubSkillManifests();
@@ -219,14 +217,14 @@ index 4fb771f03e..cafb95f9ff 100644
  } from '@lobechat/const';
 +import type { LobeChatDatabase } from '@lobechat/database';
  import { z } from 'zod';
- 
+
 +import { UserModel } from '@/database/models/user';
  import { appEnv } from '@/envs/app';
  import { isTrustedClientEnabled } from '@/libs/trusted-client';
  import { MarketService } from '@/server/services/market';
 @@ -111,10 +113,32 @@ const parseTaskTemplateRecommendations = (value: unknown): TaskTemplate[] => {
  };
- 
+
  export class TaskTemplateService {
 -  private marketService: MarketService;
 +  private marketService?: MarketService;
@@ -249,7 +247,7 @@ index 4fb771f03e..cafb95f9ff 100644
 +        // non-fatal — MarketService will fall back to trustedClientToken
 +      }
 +    }
- 
+
 -  constructor(private userId: string) {
 -    this.marketService = new MarketService({ userInfo: { userId } });
 +    this.marketService = new MarketService({
@@ -258,7 +256,7 @@ index 4fb771f03e..cafb95f9ff 100644
 +    });
 +    return this.marketService;
    }
- 
+
    async listDailyRecommend(
 @@ -127,7 +151,8 @@ export class TaskTemplateService {
      } = {},
@@ -271,30 +269,46 @@ index 4fb771f03e..cafb95f9ff 100644
          excludeIds: options.excludeIds,
          interestKeys,
 diff --git a/apps/server/src/services/toolExecution/builtin.ts b/apps/server/src/services/toolExecution/builtin.ts
-index 552f90a22a..2eee4fc30b 100644
+index 552f90a22a..7b595752f9 100644
 --- a/apps/server/src/services/toolExecution/builtin.ts
 +++ b/apps/server/src/services/toolExecution/builtin.ts
-@@ -8,6 +8,7 @@ import {
+@@ -1,19 +1,15 @@
+ import { builtinTools } from '@lobechat/builtin-tools';
+ import { type LobeChatDatabase } from '@lobechat/database';
+-import {
+-  type ChatToolPayload,
+-  isWorkSkillProvider,
+-  type WorkRegistrationIntent,
+-} from '@lobechat/types';
++import { type ChatToolPayload } from '@lobechat/types';
  import { detectTruncatedJSON, safeParseJSON } from '@lobechat/utils';
  import debug from 'debug';
- 
+
 +import { UserModel } from '@/database/models/user';
  import { ComposioService } from '@/server/services/composio';
  import { MarketService } from '@/server/services/market';
- 
-@@ -49,14 +50,32 @@ const collectRuntimeApiNames = (runtime: Record<string, any>): string[] => {
+
+ import { getServerRuntime, hasServerRuntime } from './serverRuntimes';
+ import { type IToolExecutor, type ToolExecutionContext, type ToolExecutionResult } from './types';
+-import { resolveBuiltinToolWorkIntent } from './workRegistration';
+
+ const log = debug('lobe-server:builtin-tools-executor');
+
+@@ -49,14 +45,34 @@ const collectRuntimeApiNames = (runtime: Record<string, any>): string[] => {
  };
- 
+
  export class BuiltinToolsExecutor implements IToolExecutor {
 -  private marketService: MarketService;
-+  private _marketService?: MarketService;
    private db: LobeChatDatabase;
    private userId: string;
- 
++  private composioService: ComposioService;
++  private _marketService?: MarketService;
+
    constructor(db: LobeChatDatabase, userId: string) {
      this.db = db;
      this.userId = userId;
 -    this.marketService = new MarketService({ userInfo: { userId } });
++    this.composioService = new ComposioService({ db, userId });
 +  }
 +
 +  private async getMarketService(): Promise<MarketService> {
@@ -306,7 +320,7 @@ index 552f90a22a..2eee4fc30b 100644
 +      const settings = await userModel.getUserSettings();
 +      accessToken = (settings?.market as any)?.accessToken;
 +    } catch {
-+      // non-fatal - MarketService falls back to trustedClientToken
++      // non-fatal — MarketService will fall back to trustedClientToken
 +    }
 +
 +    this._marketService = new MarketService({
@@ -315,18 +329,105 @@ index 552f90a22a..2eee4fc30b 100644
 +    });
 +    return this._marketService;
    }
- 
+
    async execute(
-@@ -107,7 +126,8 @@ export class BuiltinToolsExecutor implements IToolExecutor {
- 
+@@ -107,7 +123,8 @@ export class BuiltinToolsExecutor implements IToolExecutor {
+
      // Route LobeHub Skills to MarketService
      if (source === 'lobehubSkill') {
 -      const result = await this.marketService.executeLobehubSkill({
 +      const marketService = await this.getMarketService();
-+      const result = await marketService.executeLobehubSkill({
++      return marketService.executeLobehubSkill({
          args,
          context: {
            topicId: context.topicId,
+@@ -115,41 +132,11 @@ export class BuiltinToolsExecutor implements IToolExecutor {
+         provider: identifier,
+         toolName: apiName,
+       });
+-
+-      if (result.success && isWorkSkillProvider(identifier)) {
+-        // Defer Work registration to the agent runtime so the version is written
+-        // ONCE with its cumulative cost (known only after execution). Carry the
+-        // UNTRUNCATED payload here: the runtime only sees the truncated
+-        // `content`, but skill identity (issue/PR url, number, …) lives
+-        // exclusively in the raw result.
+-        return {
+-          ...result,
+-          workRegistration: {
+-            args,
+-            data: safeParseJSON(result.content) ?? result.content,
+-            provider: identifier,
+-            toolName: apiName,
+-            type: 'skill',
+-          },
+-        };
+-      }
+-
+-      return result;
+     }
+
+-    // Route Composio tools to ComposioService. Build it request-scoped: agentId
+-    // and workspaceId live on the per-call context (not known at construction),
+-    // so a workspace run resolves workspace connectors (LOBE-10891) and a
+-    // service-account agent runs off its own Composio account
+-    // (Agent > Workspace/Personal).
++    // Route Composio tools to ComposioService
+     if (source === 'composio') {
+-      const composioService = new ComposioService({
+-        db: this.db,
+-        userId: this.userId,
+-        workspaceId: context.workspaceId,
+-      });
+-      return composioService.executeComposioTool({
+-        agentId: context.agentId,
++      return this.composioService.executeComposioTool({
+         args,
+         identifier,
+         toolSlug: apiName,
+@@ -192,41 +179,7 @@ export class BuiltinToolsExecutor implements IToolExecutor {
+     }
+
+     try {
+-      // Install a sink for runtimes whose Work registration is a side-effect
+-      // decoupled from the returned result (the agentDocuments runtime emits its
+-      // intent here instead of writing the version directly).
+-      let collectedWorkIntent: WorkRegistrationIntent | undefined;
+-      context.onWorkRegistration = (intent) => {
+-        collectedWorkIntent = intent;
+-      };
+-
+-      const result = await runtime[apiName](args, context);
+-
+-      // Manifest-driven Work registration: resolve the intent from the API's
+-      // declarative `work` config + result/args and hand it to the agent
+-      // runtime, which persists the Work version ONCE with its cumulative cost.
+-      // Falls back to the intent a runtime emitted via `onWorkRegistration`
+-      // (documents). No-op unless the API declares a `work` config or emits one.
+-      //
+-      // Best-effort: Work-intent resolution is post-hoc bookkeeping over an
+-      // already-successful tool call, so a bug in the resolver must not turn a
+-      // succeeded mutation into a reported tool failure. Isolate it from the
+-      // execution try/catch below and swallow-and-log instead.
+-      let workRegistration: WorkRegistrationIntent | undefined;
+-      try {
+-        workRegistration =
+-          resolveBuiltinToolWorkIntent(identifier, apiName, { args, result }) ??
+-          collectedWorkIntent;
+-      } catch (workError) {
+-        log(
+-          'Work registration intent resolution failed for %s:%s: %O',
+-          identifier,
+-          apiName,
+-          workError,
+-        );
+-      }
+-
+-      return workRegistration ? { ...result, workRegistration } : result;
++      return await runtime[apiName](args, context);
+     } catch (e) {
+       const error = e as Error;
+       console.error('Error executing builtin tool %s:%s: %O', identifier, apiName, error);
 diff --git a/apps/server/src/services/toolExecution/serverRuntimes/cloudSandbox.ts b/apps/server/src/services/toolExecution/serverRuntimes/cloudSandbox.ts
 index c2eef901f4..35af6c5e60 100644
 --- a/apps/server/src/services/toolExecution/serverRuntimes/cloudSandbox.ts
@@ -334,7 +435,7 @@ index c2eef901f4..35af6c5e60 100644
 @@ -3,6 +3,7 @@ import {
    CloudSandboxIdentifier,
  } from '@lobechat/builtin-tool-cloud-sandbox';
- 
+
 +import { UserModel } from '@/database/models/user';
  import { FileService } from '@/server/services/file';
  import { MarketService } from '@/server/services/market';
@@ -351,7 +452,7 @@ index c2eef901f4..35af6c5e60 100644
 @@ -23,7 +24,20 @@ export const cloudSandboxRuntime: ServerRuntimeRegistration = {
        throw new Error('serverDB is required for Cloud Sandbox execution');
      }
- 
+
 -    const marketService = new MarketService({ userInfo: { userId: context.userId } });
 +    // Read market accessToken from DB so server-side sandbox runtime can authenticate.
 +    let accessToken: string | undefined;
@@ -371,17 +472,17 @@ index c2eef901f4..35af6c5e60 100644
      const sandboxService = createSandboxService({
        fileService,
 diff --git a/apps/server/src/services/toolExecution/serverRuntimes/creds.ts b/apps/server/src/services/toolExecution/serverRuntimes/creds.ts
-index 0adff7b833..c1501ab2a3 100644
+index 0adff7b833..92f086e1b3 100644
 --- a/apps/server/src/services/toolExecution/serverRuntimes/creds.ts
 +++ b/apps/server/src/services/toolExecution/serverRuntimes/creds.ts
 @@ -5,6 +5,8 @@ import {
  } from '@lobechat/builtin-tool-creds';
  import debug from 'debug';
- 
+
 +import { UserModel } from '@/database/models/user';
 +
  import { MarketService } from '@/server/services/market';
- 
+
  import { type ServerRuntimeRegistration } from './types';
 @@ -161,7 +163,7 @@ class ServerCredsService implements ICredsService {
   * Per-request runtime (needs userId, topicId)
@@ -392,26 +493,24 @@ index 0adff7b833..c1501ab2a3 100644
      if (!context.userId) {
        throw new Error('userId is required for Creds execution');
      }
-@@ -173,7 +175,21 @@ export const credsRuntime: ServerRuntimeRegistration = {
+@@ -173,7 +175,19 @@ export const credsRuntime: ServerRuntimeRegistration = {
        context.workspaceId,
      );
- 
+
 -    const marketService = new MarketService({ userInfo: { userId: context.userId } });
++    // Read market accessToken from DB so server-side creds runtime can authenticate.
 +    let accessToken: string | undefined;
 +    if (context.serverDB) {
 +      try {
 +        const userModel = new UserModel(context.serverDB, context.userId);
-+        const userSettings = await userModel.getUserSettings();
-+        accessToken = (userSettings?.market as any)?.accessToken;
++        const settings = await userModel.getUserSettings();
++        accessToken = (settings?.market as any)?.accessToken;
 +      } catch {
 +        // non-fatal — MarketService will fall back to trustedClientToken
 +      }
 +    }
 +
-+    const marketService = new MarketService({
-+      accessToken,
-+      userInfo: { userId: context.userId },
-+    });
++    const marketService = new MarketService({ accessToken, userInfo: { userId: context.userId } });
      const credsService = new ServerCredsService(marketService, context.workspaceId);
- 
+
      return new CredsExecutionRuntime(credsService, {
