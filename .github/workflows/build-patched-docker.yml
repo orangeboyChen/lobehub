@@ -24,6 +24,7 @@ on:
 permissions:
   contents: write
   packages: write
+  pull-requests: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.inputs.version || 'latest-stable' }}
@@ -32,8 +33,179 @@ concurrency:
 env:
   UPSTREAM_REPOSITORY: lobehub/lobehub
   REGISTRY_IMAGE: ghcr.io/orangeboychen/lobehub
+  AI_PATCH_REPAIR_ENABLED: ${{ vars.ENABLE_AI_PATCH_REPAIR }}
+  PATCH_PATHS: |
+    ../automation/patches/bug/ios-viewport.patch
+    ../automation/patches/bug/sidebar-orphan-agents.patch
+    ../automation/patches/pr-16325/pr-16325.patch
+    ../automation/patches/pr-16545/pr-16545.patch
+    ../automation/patches/bug/lobehub-skill.patch
+    ../automation/patches/bug/docker-canvas-native-packages.patch
+    ../automation/patches/pr-16609/pr-16609.patch
+    ../automation/patches/pr-16616/pr-16616.patch
 
 jobs:
+  patch-validation:
+    name: Validate Patches Against Upstream Canary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout automation repository
+        uses: actions/checkout@v6
+        with:
+          path: automation
+
+      - name: Checkout upstream canary
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.UPSTREAM_REPOSITORY }}
+          ref: canary
+          path: source
+
+      - name: Validate local patches
+        working-directory: source
+        run: |
+          set -euo pipefail
+
+          for patch in $PATCH_PATHS; do
+            [ -f "$patch" ] || continue
+            echo "Validating ${patch}"
+            git apply --unidiff-zero --check "$patch"
+            git apply --unidiff-zero "$patch"
+          done
+
+  repair-patches:
+    name: Repair Failed Patches
+    needs: patch-validation
+    if: failure() && needs.patch-validation.result == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout automation repository
+        uses: actions/checkout@v6
+        with:
+          path: automation
+
+      - name: Restore existing repair branch
+        working-directory: automation
+        run: |
+          set -euo pipefail
+
+          branch='codex/repair-patches'
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            git fetch origin "$branch"
+            git switch --track "origin/$branch"
+          fi
+
+      - name: Checkout upstream canary
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.UPSTREAM_REPOSITORY }}
+          ref: canary
+          path: source
+
+      - name: Find an existing repair pull request
+        id: existing-pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          repair_pr="$(gh pr list --head codex/repair-patches --base "$GITHUB_REF_NAME" --state open --json url --jq '.[0].url')"
+          if [ -n "$repair_pr" ]; then
+            echo 'exists=true' >> "$GITHUB_OUTPUT"
+            echo "url=$repair_pr" >> "$GITHUB_OUTPUT"
+            echo "An open repair pull request already exists: $repair_pr"
+          else
+            echo 'exists=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check whether AI repair is enabled
+        id: configuration
+        run: |
+          if [ "$AI_PATCH_REPAIR_ENABLED" = 'true' ]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            echo 'AI patch repair is disabled; set ENABLE_AI_PATCH_REPAIR=true to enable it.'
+          fi
+
+      - name: Ask Codex to repair patches
+        if: steps.configuration.outputs.enabled == 'true' && steps.existing-pr.outputs.exists != 'true'
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          responses-api-endpoint: ${{ secrets.CODEX_RESPONSES_API_ENDPOINT }}
+          model: ${{ secrets.CODEX_MODEL }}
+          allow-bot-users: github-actions
+          permission-profile: ":workspace"
+          prompt: |
+            One or more patches in automation/patches no longer apply to the
+            current upstream canary checkout in source/. Repair the failed
+            patches so they preserve their original intent and apply cleanly
+            in their listed order. Before changing any patch under patches/pr-*,
+            inspect the corresponding upstream pull request with `gh pr view`
+            against lobehub/lobehub. Determine whether it is open, closed, or
+            merged, and whether its behavior is already present in source/.
+            If that PR is merged or closed, delete its corresponding patch file
+            and remove its entry from both automation/README.md and
+            automation/README.zh.md. Otherwise preserve every intended
+            user-visible and functional behavior, translating it to the current
+            upstream canary implementation when necessary. Modify only files
+            under patches/ plus the two README files when removing a PR patch.
+            Do not change workflow files or source/. Validate every remaining
+            patch with `git apply --unidiff-zero --check`, applying each
+            successful patch before checking the next one. Do not commit, push,
+            or open a pull request; the workflow will do that after validation.
+
+      - name: Validate repaired patches
+        if: steps.configuration.outputs.enabled == 'true' && steps.existing-pr.outputs.exists != 'true'
+        working-directory: source
+        run: |
+          set -euo pipefail
+
+          for patch in $PATCH_PATHS; do
+            [ -f "$patch" ] || continue
+            git apply --unidiff-zero --check "$patch"
+            git apply --unidiff-zero "$patch"
+          done
+
+      - name: Create repair pull request
+        if: steps.configuration.outputs.enabled == 'true' && steps.existing-pr.outputs.exists != 'true'
+        working-directory: automation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          branch='codex/repair-patches'
+          existing_pr="$(gh pr list --head "$branch" --base "$GITHUB_REF_NAME" --state open --json url --jq '.[0].url')"
+
+          if git diff --quiet -- patches; then
+            if [ -n "$existing_pr" ]; then
+              echo "Existing repair pull request is already valid: $existing_pr"
+              exit 0
+            fi
+
+            echo "Codex did not produce a patch change" >&2
+            exit 1
+          fi
+
+          git config user.name "codex"
+          git config user.email "codex@users.noreply.github.com"
+          if ! git branch --show-current | grep -Fxq "$branch"; then
+            git switch -c "$branch"
+          fi
+          git add patches README.md README.zh.md
+          git commit -m "fix(patches): repair upstream canary conflicts"
+          git push origin "$branch"
+
+          if [ -z "$existing_pr" ]; then
+            gh pr create \
+              --base "$GITHUB_REF_NAME" \
+              --head "$branch" \
+              --title "fix(patches): repair upstream canary conflicts" \
+              --body "Codex repaired patches that no longer applied to upstream canary. The workflow revalidated the complete patch set before creating this PR."
+          else
+            echo "Updated existing repair pull request: $existing_pr"
+          fi
+
   prepare:
     name: Resolve Versions
     runs-on: ubuntu-latest
@@ -184,8 +356,10 @@ jobs:
 
   build:
     name: Build ${{ matrix.release.version }} (${{ matrix.platform }})
-    needs: prepare
-    if: needs.prepare.outputs.should_build == 'true'
+    needs:
+      - prepare
+      - patch-validation
+    if: needs.prepare.outputs.should_build == 'true' && needs.patch-validation.result == 'success'
     strategy:
       fail-fast: false
       matrix:
