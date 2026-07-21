@@ -107,7 +107,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          repair_pr="$(gh pr list --head codex/repair-patches --base "$GITHUB_REF_NAME" --state open --json url --jq '.[0].url')"
+          repair_pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head codex/repair-patches --base "$GITHUB_REF_NAME" --state open --json url --jq '.[0].url')"
           if [ -n "$repair_pr" ]; then
             echo 'exists=true' >> "$GITHUB_OUTPUT"
             echo "url=$repair_pr" >> "$GITHUB_OUTPUT"
@@ -140,9 +140,10 @@ jobs:
             current upstream canary checkout in source/. Repair the failed
             patches so they preserve their original intent and apply cleanly
             in their listed order. Before changing any patch under patches/pr-*,
-            inspect the corresponding upstream pull request with `gh pr view`
-            against lobehub/lobehub. Determine whether it is open, closed, or
-            merged, and whether its behavior is already present in source/.
+            inspect the corresponding upstream pull request with
+            `gh pr view <number> --repo lobehub/lobehub`. Determine whether it
+            is open, closed, or merged, and whether its behavior is already
+            present in source/.
             If that PR is merged or closed, delete its corresponding patch file
             and remove its entry from both automation/README.md and
             automation/README.zh.md. Otherwise preserve every intended
