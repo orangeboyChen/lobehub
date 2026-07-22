@@ -11,7 +11,7 @@
 ## 当前 patch 清单
 
 - 本地修复：`ios-viewport`、`sidebar-orphan-agents`、`lobehub-skill`、`docker-canvas-native-packages`
-- 仍待上游合并的 PR patch：[#16325](https://github.com/lobehub/lobehub/pull/16325)、[#16545](https://github.com/lobehub/lobehub/pull/16545)、[#16609](https://github.com/lobehub/lobehub/pull/16609)、[#16616](https://github.com/lobehub/lobehub/pull/16616)
+- 仍待上游合并的 PR patch：[#16325](https://github.com/lobehub/lobehub/pull/16325)、[#16609](https://github.com/lobehub/lobehub/pull/16609)、[#16616](https://github.com/lobehub/lobehub/pull/16616)
 
 ## 触发
 
