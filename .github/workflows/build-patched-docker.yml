@@ -205,8 +205,9 @@ jobs:
           branch='codex/repair-patches'
           existing_pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --base "$GITHUB_REF_NAME" --state open --json url --jq '.[0].url')"
 
-          if git diff --quiet -- patches README.md README.zh.md && \
-            git diff --quiet "origin/$GITHUB_REF_NAME...HEAD" -- patches README.md README.zh.md; then
+          repair_files=(patches README.md README.zh.md .github/workflows/build-patched-docker.yml)
+          if git diff --quiet -- "${repair_files[@]}" && \
+            git diff --quiet "origin/$GITHUB_REF_NAME...HEAD" -- "${repair_files[@]}"; then
             if [ -n "$existing_pr" ]; then
               echo "Existing repair pull request is already valid: $existing_pr"
               exit 0
@@ -221,7 +222,7 @@ jobs:
           if ! git branch --show-current | grep -Fxq "$branch"; then
             git switch -c "$branch"
           fi
-          git add patches README.md README.zh.md
+          git add "${repair_files[@]}"
           if ! git diff --cached --quiet; then
             git commit -m "fix(patches): repair upstream canary conflicts"
           fi
