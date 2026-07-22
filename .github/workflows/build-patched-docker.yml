@@ -126,6 +126,25 @@ jobs:
             echo 'AI patch repair is disabled; set ENABLE_AI_PATCH_REPAIR=true to enable it.'
           fi
 
+      - name: Collect upstream PR statuses
+        if: steps.configuration.outputs.enabled == 'true' && steps.existing-pr.outputs.exists != 'true'
+        working-directory: automation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          status_file='.codex-upstream-pr-status.jsonl'
+          : > "$status_file"
+          for patch in patches/pr-*/*.patch; do
+            [ -f "$patch" ] || continue
+            pr_number="${patch#patches/pr-}"
+            pr_number="${pr_number%%/*}"
+            gh pr view "$pr_number" --repo "$UPSTREAM_REPOSITORY" \
+              --json number,state,mergedAt,url --jq '{number, state, mergedAt, url}' \
+              >> "$status_file"
+          done
+
       - name: Ask Codex to repair patches
         if: steps.configuration.outputs.enabled == 'true' && steps.existing-pr.outputs.exists != 'true'
         uses: openai/codex-action@v1
@@ -140,9 +159,10 @@ jobs:
             current upstream canary checkout in source/. Repair the failed
             patches so they preserve their original intent and apply cleanly
             in their listed order. Before changing any patch under patches/pr-*,
-            inspect the corresponding upstream pull request with
-            `gh pr view <number> --repo lobehub/lobehub`. Determine whether it
-            is open, closed, or merged, and whether its behavior is already
+            read automation/.codex-upstream-pr-status.jsonl. This file is
+            authoritative for the corresponding upstream pull request status.
+            Do not invoke gh, request network or sandbox escalation, or request
+            GitHub authentication. Determine whether the PR behavior is already
             present in source/.
             If that PR is merged or closed, delete its corresponding patch file
             and remove its entry from both automation/README.md and
@@ -176,9 +196,10 @@ jobs:
           set -euo pipefail
 
           branch='codex/repair-patches'
-          existing_pr="$(gh pr list --head "$branch" --base "$GITHUB_REF_NAME" --state open --json url --jq '.[0].url')"
+          existing_pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --base "$GITHUB_REF_NAME" --state open --json url --jq '.[0].url')"
 
-          if git diff --quiet -- patches; then
+          if git diff --quiet -- patches README.md README.zh.md && \
+            git diff --quiet "origin/$GITHUB_REF_NAME...HEAD" -- patches README.md README.zh.md; then
             if [ -n "$existing_pr" ]; then
               echo "Existing repair pull request is already valid: $existing_pr"
               exit 0
@@ -194,11 +215,13 @@ jobs:
             git switch -c "$branch"
           fi
           git add patches README.md README.zh.md
-          git commit -m "fix(patches): repair upstream canary conflicts"
+          if ! git diff --cached --quiet; then
+            git commit -m "fix(patches): repair upstream canary conflicts"
+          fi
           git push origin "$branch"
 
           if [ -z "$existing_pr" ]; then
-            gh pr create \
+            gh pr create --repo "$GITHUB_REPOSITORY" \
               --base "$GITHUB_REF_NAME" \
               --head "$branch" \
               --title "fix(patches): repair upstream canary conflicts" \
