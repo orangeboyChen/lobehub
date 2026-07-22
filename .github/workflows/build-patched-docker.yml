@@ -38,7 +38,6 @@ env:
     ../automation/patches/bug/ios-viewport.patch
     ../automation/patches/bug/sidebar-orphan-agents.patch
     ../automation/patches/pr-16325/pr-16325.patch
-    ../automation/patches/pr-16545/pr-16545.patch
     ../automation/patches/bug/lobehub-skill.patch
     ../automation/patches/bug/docker-canvas-native-packages.patch
     ../automation/patches/pr-16609/pr-16609.patch
@@ -67,7 +66,10 @@ jobs:
           set -euo pipefail
 
           for patch in $PATCH_PATHS; do
-            [ -f "$patch" ] || continue
+            if [ ! -f "$patch" ]; then
+              echo "Listed patch is missing: ${patch}" >&2
+              exit 1
+            fi
             echo "Validating ${patch}"
             git apply --unidiff-zero --check "$patch"
             git apply --unidiff-zero "$patch"
@@ -155,25 +157,30 @@ jobs:
           allow-bot-users: github-actions
           permission-profile: ":workspace"
           prompt: |
-            One or more patches in automation/patches no longer apply to the
-            current upstream canary checkout in source/. Repair the failed
-            patches so they preserve their original intent and apply cleanly
-            in their listed order. Before changing any patch under patches/pr-*,
-            read automation/.codex-upstream-pr-status.jsonl. This file is
+            One or more paths listed in workflow-level PATCH_PATHS is missing,
+            or a patch in automation/patches no longer applies to the current
+            upstream canary checkout in source/. Repair the failed patch set
+            so it preserves its original intent and applies cleanly in the
+            listed order. Before changing any patch under patches/pr-*, read
+            automation/.codex-upstream-pr-status.jsonl. This file is
             authoritative for the corresponding upstream pull request status.
             Do not invoke gh, request network or sandbox escalation, or request
             GitHub authentication. Determine whether the PR behavior is already
             present in source/.
             If that PR is merged or closed, delete its corresponding patch file
             and remove its entry from both automation/README.md and
-            automation/README.zh.md. Otherwise preserve every intended
+            automation/README.zh.md. Also remove only that patch path from
+            workflow-level PATCH_PATHS in
+            automation/.github/workflows/build-patched-docker.yml; do not make
+            any other workflow changes. Otherwise preserve every intended
             user-visible and functional behavior, translating it to the current
             upstream canary implementation when necessary. Modify only files
-            under patches/ plus the two README files when removing a PR patch.
-            Do not change workflow files or source/. Validate every remaining
-            patch with `git apply --unidiff-zero --check`, applying each
-            successful patch before checking the next one. Do not commit, push,
-            or open a pull request; the workflow will do that after validation.
+            under patches/, the two README files, and the matching PATCH_PATHS
+            entry when removing a merged or closed PR patch. Do not change
+            source/. Validate every remaining patch with
+            `git apply --unidiff-zero --check`, applying each successful patch
+            before checking the next one. Do not commit, push, or open a pull
+            request; the workflow will do that after validation.
 
       - name: Validate repaired patches
         if: steps.configuration.outputs.enabled == 'true' && steps.existing-pr.outputs.exists != 'true'
@@ -407,22 +414,16 @@ jobs:
         working-directory: source
         run: |
           set -euo pipefail
-          git apply --unidiff-zero --check ../automation/patches/bug/ios-viewport.patch
-          git apply --unidiff-zero ../automation/patches/bug/ios-viewport.patch
-          git apply --unidiff-zero --check ../automation/patches/bug/sidebar-orphan-agents.patch
-          git apply --unidiff-zero ../automation/patches/bug/sidebar-orphan-agents.patch
-          git apply --unidiff-zero --check ../automation/patches/pr-16325/pr-16325.patch
-          git apply --unidiff-zero ../automation/patches/pr-16325/pr-16325.patch
-          git apply --unidiff-zero --check ../automation/patches/pr-16545/pr-16545.patch
-          git apply --unidiff-zero ../automation/patches/pr-16545/pr-16545.patch
-          git apply --unidiff-zero --check ../automation/patches/bug/lobehub-skill.patch
-          git apply --unidiff-zero ../automation/patches/bug/lobehub-skill.patch
-          git apply --unidiff-zero --check ../automation/patches/bug/docker-canvas-native-packages.patch
-          git apply --unidiff-zero ../automation/patches/bug/docker-canvas-native-packages.patch
-          git apply --unidiff-zero --check ../automation/patches/pr-16609/pr-16609.patch
-          git apply --unidiff-zero ../automation/patches/pr-16609/pr-16609.patch
-          git apply --unidiff-zero --check ../automation/patches/pr-16616/pr-16616.patch
-          git apply --unidiff-zero ../automation/patches/pr-16616/pr-16616.patch
+
+          for patch in $PATCH_PATHS; do
+            if [ ! -f "$patch" ]; then
+              echo "Listed patch is missing: ${patch}" >&2
+              exit 1
+            fi
+            echo "Applying ${patch}"
+            git apply --unidiff-zero --check "$patch"
+            git apply --unidiff-zero "$patch"
+          done
 
       - name: Resolve commit SHA
         id: vars
