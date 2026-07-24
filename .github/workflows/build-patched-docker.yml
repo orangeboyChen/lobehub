@@ -188,8 +188,14 @@ jobs:
         run: |
           set -euo pipefail
 
+          git reset --hard HEAD
+          git clean -fdx
+
           for patch in $PATCH_PATHS; do
-            [ -f "$patch" ] || continue
+            if [ ! -f "$patch" ]; then
+              echo "Listed patch is missing: ${patch}" >&2
+              exit 1
+            fi
             git apply --unidiff-zero --check "$patch"
             git apply --unidiff-zero "$patch"
           done

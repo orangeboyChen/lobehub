@@ -24,14 +24,10 @@ diff --git a/apps/server/src/globalConfig/getServerAuthConfig.ts b/apps/server/s
 diff --git a/apps/server/src/globalConfig/getServerGlobalConfig.test.ts b/apps/server/src/globalConfig/getServerGlobalConfig.test.ts
 --- a/apps/server/src/globalConfig/getServerGlobalConfig.test.ts
 +++ b/apps/server/src/globalConfig/getServerGlobalConfig.test.ts
-@@ -196,4 +196,10 @@
-       enableGatewayMode: false,
-     });
-   });
+@@ -238,0 +239,6 @@
 +
 +  it('should always expose LobeHub skill', async () => {
 +    await expect(loadServerConfig(false)).resolves.toMatchObject({
 +      enableLobehubSkill: true,
 +    });
 +  });
- });
