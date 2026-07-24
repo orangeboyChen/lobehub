@@ -191,7 +191,22 @@ jobs:
           git reset --hard HEAD
           git clean -fdx
 
-          for patch in $PATCH_PATHS; do
+          mapfile -t repaired_patch_paths < <(
+            awk '
+              /^  PATCH_PATHS: \|/ { in_patch_paths = 1; next }
+              in_patch_paths && /^jobs:/ { exit }
+              in_patch_paths && /^    \.\.\/automation\/patches\// {
+                sub(/^    /, "")
+                print
+              }
+            ' ../automation/.github/workflows/build-patched-docker.yml
+          )
+          [ "${#repaired_patch_paths[@]}" -gt 0 ] || {
+            echo 'Repaired PATCH_PATHS is empty' >&2
+            exit 1
+          }
+
+          for patch in "${repaired_patch_paths[@]}"; do
             if [ ! -f "$patch" ]; then
               echo "Listed patch is missing: ${patch}" >&2
               exit 1
