@@ -253,6 +253,7 @@ jobs:
             gh pr create --repo "$GITHUB_REPOSITORY" \
               --base "$GITHUB_REF_NAME" \
               --head "$branch" \
+              --reviewer orangeboyChen \
               --title "fix(patches): repair upstream canary conflicts" \
               --body "Codex repaired patches that no longer applied to upstream canary. The workflow revalidated the complete patch set before creating this PR."
           else
