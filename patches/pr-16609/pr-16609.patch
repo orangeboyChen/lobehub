@@ -1,59 +1,28 @@
 diff --git a/src/features/Connectors/ConnectorDetail/index.test.tsx b/src/features/Connectors/ConnectorDetail/index.test.tsx
-index da4e156d47..30aa29e1e6 100644
+index da4e156d..30aa29e1 100644
 --- a/src/features/Connectors/ConnectorDetail/index.test.tsx
 +++ b/src/features/Connectors/ConnectorDetail/index.test.tsx
-@@ -10,6 +10,7 @@ import { ConnectorSourceType } from '@/database/schemas';
- import ConnectorDetail from './index';
- 
- const mocks = vi.hoisted(() => ({
+@@ -12,0 +13 @@ const mocks = vi.hoisted(() => ({
 +  headerWidth: 1024,
-   toolState: {
-     connectorTools: {
-       createTools: [],
-@@ -39,6 +40,10 @@ const mocks = vi.hoisted(() => ({
-   },
- }));
- 
+@@ -41,0 +43,4 @@ const mocks = vi.hoisted(() => ({
 +vi.mock('ahooks', () => ({
 +  useSize: () => ({ height: 42, width: mocks.headerWidth }),
 +}));
 +
- vi.mock('react-i18next', () => ({
-   useTranslation: () => ({
-     t: (_key: string, options?: { defaultValue?: string } | string) =>
-@@ -69,15 +74,19 @@ vi.mock('antd', () => ({
- // app sets up globally but the unit env doesn't.
- vi.mock('@lobehub/ui/base-ui', () => ({
-   Button: ({
+@@ -71,0 +77 @@ vi.mock('@lobehub/ui/base-ui', () => ({
 +    'aria-label': ariaLabel,
-     children,
-     disabled,
+@@ -73,0 +80 @@ vi.mock('@lobehub/ui/base-ui', () => ({
 +    title,
-     onClick,
-   }: {
+@@ -75,0 +83 @@ vi.mock('@lobehub/ui/base-ui', () => ({
 +    'aria-label'?: string;
-     children?: ReactNode;
-     disabled?: boolean;
+@@ -77,0 +86 @@ vi.mock('@lobehub/ui/base-ui', () => ({
 +    title?: string;
-     onClick?: () => void;
-   }) => (
+@@ -80 +89 @@ vi.mock('@lobehub/ui/base-ui', () => ({
 -    <button disabled={disabled} type="button" onClick={onClick}>
 +    <button aria-label={ariaLabel} disabled={disabled} title={title} type="button" onClick={onClick}>
-       {children}
-     </button>
-   ),
-@@ -112,6 +121,7 @@ vi.mock('./ToolPermissionGroup', () => ({
- describe('ConnectorDetail', () => {
-   beforeEach(() => {
-     vi.clearAllMocks();
+@@ -114,0 +124 @@ describe('ConnectorDetail', () => {
 +    mocks.headerWidth = 1024;
-     mocks.toolState.connectorTools = {
-       createTools: [],
-       deleteTools: [],
-@@ -149,4 +159,29 @@ describe('ConnectorDetail', () => {
- 
-     expect(screen.getByRole('button', { name: 'Uninstall' })).toBeInTheDocument();
-   });
+@@ -151,0 +162,25 @@ describe('ConnectorDetail', () => {
 +
 +  it('collapses icon buttons when the header is narrow', () => {
 +    mocks.headerWidth = 500;
@@ -79,30 +48,19 @@ index da4e156d47..30aa29e1e6 100644
 +    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
 +    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
 +  });
- });
 diff --git a/src/features/Connectors/ConnectorDetail/index.tsx b/src/features/Connectors/ConnectorDetail/index.tsx
-index 2e90f4799f..ea64de41b0 100644
+index aaffc7a6..e6bc189a 100644
 --- a/src/features/Connectors/ConnectorDetail/index.tsx
 +++ b/src/features/Connectors/ConnectorDetail/index.tsx
-@@ -1,10 +1,12 @@
- import { getComposioAppByIdentifier, getLobehubSkillProviderById } from '@lobechat/const';
- import { Tooltip } from '@lobehub/ui';
+@@ -4 +4,3 @@ import { Button, confirmModal, toast } from '@lobehub/ui/base-ui';
+-import { PencilIcon, RefreshCwIcon, Trash2 } from 'lucide-react';
 +import { useSize } from 'ahooks';
 +import { createStaticStyles } from 'antd-style';
- import { Button, confirmModal } from '@lobehub/ui/base-ui';
- import { App } from 'antd';
--import { PencilIcon, RefreshCwIcon, Trash2 } from 'lucide-react';
 +import { PencilIcon, RefreshCwIcon, Trash2, Unplug } from 'lucide-react';
- import type { ReactNode } from 'react';
+@@ -6 +8 @@ import type { ReactNode } from 'react';
 -import { memo, useCallback, useState } from 'react';
 +import { memo, useCallback, useRef, useState } from 'react';
- import { useTranslation } from 'react-i18next';
- 
- import type { ConnectorToolPermission } from '@/database/schemas';
-@@ -13,6 +15,54 @@ import { useResourceManageable } from '@/hooks/useResourceManageable';
- import { useToolStore } from '@/store/tool';
- import { connectorSelectors } from '@/store/tool/slices/connector';
- 
+@@ -18,0 +21,48 @@ import ToolPermissionGroup from './ToolPermissionGroup';
 +const COMPACT_HEADER_WIDTH = 760;
 +
 +const styles = createStaticStyles(({ css, cssVar }) => ({
@@ -151,22 +109,10 @@ index 2e90f4799f..ea64de41b0 100644
 +  `,
 +}));
 +
- import CustomConnectorModal from '../CustomConnectorModal';
- import { getLocalizedConnectorDetail } from './localization';
- import ToolPermissionGroup from './ToolPermissionGroup';
-@@ -55,6 +105,8 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
-     const { t: ts } = useTranslation('setting');
-     const { message } = App.useApp();
-     const [customModalOpen, setCustomModalOpen] = useState(false);
+@@ -56,0 +107,2 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 +    const headerRef = useRef<HTMLDivElement | null>(null);
 +    const headerSize = useSize(headerRef);
- 
-     const connector = useToolStore(connectorSelectors.connectorById(connectorId));
-     const { readTools, createTools, updateTools, deleteTools } = useToolStore(
-@@ -185,6 +237,37 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
-       connector?.sourceType === ConnectorSourceType.custom
-         ? t('connector.sync', 'Sync')
-         : t('connector.refresh', 'Refresh');
+@@ -186,0 +239,31 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 +    const isCompactHeader = (headerSize?.width ?? Number.POSITIVE_INFINITY) < COMPACT_HEADER_WIDTH;
 +
 +    const renderCompactableButton = ({
@@ -198,13 +144,7 @@ index 2e90f4799f..ea64de41b0 100644
 +        {!isCompactHeader && <span className={styles.actionLabel}>{label}</span>}
 +      </Button>
 +    );
- 
-     const hasTools =
-       readTools.length > 0 ||
-@@ -214,20 +297,9 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
-     return (
-       <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-         {/* Header — full-bleed bar with bottom border, aligned with the left pane's header */}
+@@ -216,14 +299,3 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -        <div
 -          style={{
 -            alignItems: 'center',
@@ -219,16 +159,10 @@ index 2e90f4799f..ea64de41b0 100644
 -        >
 -          <div style={{ fontSize: 14, fontWeight: 500 }}>{connectorName}</div>
 -          <div style={{ display: 'flex', gap: 8 }}>
-+        <div className={styles.header} ref={headerRef}>
++        <div ref={headerRef} className={styles.header}>
 +          <div className={styles.headerTitle}>{connectorName}</div>
 +          <div className={styles.actions}>
-             {/* Reset permissions: restore all tools to auto (fully open) */}
-             <ManageTooltip title={manageTooltip}>
-               <Button
-@@ -246,27 +318,23 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
-             </ManageTooltip>
-             {/* Sync/Refresh: re-sync tool list from manifest */}
-             <ManageTooltip title={canSync ? undefined : manageTooltip}>
+@@ -248,9 +320,7 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -              <Button
 -                disabled={!canSync}
 -                icon={<RefreshCwIcon size={14} />}
@@ -245,10 +179,7 @@ index 2e90f4799f..ea64de41b0 100644
 +                loading: syncing,
 +                onClick: handleSync,
 +              })}
-             </ManageTooltip>
-             {/* Edit button for custom MCP connectors — only http type has a server URL to edit */}
-             {isMcpConnector && connector?.mcpConnectionType === 'http' && (
-               <ManageTooltip title={manageTooltip}>
+@@ -261,8 +331,6 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -                <Button
 -                  disabled={!canManage}
 -                  icon={<PencilIcon size={14} />}
@@ -263,13 +194,7 @@ index 2e90f4799f..ea64de41b0 100644
 +                  label: t('connector.edit', 'Edit'),
 +                  onClick: () => setCustomModalOpen(true),
 +                })}
-               </ManageTooltip>
-             )}
-             {lifecycleActions !== undefined ? (
-@@ -277,28 +345,27 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
-                 {isMcpConnector && (
-                   <>
-                     <ManageTooltip title={manageTooltip}>
+@@ -279,5 +347,6 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -                      <Button
 -                        danger
 -                        disabled={!canManage}
@@ -281,19 +206,14 @@ index 2e90f4799f..ea64de41b0 100644
 +                        icon: <Unplug size={14} />,
 +                        label: t('connector.disconnect', 'Disconnect'),
 +                        onClick: async () => {
-                           try {
-                             await disconnectConnector(connectorId);
-                           } catch (error) {
-                             notifyActionError(error);
-                           }
+@@ -289,4 +358,2 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -                        }}
 -                      >
 -                        {t('connector.disconnect', 'Disconnect')}
 -                      </Button>
 +                        },
 +                      })}
-                     </ManageTooltip>
-                     <ManageTooltip title={manageTooltip}>
+@@ -295,6 +362,6 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -                      <Button
 -                        danger
 -                        disabled={!canManage}
@@ -306,25 +226,14 @@ index 2e90f4799f..ea64de41b0 100644
 +                        icon: <Trash2 size={14} />,
 +                        label: t('connector.delete', 'Delete'),
 +                        onClick: () => {
-                           confirmModal({
-                             content: deleteConfirmContent,
-                             okButtonProps: { danger: true },
-@@ -312,25 +379,21 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
-                             },
-                             title: t('connector.deleteConfirm', 'Delete this connector?'),
-                           });
+@@ -314,4 +381,2 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -                        }}
 -                      >
 -                        {t('connector.delete', 'Delete')}
 -                      </Button>
 +                        },
 +                      })}
-                     </ManageTooltip>
-                   </>
-                 )}
-                 {/* Uninstall for builtin and marketplace tools */}
-                 {(isBuiltin || isMarketplace) && (
-                   <ManageTooltip title={manageTooltip}>
+@@ -324,9 +389,7 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -                    <Button
 -                      danger
 -                      disabled={!canManage}
@@ -341,6 +250,3 @@ index 2e90f4799f..ea64de41b0 100644
 +                      label: t('connector.uninstall', 'Uninstall'),
 +                      onClick: handleUninstall,
 +                    })}
-                   </ManageTooltip>
-                 )}
-               </>
