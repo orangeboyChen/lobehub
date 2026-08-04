@@ -368,18 +368,19 @@ index 5a917f1ca..505ef6128 100644
      });
    });
 diff --git a/apps/server/src/services/toolExecution/serverRuntimes/cloudSandbox.ts b/apps/server/src/services/toolExecution/serverRuntimes/cloudSandbox.ts
-index af0eb23ca..cbbc90128 100644
+index 4d38eaec4..4c9ad11e9 100644
 --- a/apps/server/src/services/toolExecution/serverRuntimes/cloudSandbox.ts
 +++ b/apps/server/src/services/toolExecution/serverRuntimes/cloudSandbox.ts
-@@ -1,6 +1,7 @@
- import { CloudSandboxIdentifier } from '@lobechat/builtin-tool-cloud-sandbox';
+@@ -1,6 +1,8 @@
+ import { CloudSandboxIdentifier, type ISandboxService } from '@lobechat/builtin-tool-cloud-sandbox';
  import { CloudSandboxExecutionRuntime } from '@lobechat/builtin-tool-cloud-sandbox/executionRuntime';
  
 +import { UserModel } from '@/database/models/user';
++
  import { FileService } from '@/server/services/file';
  import { MarketService } from '@/server/services/market';
  import { createSandboxService } from '@/server/services/sandbox';
-@@ -12,7 +13,7 @@ import { type ServerRuntimeRegistration } from './types';
+@@ -61,7 +63,7 @@
   * Per-request runtime (needs topicId, userId)
   */
  export const cloudSandboxRuntime: ServerRuntimeRegistration = {
@@ -388,7 +389,7 @@ index af0eb23ca..cbbc90128 100644
      if (!context.userId || !context.topicId) {
        throw new Error('userId and topicId are required for Cloud Sandbox execution');
      }
-@@ -21,7 +22,19 @@ export const cloudSandboxRuntime: ServerRuntimeRegistration = {
+@@ -70,7 +72,19 @@
        throw new Error('serverDB is required for Cloud Sandbox execution');
      }
  
