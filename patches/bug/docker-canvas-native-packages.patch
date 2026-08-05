@@ -1,13 +1,8 @@
 diff --git a/src/libs/next/config/define-config.ts b/src/libs/next/config/define-config.ts
-index 6b0a6b4f8c..0000000000 100644
+index d6928a4cec..0000000000 100644
 --- a/src/libs/next/config/define-config.ts
 +++ b/src/libs/next/config/define-config.ts
-@@ -357,6 +357,8 @@ export function defineConfig(config: CustomNextConfig) {
-     serverExternalPackages: config.serverExternalPackages ?? [
-       'pdfkit',
-       '@napi-rs/canvas',
+@@ -350,0 +351,3 @@ export function defineConfig(config: CustomNextConfig) {
++      '@napi-rs/canvas',
 +      '@napi-rs/canvas-linux-arm64-gnu',
 +      '@napi-rs/canvas-linux-x64-gnu',
-       '@lobehub/editor',
-       'discord.js',
-       'ffmpeg-static',
