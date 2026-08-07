@@ -1,120 +1,101 @@
 diff --git a/locales/ar/auth.json b/locales/ar/auth.json
-index ed69f0f505..6fcb6caf5d 100644
 --- a/locales/ar/auth.json
 +++ b/locales/ar/auth.json
-@@ -28,0 +29 @@
+@@ -36,0 +37 @@
 +  "apikey.list.empty.title": "لا توجد بيانات",
 diff --git a/locales/bg-BG/auth.json b/locales/bg-BG/auth.json
-index dfdcceab1f..b5246bbe11 100644
 --- a/locales/bg-BG/auth.json
 +++ b/locales/bg-BG/auth.json
-@@ -28,0 +29 @@
+@@ -36,0 +37 @@
 +  "apikey.list.empty.title": "Няма данни",
 diff --git a/locales/de-DE/auth.json b/locales/de-DE/auth.json
-index 1c72abd097..eb751d1537 100644
 --- a/locales/de-DE/auth.json
 +++ b/locales/de-DE/auth.json
-@@ -28,0 +29 @@
+@@ -36,0 +37 @@
 +  "apikey.list.empty.title": "Keine Daten",
 diff --git a/locales/en-US/auth.json b/locales/en-US/auth.json
-index c303161704..86299d5c4d 100644
 --- a/locales/en-US/auth.json
 +++ b/locales/en-US/auth.json
-@@ -28,0 +29 @@
+@@ -36,0 +37 @@
 +  "apikey.list.empty.title": "No Data",
 diff --git a/locales/es-ES/auth.json b/locales/es-ES/auth.json
-index b052930499..05494d8e8c 100644
 --- a/locales/es-ES/auth.json
 +++ b/locales/es-ES/auth.json
-@@ -28,0 +29 @@
+@@ -36,0 +37 @@
 +  "apikey.list.empty.title": "Sin datos",
 diff --git a/locales/fa-IR/auth.json b/locales/fa-IR/auth.json
-index db41ee2a12..3dcfc9201c 100644
 --- a/locales/fa-IR/auth.json
 +++ b/locales/fa-IR/auth.json
-@@ -28,0 +29 @@
+@@ -36,0 +37 @@
 +  "apikey.list.empty.title": "بدون داده",
 diff --git a/locales/fr-FR/auth.json b/locales/fr-FR/auth.json
-index 1b60df21af..47cb095d35 100644
 --- a/locales/fr-FR/auth.json
 +++ b/locales/fr-FR/auth.json
-@@ -28,0 +29 @@
+@@ -36,0 +37 @@
 +  "apikey.list.empty.title": "Aucune donnée",
 diff --git a/locales/it-IT/auth.json b/locales/it-IT/auth.json
-index 8608f353b3..cad218d1b8 100644
 --- a/locales/it-IT/auth.json
 +++ b/locales/it-IT/auth.json
-@@ -28,0 +29 @@
+@@ -36,0 +37 @@
 +  "apikey.list.empty.title": "Nessun Dato",
 diff --git a/locales/ja-JP/auth.json b/locales/ja-JP/auth.json
-index 65b73ce4b5..5fa4bfe6c3 100644
 --- a/locales/ja-JP/auth.json
 +++ b/locales/ja-JP/auth.json
-@@ -28,0 +29 @@
+@@ -36,0 +37 @@
 +  "apikey.list.empty.title": "データなし",
 diff --git a/locales/ko-KR/auth.json b/locales/ko-KR/auth.json
-index 96013a08ec..432aa112ec 100644
 --- a/locales/ko-KR/auth.json
 +++ b/locales/ko-KR/auth.json
-@@ -28,0 +29 @@
+@@ -36,0 +37 @@
 +  "apikey.list.empty.title": "데이터 없음",
 diff --git a/locales/nl-NL/auth.json b/locales/nl-NL/auth.json
-index 6bd1a133c1..7666033bad 100644
 --- a/locales/nl-NL/auth.json
 +++ b/locales/nl-NL/auth.json
-@@ -28,0 +29 @@
+@@ -36,0 +37 @@
 +  "apikey.list.empty.title": "Geen gegevens",
 diff --git a/locales/pl-PL/auth.json b/locales/pl-PL/auth.json
-index cfd9426827..2d73b52468 100644
 --- a/locales/pl-PL/auth.json
 +++ b/locales/pl-PL/auth.json
-@@ -28,0 +29 @@
+@@ -36,0 +37 @@
 +  "apikey.list.empty.title": "Brak danych",
 diff --git a/locales/pt-BR/auth.json b/locales/pt-BR/auth.json
-index 439b1dde17..8e78bd2ff7 100644
 --- a/locales/pt-BR/auth.json
 +++ b/locales/pt-BR/auth.json
-@@ -28,0 +29 @@
+@@ -36,0 +37 @@
 +  "apikey.list.empty.title": "Sem Dados",
 diff --git a/locales/ru-RU/auth.json b/locales/ru-RU/auth.json
-index 3ba91121d3..54ddcb754f 100644
 --- a/locales/ru-RU/auth.json
 +++ b/locales/ru-RU/auth.json
-@@ -28,0 +29 @@
+@@ -36,0 +37 @@
 +  "apikey.list.empty.title": "Нет данных",
 diff --git a/locales/tr-TR/auth.json b/locales/tr-TR/auth.json
-index 653ac27cf4..1f7255cd2d 100644
 --- a/locales/tr-TR/auth.json
 +++ b/locales/tr-TR/auth.json
-@@ -28,0 +29 @@
+@@ -36,0 +37 @@
 +  "apikey.list.empty.title": "Veri Yok",
 diff --git a/locales/vi-VN/auth.json b/locales/vi-VN/auth.json
-index 56b52a779d..6983c5c49e 100644
 --- a/locales/vi-VN/auth.json
 +++ b/locales/vi-VN/auth.json
-@@ -28,0 +29 @@
+@@ -36,0 +37 @@
 +  "apikey.list.empty.title": "Chưa có dữ liệu",
 diff --git a/locales/zh-CN/auth.json b/locales/zh-CN/auth.json
-index 67b6bc0388..c4ed099df8 100644
 --- a/locales/zh-CN/auth.json
 +++ b/locales/zh-CN/auth.json
-@@ -28,0 +29 @@
+@@ -36,0 +37 @@
 +  "apikey.list.empty.title": "暂无数据",
 diff --git a/locales/zh-TW/auth.json b/locales/zh-TW/auth.json
-index 620ae5b209..454f23af86 100644
 --- a/locales/zh-TW/auth.json
 +++ b/locales/zh-TW/auth.json
-@@ -28,0 +29 @@
+@@ -36,0 +37 @@
 +  "apikey.list.empty.title": "暫無數據",
 diff --git a/packages/locales/src/default/auth.ts b/packages/locales/src/default/auth.ts
-index d27694920a..d446ceeddb 100644
 --- a/packages/locales/src/default/auth.ts
 +++ b/packages/locales/src/default/auth.ts
-@@ -28,0 +29 @@ export default {
+@@ -39,0 +40 @@
 +  'apikey.list.empty.title': 'No Data',
-diff --git a/src/routes/(main)/settings/apikey/features/ApiKey.tsx b/src/routes/(main)/settings/apikey/features/ApiKey.tsx
-index ae63cac482..9f5b0efe48 100644
---- a/src/routes/(main)/settings/apikey/features/ApiKey.tsx
-+++ b/src/routes/(main)/settings/apikey/features/ApiKey.tsx
-@@ -191,0 +192 @@ const ApiKey: FC = () => {
-+        locale={{ emptyText: t('apikey.list.empty.title') }}
+diff --git a/src/features/Settings/apikey/features/ApiKey.tsx b/src/features/Settings/apikey/features/ApiKey.tsx
+--- a/src/features/Settings/apikey/features/ApiKey.tsx
++++ b/src/features/Settings/apikey/features/ApiKey.tsx
+@@ -277 +277 @@
+-            <Empty description={t('apikey.list.empty')} />
++            <Empty description={t('apikey.list.empty')} title={t('apikey.list.empty.title')} />
