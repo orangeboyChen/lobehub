@@ -1,0 +1,7 @@
+patches/bug/ios-viewport.patch
+patches/bug/sidebar-orphan-agents.patch
+patches/pr-16325/pr-16325.patch
+patches/bug/lobehub-skill.patch
+patches/bug/docker-canvas-native-packages.patch
+patches/pr-16609/pr-16609.patch
+patches/pr-16616/pr-16616.patch

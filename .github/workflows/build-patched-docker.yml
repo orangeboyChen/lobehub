@@ -34,14 +34,6 @@ env:
   UPSTREAM_REPOSITORY: lobehub/lobehub
   REGISTRY_IMAGE: ghcr.io/orangeboychen/lobehub
   AI_PATCH_REPAIR_ENABLED: ${{ vars.ENABLE_AI_PATCH_REPAIR }}
-  PATCH_PATHS: |
-    ../automation/patches/bug/ios-viewport.patch
-    ../automation/patches/bug/sidebar-orphan-agents.patch
-    ../automation/patches/pr-16325/pr-16325.patch
-    ../automation/patches/bug/lobehub-skill.patch
-    ../automation/patches/bug/docker-canvas-native-packages.patch
-    ../automation/patches/pr-16609/pr-16609.patch
-    ../automation/patches/pr-16616/pr-16616.patch
 
 jobs:
   patch-validation:
@@ -65,7 +57,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          for patch in $PATCH_PATHS; do
+          mapfile -t patch_paths < ../automation/patches/paths.txt
+          for patch_path in "${patch_paths[@]}"; do
+            patch="../automation/$patch_path"
             if [ ! -f "$patch" ]; then
               echo "Listed patch is missing: ${patch}" >&2
               exit 1
@@ -157,25 +151,26 @@ jobs:
           allow-bot-users: github-actions
           permission-profile: ":workspace"
           prompt: |
-            One or more paths listed in workflow-level PATCH_PATHS is missing,
+            One or more paths listed in automation/patches/paths.txt is missing,
             or a patch in automation/patches no longer applies to the current
-            upstream canary checkout in source/. Repair the failed patch set
-            so it preserves its original intent and applies cleanly in the
-            listed order. Before changing any patch under patches/pr-*, read
+            upstream canary checkout in source/. Treat paths.txt as the only
+            authoritative patch manifest. Repair the failed patch set so it
+            preserves its original intent and applies cleanly in listed order.
+            Before changing any patch under patches/pr-*, read
             automation/.codex-upstream-pr-status.jsonl. This file is
             authoritative for the corresponding upstream pull request status.
             Do not invoke gh, request network or sandbox escalation, or request
             GitHub authentication. Determine whether the PR behavior is already
             present in source/.
-            If that PR is merged or closed, delete its corresponding patch file
-            and remove its entry from both automation/README.md and
-            automation/README.zh.md. Also remove only that patch path from
-            workflow-level PATCH_PATHS in
-            automation/.github/workflows/build-patched-docker.yml; do not make
-            any other workflow changes. Otherwise preserve every intended
+            If that PR is merged or closed, you must delete its corresponding
+            patch file, remove its entry from both automation/README.md and
+            automation/README.zh.md, and remove exactly that patch path from
+            automation/patches/paths.txt. Do not leave a deleted patch listed
+            in paths.txt. Do not make any workflow changes. Otherwise preserve
+            every intended
             user-visible and functional behavior, translating it to the current
             upstream canary implementation when necessary. Modify only files
-            under patches/, the two README files, and the matching PATCH_PATHS
+            under patches/, the two README files, and the matching paths.txt
             entry when removing a merged or closed PR patch. Do not change
             source/. Validate every remaining patch with
             `git apply --unidiff-zero --check`, applying each successful patch
@@ -191,22 +186,14 @@ jobs:
           git reset --hard HEAD
           git clean -fdx
 
-          mapfile -t repaired_patch_paths < <(
-            awk '
-              /^  PATCH_PATHS: \|/ { in_patch_paths = 1; next }
-              in_patch_paths && /^jobs:/ { exit }
-              in_patch_paths && /^    \.\.\/automation\/patches\// {
-                sub(/^    /, "")
-                print
-              }
-            ' ../automation/.github/workflows/build-patched-docker.yml
-          )
+          mapfile -t repaired_patch_paths < ../automation/patches/paths.txt
           [ "${#repaired_patch_paths[@]}" -gt 0 ] || {
-            echo 'Repaired PATCH_PATHS is empty' >&2
+            echo 'Repaired patch path list is empty' >&2
             exit 1
           }
 
-          for patch in "${repaired_patch_paths[@]}"; do
+          for patch_path in "${repaired_patch_paths[@]}"; do
+            patch="../automation/$patch_path"
             if [ ! -f "$patch" ]; then
               echo "Listed patch is missing: ${patch}" >&2
               exit 1
@@ -438,7 +425,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          for patch in $PATCH_PATHS; do
+          mapfile -t patch_paths < ../automation/patches/paths.txt
+          for patch_path in "${patch_paths[@]}"; do
+            patch="../automation/$patch_path"
             if [ ! -f "$patch" ]; then
               echo "Listed patch is missing: ${patch}" >&2
               exit 1
