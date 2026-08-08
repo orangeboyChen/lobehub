@@ -11,7 +11,6 @@ The upstream image needs a small patch set for iOS viewport behavior, input zoom
 ## Active patch set
 
 - Local fixes: `ios-viewport`, `sidebar-orphan-agents`, `lobehub-skill`, `docker-canvas-native-packages`
-- Upstream PR patches still pending upstream merge: [#16325](https://github.com/lobehub/lobehub/pull/16325), [#16609](https://github.com/lobehub/lobehub/pull/16609), [#16616](https://github.com/lobehub/lobehub/pull/16616)
 
 ## Trigger
 
