@@ -25,7 +25,6 @@ permissions:
   contents: write
   packages: write
   pull-requests: write
-  workflows: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.inputs.version || 'latest-stable' }}
@@ -227,7 +226,7 @@ jobs:
           branch='codex/repair-patches'
           existing_pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --base "$GITHUB_REF_NAME" --state open --json url --jq '.[0].url')"
 
-          repair_files=(patches README.md README.zh.md .github/workflows/build-patched-docker.yml)
+          repair_files=(patches README.md README.zh.md)
           if git diff --quiet -- "${repair_files[@]}" && \
             git diff --quiet "origin/$GITHUB_REF_NAME...HEAD" -- "${repair_files[@]}"; then
             if [ -n "$existing_pr" ]; then
