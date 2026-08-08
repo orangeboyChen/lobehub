@@ -25,6 +25,7 @@ permissions:
   contents: write
   packages: write
   pull-requests: write
+  workflows: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.inputs.version || 'latest-stable' }}
