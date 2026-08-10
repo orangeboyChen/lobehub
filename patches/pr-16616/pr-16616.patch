@@ -96,6 +96,23 @@ diff --git a/packages/locales/src/default/auth.ts b/packages/locales/src/default
 diff --git a/src/features/Settings/apikey/features/ApiKey.tsx b/src/features/Settings/apikey/features/ApiKey.tsx
 --- a/src/features/Settings/apikey/features/ApiKey.tsx
 +++ b/src/features/Settings/apikey/features/ApiKey.tsx
-@@ -277 +277 @@
--            <Empty description={t('apikey.list.empty')} />
-+            <Empty description={t('apikey.list.empty')} title={t('apikey.list.empty.title')} />
+@@ -226,14 +226,16 @@
+         emptyText={
+           <Center height={240} width={'100%'}>
+             <Empty
+               description={t(
+                 isMemberCreationRestricted
+                   ? 'apikey.list.restrictedEmpty.desc'
+                   : 'apikey.list.empty',
+               )}
+-              title={
+-                isMemberCreationRestricted ? t('apikey.list.restrictedEmpty.title') : undefined
+-              }
++              title={
++                isMemberCreationRestricted
++                  ? t('apikey.list.restrictedEmpty.title')
++                  : t('apikey.list.empty.title')
++              }
+             />
+           </Center>
+         }
