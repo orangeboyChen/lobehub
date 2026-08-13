@@ -715,7 +715,7 @@ index c624026afc..7d8a519546 100644
        const mockStore = createMockStore({
          dbMessagesMap: {
 diff --git a/src/store/chat/agents/GroupOrchestration/createGroupOrchestrationExecutors.ts b/src/store/chat/agents/GroupOrchestration/createGroupOrchestrationExecutors.ts
-index 158bf73353..3a6e53c035 100644
+index 158bf73353..73529856b3 100644
 --- a/src/store/chat/agents/GroupOrchestration/createGroupOrchestrationExecutors.ts
 +++ b/src/store/chat/agents/GroupOrchestration/createGroupOrchestrationExecutors.ts
 @@ -66,6 +66,7 @@ export interface GroupOrchestrationExecutorsContext {
@@ -726,7 +726,7 @@ index 158bf73353..3a6e53c035 100644
    supervisorAgentId: string;
  }
  
-@@ -110,7 +111,8 @@ export interface GroupOrchestrationExecutorsContext {
+@@ -110,10 +111,12 @@ export interface GroupOrchestrationExecutorsContext {
  export const createGroupOrchestrationExecutors = (
    context: GroupOrchestrationExecutorsContext,
  ): Partial<Record<SupervisorInstruction['type'], GroupOrchestrationExecutor>> => {
@@ -736,19 +736,26 @@ index 158bf73353..3a6e53c035 100644
  
    // Pre-compute the chat key for message fetching
    const chatKey = messageMapKey(messageContext);
-@@ -138,8 +140,13 @@ export const createGroupOrchestrationExecutors = (
++  let initialSupervisorParentMessageId = parentMessageId;
+ 
+   /**
+    * Helper to get current messages for the group conversation
+@@ -138,8 +141,16 @@ export const createGroupOrchestrationExecutors = (
        const sessionLogId = `${state.operationId}:call_supervisor`;
        log(`[${sessionLogId}] Starting supervisor agent: ${agentId}`);
  
 -      const messages = getMessages();
 -      const lastMessage = messages.at(-1);
 +      const allMessages = getMessages();
-+      const parentMessageIndex = parentMessageId
-+        ? allMessages.findIndex((message) => message.id === parentMessageId)
++      const parentMessageIndex = initialSupervisorParentMessageId
++        ? allMessages.findIndex((message) => message.id === initialSupervisorParentMessageId)
 +        : -1;
 +      const messages =
 +        parentMessageIndex >= 0 ? allMessages.slice(0, parentMessageIndex + 1) : allMessages;
-+      const lastMessage = parentMessageId ? allMessages[parentMessageIndex] : messages.at(-1);
++      const lastMessage = initialSupervisorParentMessageId
++        ? allMessages[parentMessageIndex]
++        : messages.at(-1);
++      initialSupervisorParentMessageId = undefined;
  
        if (!lastMessage) {
          log(`[${sessionLogId}] No messages found, cannot execute supervisor`);
