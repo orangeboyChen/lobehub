@@ -1,0 +1,324 @@
+From b2c523eadbc9e12d72b9bcf8abb0e49ad757425a Mon Sep 17 00:00:00 2001
+From: orangeboyChen <chenenhan@qq.com>
+Date: Thu, 13 Aug 2026 20:23:34 +0800
+Subject: [PATCH] fix(group): preserve retry execution identity
+
+---
+ .../store/slices/generation/action.test.ts    | 156 ++++++++++++++++++
+ .../store/slices/generation/action.ts         |  87 +++++++++-
+ 2 files changed, 237 insertions(+), 6 deletions(-)
+
+diff --git a/src/features/Conversation/store/slices/generation/action.test.ts b/src/features/Conversation/store/slices/generation/action.test.ts
+index fd1c4ec029..2a39aae5ca 100644
+--- a/src/features/Conversation/store/slices/generation/action.test.ts
++++ b/src/features/Conversation/store/slices/generation/action.test.ts
+@@ -1222,6 +1222,162 @@ describe('Generation Actions', () => {
+       );
+     });
+ 
++    it('reuses the active member branch identity instead of the group supervisor', async () => {
++      const context: ConversationContext = {
++        agentId: 'supervisor-agent',
++        groupId: 'group-1',
++        scope: 'group',
++        threadId: null,
++        topicId: 'topic-1',
++      };
++      const store = createStore({ context });
++
++      act(() => {
++        store.setState({
++          dbMessages: [
++            { id: 'user-1', metadata: { activeBranchIndex: 1 }, role: 'user', content: 'Hello' },
++            {
++              agentId: 'first-member',
++              content: 'First response',
++              id: 'assistant-1',
++              parentId: 'user-1',
++              role: 'assistant',
++            },
++            {
++              agentId: 'selected-member',
++              content: 'Selected response',
++              id: 'assistant-2',
++              metadata: { orchestrationRole: 'member', subAgentId: 'selected-member' },
++              parentId: 'user-1',
++              role: 'assistant',
++            },
++          ],
++          displayMessages: [{ id: 'user-1', role: 'user', content: 'Hello' }],
++        } as any);
++      });
++
++      await act(async () => {
++        await store.getState().regenerateUserMessage('user-1');
++      });
++
++      expect(mockExecuteClientAgent).toHaveBeenCalledWith(
++        expect.objectContaining({
++          context: expect.objectContaining({
++            agentId: 'selected-member',
++            isSupervisor: undefined,
++            orchestrationRole: 'member',
++            subAgentId: 'selected-member',
++          }),
++        }),
++      );
++    });
++
++    it('reuses an assistant Orchestrator identity when regenerating its bubble', async () => {
++      const context: ConversationContext = {
++        agentId: 'supervisor-agent',
++        groupId: 'group-1',
++        scope: 'group',
++        threadId: null,
++        topicId: 'topic-1',
++      };
++      const store = createStore({ context });
++
++      act(() => {
++        store.setState({
++          dbMessages: [
++            { id: 'user-1', role: 'user', content: 'Hello' },
++            {
++              agentId: 'orchestrator-agent',
++              content: 'Orchestrated response',
++              id: 'assistant-1',
++              metadata: { isSupervisor: true, orchestrationRole: 'supervisor' },
++              parentId: 'user-1',
++              role: 'assistant',
++            },
++          ],
++          displayMessages: [
++            { id: 'user-1', role: 'user', content: 'Hello' },
++            {
++              agentId: 'orchestrator-agent',
++              content: 'Orchestrated response',
++              id: 'assistant-1',
++              metadata: { isSupervisor: true, orchestrationRole: 'supervisor' },
++              parentId: 'user-1',
++              role: 'assistant',
++            },
++          ],
++        } as any);
++      });
++
++      await act(async () => {
++        await store.getState().regenerateAssistantMessage('assistant-1');
++      });
++
++      expect(mockExecuteClientAgent).toHaveBeenCalledWith(
++        expect.objectContaining({
++          context: expect.objectContaining({
++            agentId: 'orchestrator-agent',
++            isSupervisor: true,
++            orchestrationRole: 'supervisor',
++          }),
++        }),
++      );
++    });
++
++    it('reuses a member identity when its assistant bubble is nested below a tool message', async () => {
++      const context: ConversationContext = {
++        agentId: 'supervisor-agent',
++        groupId: 'group-1',
++        scope: 'group',
++        threadId: null,
++        topicId: 'topic-1',
++      };
++      const store = createStore({ context });
++
++      act(() => {
++        store.setState({
++          dbMessages: [
++            { id: 'user-1', role: 'user', content: 'Hello' },
++            { id: 'speak-tool-1', parentId: 'user-1', role: 'tool', content: '' },
++            {
++              agentId: 'member-agent',
++              content: 'Member response',
++              id: 'assistant-1',
++              metadata: { orchestrationRole: 'member', subAgentId: 'member-agent' },
++              parentId: 'speak-tool-1',
++              role: 'assistant',
++            },
++          ],
++          displayMessages: [
++            { id: 'user-1', role: 'user', content: 'Hello' },
++            {
++              agentId: 'member-agent',
++              content: 'Member response',
++              id: 'assistant-1',
++              metadata: { orchestrationRole: 'member', subAgentId: 'member-agent' },
++              parentId: 'speak-tool-1',
++              role: 'assistant',
++            },
++          ],
++        } as any);
++      });
++
++      await act(async () => {
++        await store.getState().regenerateAssistantMessage('assistant-1');
++      });
++
++      expect(mockExecuteClientAgent).toHaveBeenCalledWith(
++        expect.objectContaining({
++          context: expect.objectContaining({
++            agentId: 'member-agent',
++            orchestrationRole: 'member',
++            subAgentId: 'member-agent',
++          }),
++          parentMessageId: 'user-1',
++        }),
++      );
++    });
++
+     it('should bail out if the interim op was cancelled during preflight (Stop pressed)', async () => {
+       const { useChatStore } = await import('@/store/chat');
+       vi.mocked(useChatStore.getState).mockReturnValue({
+diff --git a/src/features/Conversation/store/slices/generation/action.ts b/src/features/Conversation/store/slices/generation/action.ts
+index b19d4c856f..f4f01339b7 100644
+--- a/src/features/Conversation/store/slices/generation/action.ts
++++ b/src/features/Conversation/store/slices/generation/action.ts
+@@ -6,6 +6,7 @@ import type {
+   ChatTTS,
+   ConversationContext,
+   HeterogeneousProviderConfig,
++  UIChatMessage,
+ } from '@lobechat/types';
+ import { resolveAgentAgencyConfig } from '@lobechat/types';
+ import { toast } from '@lobehub/ui/base-ui';
+@@ -253,6 +254,71 @@ interface RegenerateUserMessageSource {
+   readDbMessages: () => ConversationStore['dbMessages'];
+ }
+ 
++type RetryExecutionContext = Pick<
++  ConversationContext,
++  'agentId' | 'groupId' | 'scope' | 'subAgentId' | 'isSupervisor' | 'orchestrationRole'
++>;
++
++const getRetryExecutionContext = (
++  message: UIChatMessage | undefined,
++  fallback: ConversationContext,
++): ConversationContext => {
++  if (
++    !message?.agentId &&
++    !message?.metadata?.orchestrationRole &&
++    !message?.metadata?.isSupervisor
++  ) {
++    return fallback;
++  }
++
++  const orchestrationRole = message.metadata?.orchestrationRole;
++  const isSupervisor =
++    orchestrationRole === 'supervisor' || message.metadata?.isSupervisor === true;
++
++  return {
++    ...fallback,
++    ...(message.agentId && {
++      agentId: message.agentId === 'supervisor' ? fallback.agentId : message.agentId,
++    }),
++    ...(message.groupId && { groupId: message.groupId }),
++    ...(message.metadata?.scope && {
++      scope: message.metadata.scope as RetryExecutionContext['scope'],
++    }),
++    ...(message.metadata?.subAgentId && { subAgentId: message.metadata.subAgentId }),
++    isSupervisor: isSupervisor || undefined,
++    orchestrationRole: orchestrationRole || (isSupervisor ? 'supervisor' : undefined),
++  };
++};
++
++const findRetrySourceMessage = (
++  message: UIChatMessage,
++  dbMessages: UIChatMessage[],
++): UIChatMessage | undefined => {
++  if (message.role !== 'user') return message;
++
++  const children = dbMessages.filter((candidate) => candidate.parentId === message.id);
++  if (children.length === 0) return undefined;
++
++  const branchIndex =
++    message.metadata?.activeBranchIndex ?? message.branch?.activeBranchIndex ?? children.length - 1;
++  return children[branchIndex] ?? children.at(-1);
++};
++
++const findUserMessageId = (
++  message: UIChatMessage,
++  messages: UIChatMessage[],
++): string | undefined => {
++  const messagesById = new Map(messages.map((candidate) => [candidate.id, candidate]));
++  let currentMessage: UIChatMessage | undefined = message;
++
++  while (currentMessage) {
++    if (currentMessage.role === 'user') return currentMessage.id;
++    currentMessage = currentMessage.parentId
++      ? messagesById.get(currentMessage.parentId)
++      : undefined;
++  }
++};
++
+ const captureRegenerateUserMessageSource = (
+   get: () => ConversationStore,
+ ): RegenerateUserMessageSource => {
+@@ -275,8 +341,9 @@ const captureRegenerateUserMessageSource = (
+ const regenerateUserMessageFromSource = async (
+   messageId: string,
+   source: RegenerateUserMessageSource,
++  retryExecutionContext?: RetryExecutionContext,
+ ) => {
+-  const { context, displayMessages, hooks, readDbMessages } = source;
++  const { context: sourceContext, displayMessages, hooks, readDbMessages } = source;
+   const chatStore = useChatStore.getState();
+ 
+   // Block a genuine double-regenerate, and ONLY that. The guard used to be
+@@ -297,6 +364,11 @@ const regenerateUserMessageFromSource = async (
+   const currentIndex = displayMessages.findIndex((c) => c.id === messageId);
+   const item = displayMessages[currentIndex];
+   if (!item) return;
++  const dbMessages = readDbMessages();
++  const retrySourceMessage = findRetrySourceMessage(item, dbMessages);
++  const context = retryExecutionContext
++    ? { ...sourceContext, ...retryExecutionContext }
++    : getRetryExecutionContext(retrySourceMessage, sourceContext);
+   // Start the interim regenerate op BEFORE the async preflight below
+   // (document-context resolve + onBeforeRegenerate hook). In page / bound-
+   // document contexts those reads are real round trips, so creating the op
+@@ -342,7 +414,6 @@ const regenerateUserMessageFromSource = async (
+     // Read the database messages from the captured conversation. If the shared
+     // ConversationStore has switched context, the source falls back to the old
+     // context's ChatStore bucket instead of observing the new topic.
+-    const dbMessages = readDbMessages();
+     const childrenCount = dbMessages.filter((m) => m.parentId === messageId).length;
+     const nextBranchIndex = childrenCount;
+ 
+@@ -1162,7 +1233,7 @@ export const generationSlice: StateCreator<
+   },
+ 
+   regenerateAssistantMessage: async (messageId: string) => {
+-    const { displayMessages } = get();
++    const { dbMessages, displayMessages } = get();
+ 
+     // Find the assistant message
+     const currentIndex = displayMessages.findIndex((c) => c.id === messageId);
+@@ -1170,12 +1241,16 @@ export const generationSlice: StateCreator<
+ 
+     if (!currentMessage) return;
+ 
+-    // Find the parent user message
+-    const userId = currentMessage.parentId;
++    const userId = findUserMessageId(currentMessage, [...dbMessages, ...displayMessages]);
+     if (!userId) return;
+ 
+     // Delegate to regenerateUserMessage with the parent user message
+-    await get().regenerateUserMessage(userId);
++    const source = captureRegenerateUserMessageSource(get);
++    await regenerateUserMessageFromSource(
++      userId,
++      source,
++      getRetryExecutionContext(currentMessage, source.context),
++    );
+   },
+ 
+   regenerateUserMessage: async (messageId: string) =>
+-- 
+2.48.1
+

@@ -17,6 +17,7 @@ The upstream image needs a small patch set for iOS viewport behavior, input zoom
   - [#18239](https://github.com/lobehub/lobehub/pull/18239): show agents without sessions in the SPA sidebar
   - [#18240](https://github.com/lobehub/lobehub/pull/18240): preserve desktop group conversation routes
   - [#18242](https://github.com/lobehub/lobehub/pull/18242): allow group members to start under an active Supervisor
+  - [#18266](https://github.com/lobehub/lobehub/pull/18266): preserve the original group agent when retrying a message
 
 ## Trigger
 
