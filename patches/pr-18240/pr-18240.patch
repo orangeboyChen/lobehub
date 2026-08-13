@@ -1,6 +1,6 @@
 diff --git a/apps/server/src/modules/AgentRuntime/__tests__/executorHelpers.groupMember.test.ts b/apps/server/src/modules/AgentRuntime/__tests__/executorHelpers.groupMember.test.ts
 new file mode 100644
-index 0000000000..40e30350f4
+index 0000000000000000000000000000000000000000..40e30350f48a0aebf50dfd4b28955ca8604df11b
 --- /dev/null
 +++ b/apps/server/src/modules/AgentRuntime/__tests__/executorHelpers.groupMember.test.ts
 @@ -0,0 +1,27 @@
@@ -32,7 +32,7 @@ index 0000000000..40e30350f4
 +  });
 +});
 diff --git a/apps/server/src/modules/AgentRuntime/executorHelpers.ts b/apps/server/src/modules/AgentRuntime/executorHelpers.ts
-index 6ac03bc04d..ede9ed8006 100644
+index 6ac03bc04d06b7e53a3986435b05de45ae030aa6..ede9ed80064d7b42ba15dfe4459ac43a2b6c661d 100644
 --- a/apps/server/src/modules/AgentRuntime/executorHelpers.ts
 +++ b/apps/server/src/modules/AgentRuntime/executorHelpers.ts
 @@ -39,0 +40,15 @@ export const GEN_AI_FUNCTION_TOOL_TYPE: ToolType = 'function';
@@ -64,10 +64,10 @@ index 6ac03bc04d..ede9ed8006 100644
 -        members.map(async (member, i) => {
 +        resolvedMembers.map(async (member, i) => {
 diff --git a/src/features/Electron/ActiveConversationBridge/coordinate.test.ts b/src/features/Electron/ActiveConversationBridge/coordinate.test.ts
-index 51aca37da3..86751fc62b 100644
+index 51aca37da33167cbcef9c6e55efe0e32b22bb1fb..207a281a0496470f6e63840fb4e0927f44a097da 100644
 --- a/src/features/Electron/ActiveConversationBridge/coordinate.test.ts
 +++ b/src/features/Electron/ActiveConversationBridge/coordinate.test.ts
-@@ -37,0 +38,18 @@ describe('active conversation coordinate', () => {
+@@ -37,0 +38,32 @@ describe('active conversation coordinate', () => {
 +  it('resolves group routes and keeps subsequent topic navigation in the group route', () => {
 +    const coordinate = resolveActiveConversationCoordinate({
 +      params: { gid: 'group-a', topicId: 'topic-a' },
@@ -86,8 +86,22 @@ index 51aca37da3..86751fc62b 100644
 +    );
 +  });
 +
++  it('keeps the resolved agent id on an agent subpage', () => {
++    const coordinate = resolveActiveConversationCoordinate({
++      params: { aid: 'friendly-name' },
++      resolvedAgentId: 'agt_persisted',
++      url: '/agent/friendly-name/profile',
++    });
++
++    expect(coordinate).toMatchObject({
++      agentId: 'agt_persisted',
++      isConversation: false,
++      routeAgentId: 'friendly-name',
++    });
++  });
++
 diff --git a/src/features/Electron/ActiveConversationBridge/coordinate.ts b/src/features/Electron/ActiveConversationBridge/coordinate.ts
-index e6331ed65e..cbdef8bf88 100644
+index e6331ed65eaf2b5a2b632db352fca417a092dc81..2df203b2d680ec5f3a6ae55eea0de5c23e39ea59 100644
 --- a/src/features/Electron/ActiveConversationBridge/coordinate.ts
 +++ b/src/features/Electron/ActiveConversationBridge/coordinate.ts
 @@ -3,0 +4,2 @@ export interface ActiveConversationCoordinate {
@@ -111,11 +125,11 @@ index e6331ed65e..cbdef8bf88 100644
 @@ -33,0 +43,2 @@ export const resolveActiveConversationCoordinate = ({
 +  const groupBasePath =
 +    groupSegmentIndex >= 0 ? `/${segments.slice(0, groupSegmentIndex + 2).join('/')}` : undefined;
-@@ -37 +48,3 @@ export const resolveActiveConversationCoordinate = ({
+@@ -37 +49,3 @@ export const resolveActiveConversationCoordinate = ({
 -    agentId: params.aid ? resolvedAgentId || params.aid : undefined,
-+    agentId: agentConversation && params.aid ? resolvedAgentId || params.aid : undefined,
++    agentId: params.aid ? resolvedAgentId || params.aid : undefined,
 +    groupBasePath,
-+    groupId: groupConversation ? params.gid : undefined,
++    groupId: params.gid,
 @@ -53 +66,2 @@ export const buildActiveConversationUrl = (
 -  if (!coordinate.agentBasePath) {
 +  const basePath = coordinate.groupBasePath || coordinate.agentBasePath;
@@ -124,21 +138,21 @@ index e6331ed65e..cbdef8bf88 100644
 -  const pathname = topicId ? `${coordinate.agentBasePath}/${topicId}` : coordinate.agentBasePath;
 +  const pathname = topicId ? `${basePath}/${topicId}` : basePath;
 diff --git a/src/features/Electron/ActiveConversationBridge/index.tsx b/src/features/Electron/ActiveConversationBridge/index.tsx
-index b3258ba1cb..943f66e0f8 100644
+index b3258ba1cb1c66e1bb42a9955b8914f1326b5248..943f66e0f836f3f54b129569dd9e44ebc9afaba2 100644
 --- a/src/features/Electron/ActiveConversationBridge/index.tsx
 +++ b/src/features/Electron/ActiveConversationBridge/index.tsx
 @@ -15 +15 @@ const ActiveConversationBridge = () => {
 -  const params = useActiveRouteParams<{ aid?: string; topicId?: string }>();
 +  const params = useActiveRouteParams<{ aid?: string; gid?: string; topicId?: string }>();
 diff --git a/src/features/Electron/ActiveConversationBridge/navigation.ts b/src/features/Electron/ActiveConversationBridge/navigation.ts
-index e8a6575d7b..2064255e27 100644
+index e8a6575d7b78dc7b2c2909b36f99b651aa779247..2064255e279ac83c8e82af297ac7b1f600a022ba 100644
 --- a/src/features/Electron/ActiveConversationBridge/navigation.ts
 +++ b/src/features/Electron/ActiveConversationBridge/navigation.ts
 @@ -21 +21 @@ export const subscribeActiveConversationNavigation = (
 -    if (!coordinate.isConversation || !coordinate.routeAgentId) return;
 +    if (!coordinate.isConversation || (!coordinate.routeAgentId && !coordinate.groupId)) return;
 diff --git a/src/features/Electron/ActiveConversationBridge/projectCoordinate.test.ts b/src/features/Electron/ActiveConversationBridge/projectCoordinate.test.ts
-index 0b93e807ee..40723d3e33 100644
+index 0b93e807ee3e3504e54491dd4ebbe9eda96c7815..40723d3e3311cdcf5d5ea27641fbd9b9f7ac2e0c 100644
 --- a/src/features/Electron/ActiveConversationBridge/projectCoordinate.test.ts
 +++ b/src/features/Electron/ActiveConversationBridge/projectCoordinate.test.ts
 @@ -40,0 +41,17 @@ describe('active conversation projection', () => {
@@ -160,28 +174,20 @@ index 0b93e807ee..40723d3e33 100644
 +  });
 +
 diff --git a/src/features/Electron/ActiveConversationBridge/projectCoordinate.ts b/src/features/Electron/ActiveConversationBridge/projectCoordinate.ts
-index 632c23a599..48512155c1 100644
+index 632c23a599ff95afab972aa3c6c54c5c585876c6..48512155c1c43a6cc8a37ed807f29ac80dbc3140 100644
 --- a/src/features/Electron/ActiveConversationBridge/projectCoordinate.ts
 +++ b/src/features/Electron/ActiveConversationBridge/projectCoordinate.ts
 @@ -10,0 +11,29 @@ export const projectActiveConversationCoordinate = (
 +  if (coordinate.groupId) {
 +    const chatState = useChatStore.getState();
-+    if (useAgentStore.getState().activeAgentId !== undefined) {
-+      useAgentStore.setState(
-+        { activeAgentId: undefined },
-+        false,
-+        'ActiveConversationBridge/enterGroupConversation',
-+      );
-+    }
++
 +    if (
-+      chatState.activeAgentId !== undefined ||
 +      chatState.activeGroupId !== coordinate.groupId ||
 +      chatState.activeTopicId !== coordinate.topicId ||
 +      chatState.activeThreadId !== coordinate.threadId
 +    ) {
 +      useChatStore.setState(
 +        {
-+          activeAgentId: undefined,
 +          activeGroupId: coordinate.groupId,
 +          activeThreadId: coordinate.threadId!,
 +          activeTopicId: coordinate.topicId!,
@@ -191,5 +197,13 @@ index 632c23a599..48512155c1 100644
 +      );
 +    }
 +    return;
++  }
++
++  if (useChatStore.getState().activeGroupId !== undefined) {
++    useChatStore.setState(
++      { activeGroupId: undefined },
++      false,
++      'ActiveConversationBridge/leaveGroupConversation',
++    );
 +  }
 +

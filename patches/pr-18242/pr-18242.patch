@@ -1,21 +1,120 @@
+diff --git a/apps/server/src/services/aiAgent/__tests__/execAgent.heteroFiles.test.ts b/apps/server/src/services/aiAgent/__tests__/execAgent.heteroFiles.test.ts
+index d4fcdc2867be761be870dd05d9be702d25ff8ec4..f2645e6bb6dd5c5023e3e0f67149fd033e5456fd 100644
+--- a/apps/server/src/services/aiAgent/__tests__/execAgent.heteroFiles.test.ts
++++ b/apps/server/src/services/aiAgent/__tests__/execAgent.heteroFiles.test.ts
+@@ -771,0 +772,29 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () =>
++    it('keeps the supervisor marker when an in-group hetero child is dispatched', async () => {
++      topicMock.findById.mockResolvedValue({
++        metadata: {
++          runningOperation: {
++            assistantMessageId: 'supervisor-assistant',
++            operationId: 'parent-operation',
++          },
++        },
++      });
++
++      await service.execAgent({
++        agentId: 'agent-1',
++        appContext: {
++          isolationThread: false,
++          orchestrationRole: 'member',
++          topicId: 'topic-1',
++        },
++        parentOperationId: 'parent-operation',
++        prompt: 'speak as member',
++        topicStartOwnerOperationId: 'parent-operation',
++      } as any);
++
++      const seed = findRunningOpSeed();
++      expect(seed.runningOperation.operationId).toBe('parent-operation');
++      expect(seed.runningOperation.childOperations).toEqual([
++        expect.objectContaining({ operationId: expect.stringContaining('op_') }),
++      ]);
++    });
++
+diff --git a/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts b/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
+index a964ccd847a5787e3a9d5847d550e4f87d27c1bf..91b4c8cbd63c3c7f134ed64d2cfdf1cd66fd45da 100644
+--- a/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
++++ b/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
+@@ -253,0 +254,10 @@ describe('AiAgentService.execAgent - threadId handling', () => {
++    it('does not trust a public member role to suppress the marker', async () => {
++      await service.execAgent({
++        agentId: 'agent-1',
++        appContext: { orchestrationRole: 'member', topicId: 'topic-1' },
++        prompt: 'Test prompt',
++      });
++
++      expect(runningMarkCalls()).toHaveLength(1);
++    });
++
 diff --git a/apps/server/src/services/aiAgent/index.ts b/apps/server/src/services/aiAgent/index.ts
-index a284740651..d84d2aed66 100644
+index a284740651d75f1df7687f2efff40410d7eaa157..d978835b93462ba6f78395c909f99d9c185fdc21 100644
 --- a/apps/server/src/services/aiAgent/index.ts
 +++ b/apps/server/src/services/aiAgent/index.ts
-@@ -516,0 +517,2 @@ interface InternalExecAgentParams extends ExecAgentParams {
+@@ -509,0 +510,2 @@ interface InternalExecAgentParams extends ExecAgentParams {
 +  /** Running operation that owns the topic for an internally spawned child run. */
 +  topicStartOwnerOperationId?: string;
-@@ -1257,0 +1260 @@ export class AiAgentService {
+@@ -796 +798,13 @@ export class AiAgentService {
+-      await this.topicModel.updateMetadata(topicId, { runningOperation: null });
++      const marker = (await this.topicModel.findById(topicId))?.metadata?.runningOperation;
++      if (marker?.operationId === operationId) {
++        await this.topicModel.updateMetadata(topicId, { runningOperation: null });
++      } else if (marker?.childOperations) {
++        await this.topicModel.updateMetadata(topicId, {
++          runningOperation: {
++            ...marker,
++            childOperations: marker.childOperations.filter(
++              (child) => child.operationId !== operationId,
++            ),
++          },
++        });
++      }
+@@ -1257,0 +1272 @@ export class AiAgentService {
 +      allowRunningOperationId: params.topicStartOwnerOperationId,
-@@ -4620 +4623,3 @@ export class AiAgentService {
+@@ -2438,18 +2454,16 @@ export class AiAgentService {
+-      await this.topicModel.updateMetadata(topicId, {
+-        runningOperation: {
+-          assistantMessageId: assistantMessageRecord.id,
+-          hooks: serializedHooks,
+-          // Store deviceId + heteroType so interruptTask can cancel remote processes
+-          ...(isRemoteHetero && remoteDeviceId
+-            ? {
+-                deviceId: remoteDeviceId,
+-                deviceUserId: remoteDeviceUserId,
+-                deviceWorkspaceId: remoteDeviceWorkspaceId,
+-                heteroType,
+-              }
+-            : undefined),
+-          operationId,
+-          scope: appContext?.scope ?? undefined,
+-          threadId: appContext?.threadId ?? undefined,
+-        },
+-      });
++      const childOperation = {
++        assistantMessageId: assistantMessageRecord.id,
++        hooks: serializedHooks,
++        operationId,
++        scope: appContext?.scope ?? undefined,
++        threadId: appContext?.threadId ?? undefined,
++      };
++      if (params.topicStartOwnerOperationId) {
++        await this.topicModel.appendRunningOperationChild(
++          topicId,
++          params.topicStartOwnerOperationId,
++          childOperation,
++        );
++      } else {
++        await this.topicModel.updateMetadata(topicId, { runningOperation: childOperation });
++      }
+@@ -4620 +4654,3 @@ export class AiAgentService {
 -      if (!appContext?.isolationThread) {
 +      // `orchestrationRole` is public rendering metadata. Only the internally
 +      // propagated parent operation id proves child ownership of this topic.
 +      if (!appContext?.isolationThread && !params.topicStartOwnerOperationId) {
-@@ -4979,0 +4983 @@ export class AiAgentService {
+@@ -4979,0 +5016 @@ export class AiAgentService {
 +      topicStartOwnerOperationId: parentOperationId,
 diff --git a/apps/server/src/services/aiAgent/topicStartReservation.test.ts b/apps/server/src/services/aiAgent/topicStartReservation.test.ts
-index e47c819511..0b5b8ac7ab 100644
+index e47c819511755da17c1de2b8f9ee18daeb68a1cc..0b5b8ac7ab74837d4503540729a09d999f24e1b7 100644
 --- a/apps/server/src/services/aiAgent/topicStartReservation.test.ts
 +++ b/apps/server/src/services/aiAgent/topicStartReservation.test.ts
 @@ -43,0 +44,20 @@ describe('acquireTopicStartReservation', () => {
@@ -40,7 +139,7 @@ index e47c819511..0b5b8ac7ab 100644
 +    );
 +  });
 diff --git a/apps/server/src/services/aiAgent/topicStartReservation.ts b/apps/server/src/services/aiAgent/topicStartReservation.ts
-index 3ccd094d89..d32e6ad96a 100644
+index 3ccd094d895ae6e250aa4e6fbab5271342ca6832..d32e6ad96ac7409d23d348976ddab90800dd57e9 100644
 --- a/apps/server/src/services/aiAgent/topicStartReservation.ts
 +++ b/apps/server/src/services/aiAgent/topicStartReservation.ts
 @@ -20,0 +21 @@ export const acquireTopicStartReservation = async ({
@@ -54,11 +153,70 @@ index 3ccd094d89..d32e6ad96a 100644
 +      reservationId,
 +      allowRunningOperationId,
 +    );
+diff --git a/apps/server/src/services/heterogeneousAgent/HeterogeneousPersistenceHandler.ts b/apps/server/src/services/heterogeneousAgent/HeterogeneousPersistenceHandler.ts
+index 90ac39c2c0c52abc615558437cbf4c982efd9a9e..ad8acdcbcd35f72722039de1e21fb328973ca8ad 100644
+--- a/apps/server/src/services/heterogeneousAgent/HeterogeneousPersistenceHandler.ts
++++ b/apps/server/src/services/heterogeneousAgent/HeterogeneousPersistenceHandler.ts
+@@ -417 +417,5 @@ export class HeterogeneousPersistenceHandler {
+-    const running = topic?.metadata?.runningOperation;
++    const marker = topic?.metadata?.runningOperation;
++    const running =
++      marker?.operationId === operationId
++        ? marker
++        : marker?.childOperations?.find((child) => child.operationId === operationId);
+@@ -425 +429 @@ export class HeterogeneousPersistenceHandler {
+-    if (running && running.operationId !== operationId) {
++    if (!running && !(allowMissingRunningOperation && seedAssistantMessageId)) {
+@@ -427 +431 @@ export class HeterogeneousPersistenceHandler {
+-        `Stale hetero operation ${operationId} on topic ${topicId}; current operation is ${running.operationId}`,
++        `Stale hetero operation ${operationId} on topic ${topicId}; current operation is ${marker?.operationId ?? 'unknown'}`,
+diff --git a/apps/server/src/services/heterogeneousAgent/index.ts b/apps/server/src/services/heterogeneousAgent/index.ts
+index 9c66a86326fc175c5f0f1f21d4ece7c4f1aae28e..93e0c26ef0c15a40dfaeaf3a5e094848936c75f1 100644
+--- a/apps/server/src/services/heterogeneousAgent/index.ts
++++ b/apps/server/src/services/heterogeneousAgent/index.ts
+@@ -322,2 +322,7 @@ export class HeterogeneousAgentService {
+-      serializedHooks = topic?.metadata?.runningOperation?.hooks as SerializedHook[] | undefined;
+-      isolationThreadId = topic?.metadata?.runningOperation?.threadId ?? undefined;
++      const marker = topic?.metadata?.runningOperation;
++      const running =
++        marker?.operationId === operationId
++          ? marker
++          : marker?.childOperations?.find((child) => child.operationId === operationId);
++      serializedHooks = running?.hooks as SerializedHook[] | undefined;
++      isolationThreadId = running?.threadId ?? undefined;
+@@ -333,7 +338,20 @@ export class HeterogeneousAgentService {
+-          : topic?.metadata?.runningOperation?.assistantMessageId;
+-      await this.topicModel.updateMetadata(topicId, { runningOperation: null });
+-      // Settle `status: 'running'` for runs with no renderer attached (e.g. a
+-      // cron-dispatched scheduled resume) — otherwise nothing ever moves the
+-      // topic off `running`. Guarded in the model: an attached client's own
+-      // terminal write ('active'/'unread') is never clobbered.
+-      await this.topicModel.settleRunningStatus(topicId);
++          : running?.assistantMessageId;
++      if (marker?.operationId === operationId) {
++        await this.topicModel.updateMetadata(topicId, { runningOperation: null });
++      } else if (marker?.childOperations) {
++        await this.topicModel.updateMetadata(topicId, {
++          runningOperation: {
++            ...marker,
++            childOperations: marker.childOperations.filter(
++              (child) => child.operationId !== operationId,
++            ),
++          },
++        });
++      }
++      if (marker?.operationId === operationId) {
++        // Settle `status: 'running'` for runs with no renderer attached (e.g. a
++        // cron-dispatched scheduled resume) — otherwise nothing ever moves the
++        // topic off `running`. Guarded in the model: an attached client's own
++        // terminal write ('active'/'unread') is never clobbered.
++        await this.topicModel.settleRunningStatus(topicId);
++      }
 diff --git a/packages/database/src/models/__tests__/topics/topic.update.test.ts b/packages/database/src/models/__tests__/topics/topic.update.test.ts
-index 20b5e0f26a..71dc4ccf1b 100644
+index 20b5e0f26aa330f8f11e935aa8eb2e1b957ecc8f..71dc4ccf1b878208e111847ff37480c8f8caf309 100644
 --- a/packages/database/src/models/__tests__/topics/topic.update.test.ts
 +++ b/packages/database/src/models/__tests__/topics/topic.update.test.ts
-@@ -172,0 +173,29 @@ describe('TopicModel - Update', () => {
+@@ -172,0 +173,54 @@ describe('TopicModel - Update', () => {
 +    it('allows a child operation to re-enter its parent running operation', async () => {
 +      const topicId = 'task-callback-parent-operation';
 +      await serverDB.insert(topics).values({
@@ -88,8 +246,35 @@ index 20b5e0f26a..71dc4ccf1b 100644
 +      expect(topic?.metadata?.runningOperation?.operationId).toBe('operation-parent');
 +    });
 +
++    it('atomically appends children to the parent running operation', async () => {
++      const topicId = 'task-callback-parent-operation-children';
++      await serverDB.insert(topics).values({
++        userId,
++        id: topicId,
++        title: 'Test',
++        metadata: { runningOperation: { assistantMessageId: 'assistant-parent', operationId: 'parent-operation' } },
++      });
++
++      await Promise.all([
++        topicModel.appendRunningOperationChild(topicId, 'parent-operation', {
++          assistantMessageId: 'assistant-child-1', operationId: 'child-operation-1',
++        }),
++        topicModel.appendRunningOperationChild(topicId, 'parent-operation', {
++          assistantMessageId: 'assistant-child-2', operationId: 'child-operation-2',
++        }),
++      ]);
++
++      const topic = await topicModel.findById(topicId);
++      expect(topic?.metadata?.runningOperation?.childOperations).toEqual(
++        expect.arrayContaining([
++          expect.objectContaining({ operationId: 'child-operation-1' }),
++          expect.objectContaining({ operationId: 'child-operation-2' }),
++        ]),
++      );
++    });
++
 diff --git a/packages/database/src/models/topic.ts b/packages/database/src/models/topic.ts
-index ac73fdeca5..bad2d46d1a 100644
+index ac73fdeca5f855a6ab60a8fdebb4b261748709fb..b97b02c1021008e74ef38b5de10c30ee6812556d 100644
 --- a/packages/database/src/models/topic.ts
 +++ b/packages/database/src/models/topic.ts
 @@ -1429 +1429,5 @@ export class TopicModel {
@@ -110,18 +295,62 @@ index ac73fdeca5..bad2d46d1a 100644
 +      // themselves; the parent's runningOperation remains authoritative.
 +      if (allowRunningOperationId) return ownedRunningOperation;
 +      if (runningOperation || hasLiveReservation) return false;
-
-diff --git a/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts b/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
---- a/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
-+++ b/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
-@@ -252,0 +253,10 @@ describe('AiAgentService.execAgent - threadId handling', () => {
-+    it('does not trust a public member role to suppress the marker', async () => {
-+      await service.execAgent({
-+        agentId: 'agent-1',
-+        appContext: { orchestrationRole: 'member', topicId: 'topic-1' },
-+        prompt: 'Test prompt',
-+      });
+@@ -1419,0 +1420,34 @@ export class TopicModel {
++  appendRunningOperationChild = async (
++    id: string,
++    parentOperationId: string,
++    child: NonNullable<ChatTopicMetadata['runningOperation']>,
++  ): Promise<boolean> =>
++    this.db.transaction(async (tx) => {
++      const [existing] = await tx
++        .select({ metadata: topics.metadata })
++        .from(topics)
++        .where(and(eq(topics.id, id), this.ownership()))
++        .for('update');
++      const runningOperation = existing?.metadata?.runningOperation;
++      if (!existing || runningOperation?.operationId !== parentOperationId) return false;
 +
-+      expect(runningMarkCalls()).toHaveLength(1);
++      await tx
++        .update(topics)
++        .set({
++          metadata: {
++            ...existing.metadata,
++            runningOperation: {
++              ...runningOperation,
++              childOperations: [
++                ...(runningOperation.childOperations ?? []).filter(
++                  (operation) => operation.operationId !== child.operationId,
++                ),
++                child,
++              ],
++            },
++          },
++        })
++        .where(and(eq(topics.id, id), this.ownership()));
++      return true;
 +    });
 +
+diff --git a/packages/types/src/topic/topic.ts b/packages/types/src/topic/topic.ts
+index 2587ba392ead4e95fedebb1c4a81b0d4428b9e69..e8b2a244ec82575142de5c03b4ab1a03ca6e0511 100644
+--- a/packages/types/src/topic/topic.ts
++++ b/packages/types/src/topic/topic.ts
+@@ -216,0 +217,7 @@ export interface ChatTopicMetadata {
++    childOperations?: Array<{
++      assistantMessageId: string;
++      hooks?: SerializedAgentHook[];
++      operationId: string;
++      scope?: string;
++      threadId?: string | null;
++    }>;
+@@ -478,0 +486,11 @@ export const chatTopicMetadataUpdateSchema = z.object({
++      childOperations: z
++        .array(
++          z.object({
++            assistantMessageId: z.string(),
++            hooks: z.array(serializedAgentHookSchema).optional(),
++            operationId: z.string(),
++            scope: z.string().optional(),
++            threadId: z.string().nullish(),
++          }),
++        )
++        .optional(),
