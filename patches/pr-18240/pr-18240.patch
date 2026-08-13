@@ -35,7 +35,10 @@ diff --git a/apps/server/src/modules/AgentRuntime/executorHelpers.ts b/apps/serv
 index 6ac03bc04d..ede9ed8006 100644
 --- a/apps/server/src/modules/AgentRuntime/executorHelpers.ts
 +++ b/apps/server/src/modules/AgentRuntime/executorHelpers.ts
-@@ -39,0 +40,15 @@ export const GEN_AI_FUNCTION_TOOL_TYPE: ToolType = 'function';
+@@ -37,6 +37,21 @@ export const TOOL_MAX_RETRIES = 2;
+ 
+ export const GEN_AI_FUNCTION_TOOL_TYPE: ToolType = 'function';
+ 
 +/**
 + * Models occasionally select a member by its displayed name even though group
 + * management actions require its persisted agent id. Accept an exact display
@@ -51,7 +54,13 @@ index 6ac03bc04d..ede9ed8006 100644
 +  return matches.length === 1 ? matches[0][0] : requestedAgentId;
 +};
 +
-@@ -336 +351,7 @@ export const buildServerAgentMemberRunner = (
+ export const archiveRuntimeToolResult = async (
+   result: ToolExecutionResultResponse,
+   {
+@@ -333,7 +348,13 @@ export const buildServerAgentMemberRunner = (
+ 
+   return {
+     run: async ({ members, mode, onComplete, disableTools, timeout }) => {
 -      const expectedMembers = members.length;
 +      const agentMap = (state.metadata?.agentGroup as { agentMap?: Record<string, { name: string }> }
 +        | undefined)?.agentMap;
@@ -60,14 +69,26 @@ index 6ac03bc04d..ede9ed8006 100644
 +        agentId: resolveGroupMemberId(member.agentId, agentMap),
 +      }));
 +      const expectedMembers = resolvedMembers.length;
-@@ -395 +416 @@ export const buildServerAgentMemberRunner = (
+       if (expectedMembers === 0) return { started: false, startedCount: 0 };
+ 
+       // In-group multi-member actions (broadcast) render as an AgentCouncil: each
+@@ -392,7 +413,7 @@ export const buildServerAgentMemberRunner = (
+       // 3. Fork members.
+       let startedCount = 0;
+       await Promise.all(
 -        members.map(async (member, i) => {
 +        resolvedMembers.map(async (member, i) => {
+           const anchorMessageId = anchorIds[i];
+           try {
+             const result = await execGroupMember({
 diff --git a/src/features/Electron/ActiveConversationBridge/coordinate.test.ts b/src/features/Electron/ActiveConversationBridge/coordinate.test.ts
-index 51aca37da3..86751fc62b 100644
+index 51aca37da3..207a281a04 100644
 --- a/src/features/Electron/ActiveConversationBridge/coordinate.test.ts
 +++ b/src/features/Electron/ActiveConversationBridge/coordinate.test.ts
-@@ -37,0 +38,18 @@ describe('active conversation coordinate', () => {
+@@ -35,6 +35,38 @@ describe('active conversation coordinate', () => {
+     expect(coordinate.threadId).toBeNull();
+   });
+ 
 +  it('resolves group routes and keeps subsequent topic navigation in the group route', () => {
 +    const coordinate = resolveActiveConversationCoordinate({
 +      params: { gid: 'group-a', topicId: 'topic-a' },
@@ -86,62 +107,128 @@ index 51aca37da3..86751fc62b 100644
 +    );
 +  });
 +
++  it('keeps the resolved agent id on an agent subpage', () => {
++    const coordinate = resolveActiveConversationCoordinate({
++      params: { aid: 'friendly-name' },
++      resolvedAgentId: 'agt_persisted',
++      url: '/agent/friendly-name/profile',
++    });
++
++    expect(coordinate).toMatchObject({
++      agentId: 'agt_persisted',
++      isConversation: false,
++      routeAgentId: 'friendly-name',
++    });
++  });
++
+   it('ignores non-agent routes even when another segment is named agent', () => {
+     const coordinate = resolveActiveConversationCoordinate({
+       params: {},
 diff --git a/src/features/Electron/ActiveConversationBridge/coordinate.ts b/src/features/Electron/ActiveConversationBridge/coordinate.ts
-index e6331ed65e..cbdef8bf88 100644
+index e6331ed65e..2df203b2d6 100644
 --- a/src/features/Electron/ActiveConversationBridge/coordinate.ts
 +++ b/src/features/Electron/ActiveConversationBridge/coordinate.ts
-@@ -3,0 +4,2 @@ export interface ActiveConversationCoordinate {
+@@ -1,6 +1,8 @@
+ export interface ActiveConversationCoordinate {
+   agentBasePath?: string;
+   agentId?: string;
 +  groupBasePath?: string;
 +  groupId?: string;
-@@ -14 +16 @@ interface ResolveActiveConversationCoordinateOptions {
+   hash: string;
+   isConversation: boolean;
+   pathname: string;
+@@ -11,7 +13,7 @@ export interface ActiveConversationCoordinate {
+ }
+ 
+ interface ResolveActiveConversationCoordinateOptions {
 -  params: { aid?: string; topicId?: string };
 +  params: { aid?: string; gid?: string; topicId?: string };
-@@ -26,0 +29 @@ export const resolveActiveConversationCoordinate = ({
+   resolvedAgentId?: string;
+   url: string;
+ }
+@@ -24,17 +26,28 @@ export const resolveActiveConversationCoordinate = ({
+   const location = new URL(url, 'https://desktop.local');
+   const segments = location.pathname.split('/').filter(Boolean);
+   const agentSegmentIndex = segments.lastIndexOf('agent');
 +  const groupSegmentIndex = segments.lastIndexOf('group');
-@@ -28 +31 @@ export const resolveActiveConversationCoordinate = ({
+   const suffixLength = agentSegmentIndex < 0 ? -1 : segments.length - agentSegmentIndex - 2;
 -  const isConversation =
 +  const agentConversation =
-@@ -31,0 +35,6 @@ export const resolveActiveConversationCoordinate = ({
+     !!params.aid &&
+     agentSegmentIndex >= 0 &&
+     (suffixLength === 0 || (suffixLength === 1 && params.topicId !== undefined));
 +  const groupSuffixLength = groupSegmentIndex < 0 ? -1 : segments.length - groupSegmentIndex - 2;
 +  const groupConversation =
 +    !!params.gid &&
 +    groupSegmentIndex >= 0 &&
 +    (groupSuffixLength === 0 || (groupSuffixLength === 1 && params.topicId !== undefined));
 +  const isConversation = agentConversation || groupConversation;
-@@ -33,0 +43,2 @@ export const resolveActiveConversationCoordinate = ({
+   const agentBasePath =
+     agentSegmentIndex >= 0 ? `/${segments.slice(0, agentSegmentIndex + 2).join('/')}` : undefined;
 +  const groupBasePath =
 +    groupSegmentIndex >= 0 ? `/${segments.slice(0, groupSegmentIndex + 2).join('/')}` : undefined;
-@@ -37 +48,3 @@ export const resolveActiveConversationCoordinate = ({
--    agentId: params.aid ? resolvedAgentId || params.aid : undefined,
-+    agentId: agentConversation && params.aid ? resolvedAgentId || params.aid : undefined,
+ 
+   return {
+     agentBasePath,
+     agentId: params.aid ? resolvedAgentId || params.aid : undefined,
 +    groupBasePath,
 +    groupId: groupConversation ? params.gid : undefined,
-@@ -53 +66,2 @@ export const buildActiveConversationUrl = (
+     hash: location.hash,
+     isConversation,
+     pathname: location.pathname,
+@@ -50,7 +63,8 @@ export const buildActiveConversationUrl = (
+   topicId: string | null,
+   threadId: string | null,
+ ) => {
 -  if (!coordinate.agentBasePath) {
 +  const basePath = coordinate.groupBasePath || coordinate.agentBasePath;
 +  if (!basePath) {
-@@ -63 +77 @@ export const buildActiveConversationUrl = (
+     return `${coordinate.pathname}${coordinate.search}${coordinate.hash}`;
+   }
+ 
+@@ -60,7 +74,7 @@ export const buildActiveConversationUrl = (
+   if (threadId) searchParams.set('thread', threadId);
+   else searchParams.delete('thread');
+ 
 -  const pathname = topicId ? `${coordinate.agentBasePath}/${topicId}` : coordinate.agentBasePath;
 +  const pathname = topicId ? `${basePath}/${topicId}` : basePath;
+   const search = searchParams.toString();
+ 
+   return `${pathname}${search ? `?${search}` : ''}${coordinate.hash}`;
 diff --git a/src/features/Electron/ActiveConversationBridge/index.tsx b/src/features/Electron/ActiveConversationBridge/index.tsx
 index b3258ba1cb..943f66e0f8 100644
 --- a/src/features/Electron/ActiveConversationBridge/index.tsx
 +++ b/src/features/Electron/ActiveConversationBridge/index.tsx
-@@ -15 +15 @@ const ActiveConversationBridge = () => {
+@@ -12,7 +12,7 @@ import { subscribeActiveConversationNavigation } from './navigation';
+ import { projectActiveConversationCoordinate } from './projectCoordinate';
+ 
+ const ActiveConversationBridge = () => {
 -  const params = useActiveRouteParams<{ aid?: string; topicId?: string }>();
 +  const params = useActiveRouteParams<{ aid?: string; gid?: string; topicId?: string }>();
+   const url = useElectronStore(selectActiveTabUrl) || '/';
+   const { agentId } = useResolvedAgentRouteId(params.aid);
+   const coordinate = useMemo(
 diff --git a/src/features/Electron/ActiveConversationBridge/navigation.ts b/src/features/Electron/ActiveConversationBridge/navigation.ts
 index e8a6575d7b..2064255e27 100644
 --- a/src/features/Electron/ActiveConversationBridge/navigation.ts
 +++ b/src/features/Electron/ActiveConversationBridge/navigation.ts
-@@ -21 +21 @@ export const subscribeActiveConversationNavigation = (
+@@ -18,7 +18,7 @@ export const subscribeActiveConversationNavigation = (
+     }
+ 
+     const coordinate = getCoordinate();
 -    if (!coordinate.isConversation || !coordinate.routeAgentId) return;
 +    if (!coordinate.isConversation || (!coordinate.routeAgentId && !coordinate.groupId)) return;
+ 
+     if (state.activeTopicId === undefined && coordinate.topicId) {
+       useChatStore.setState(
 diff --git a/src/features/Electron/ActiveConversationBridge/projectCoordinate.test.ts b/src/features/Electron/ActiveConversationBridge/projectCoordinate.test.ts
 index 0b93e807ee..40723d3e33 100644
 --- a/src/features/Electron/ActiveConversationBridge/projectCoordinate.test.ts
 +++ b/src/features/Electron/ActiveConversationBridge/projectCoordinate.test.ts
-@@ -40,0 +41,17 @@ describe('active conversation projection', () => {
+@@ -38,6 +38,23 @@ describe('active conversation projection', () => {
+     });
+   });
+ 
 +  it('projects a group route without clearing it as a non-conversation page', () => {
 +    const coordinate = resolveActiveConversationCoordinate({
 +      params: { gid: 'group-new', topicId: 'topic-new' },
@@ -159,11 +246,17 @@ index 0b93e807ee..40723d3e33 100644
 +    expect(useAgentStore.getState().activeAgentId).toBeUndefined();
 +  });
 +
+   it('preserves topic state on a subpage of the same agent', () => {
+     useAgentStore.setState({ activeAgentId: 'agent-old' }, false);
+     const coordinate = resolveActiveConversationCoordinate({
 diff --git a/src/features/Electron/ActiveConversationBridge/projectCoordinate.ts b/src/features/Electron/ActiveConversationBridge/projectCoordinate.ts
 index 632c23a599..48512155c1 100644
 --- a/src/features/Electron/ActiveConversationBridge/projectCoordinate.ts
 +++ b/src/features/Electron/ActiveConversationBridge/projectCoordinate.ts
-@@ -10,0 +11,29 @@ export const projectActiveConversationCoordinate = (
+@@ -8,6 +8,35 @@ export const projectActiveConversationCoordinate = (
+ ): void => {
+   const currentAgentId = useChatStore.getState().activeAgentId;
+ 
 +  if (coordinate.groupId) {
 +    const chatState = useChatStore.getState();
 +    if (useAgentStore.getState().activeAgentId !== undefined) {
@@ -193,3 +286,6 @@ index 632c23a599..48512155c1 100644
 +    return;
 +  }
 +
+   if (!coordinate.routeAgentId) {
+     if (useAgentStore.getState().activeAgentId !== undefined) {
+       useAgentStore.setState(

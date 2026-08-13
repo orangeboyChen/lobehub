@@ -1,24 +1,359 @@
+diff --git a/apps/cli/src/commands/hetero.test.ts b/apps/cli/src/commands/hetero.test.ts
+index 769e03a44f..951c3d7aa2 100644
+--- a/apps/cli/src/commands/hetero.test.ts
++++ b/apps/cli/src/commands/hetero.test.ts
+@@ -584,32 +584,6 @@ describe('hetero exec command', () => {
+     expect(exitSpy).toHaveBeenCalledWith(7);
+   });
+ 
+-  it('exits non-zero when a terminal protocol error is emitted despite a clean child exit', async () => {
+-    mockSpawnAgent.mockReturnValue(
+-      createFakeHandle({
+-        events: [
+-          {
+-            data: {
+-              agentType: 'amp',
+-              code: 'protocol_error',
+-              message: 'Amp stream ended without the required terminal `result` event.',
+-            },
+-            operationId: 'op-amp',
+-            stepIndex: 0,
+-            timestamp: 1,
+-            type: 'error',
+-          },
+-        ],
+-        exitCode: 0,
+-      }),
+-    );
+-
+-    await runCmd(['hetero', 'exec', '--type', 'amp', '--prompt', 'hi']);
+-
+-    expect(exitSpy).toHaveBeenCalledWith(1);
+-    expect(stdoutSpy).toHaveBeenCalledWith(expect.stringContaining('"code":"protocol_error"'));
+-  });
+-
+   it('maps SIGINT (code === null) to POSIX exit code 130', async () => {
+     mockSpawnAgent.mockReturnValue(createFakeHandle({ exitCode: null, signal: 'SIGINT' }));
+ 
+diff --git a/apps/cli/src/commands/hetero.ts b/apps/cli/src/commands/hetero.ts
+index b8df2f090b..9abcbe608a 100644
+--- a/apps/cli/src/commands/hetero.ts
++++ b/apps/cli/src/commands/hetero.ts
+@@ -906,10 +906,7 @@ const exec = async (options: ExecOptions): Promise<void> => {
+   }
+   if (askMcpConfigPath) await unlink(askMcpConfigPath).catch(() => {});
+ 
+-  if (code !== null) {
+-    const hasRunError = result.ingestError || (!result.cancelled && result.sawTerminalError);
+-    process.exit(hasRunError ? 1 : code);
+-  }
++  if (code !== null) process.exit(result.ingestError ? 1 : code);
+   if (signal === 'SIGINT') process.exit(130);
+   if (signal === 'SIGTERM') process.exit(143);
+   if (signal === 'SIGKILL') process.exit(137);
+diff --git a/apps/desktop/src/main/controllers/HeterogeneousAgentImpl.ts b/apps/desktop/src/main/controllers/HeterogeneousAgentImpl.ts
+index 99960c648f..f63fd181eb 100644
+--- a/apps/desktop/src/main/controllers/HeterogeneousAgentImpl.ts
++++ b/apps/desktop/src/main/controllers/HeterogeneousAgentImpl.ts
+@@ -1732,7 +1732,6 @@ export default class HeterogeneousAgentCtr {
+           }
+ 
+           if (code === 0) {
+-            broadcastStreamEvents(pipeline.validateCompletion());
+             this.broadcast('heteroAgentSessionComplete', { sessionId: session.sessionId });
+             resolve();
+           } else {
+diff --git a/apps/desktop/src/main/controllers/__tests__/HeterogeneousAgentCtr.test.ts b/apps/desktop/src/main/controllers/__tests__/HeterogeneousAgentCtr.test.ts
+index f5191f3ab0..e82412aa6e 100644
+--- a/apps/desktop/src/main/controllers/__tests__/HeterogeneousAgentCtr.test.ts
++++ b/apps/desktop/src/main/controllers/__tests__/HeterogeneousAgentCtr.test.ts
+@@ -1947,48 +1947,6 @@ describe('HeterogeneousAgentCtr', () => {
+       expect(toolEnds.length).toBeGreaterThan(0);
+     });
+ 
+-    it('broadcasts an Amp protocol error before completion when exit zero has no result', async () => {
+-      const initLine = `${JSON.stringify({
+-        session_id: 'T-amp-missing-result',
+-        subtype: 'init',
+-        type: 'system',
+-      })}\n`;
+-      const assistantLine = `${JSON.stringify({
+-        message: {
+-          content: [{ text: 'Incomplete answer', type: 'text' }],
+-          role: 'assistant',
+-        },
+-        type: 'assistant',
+-      })}\n`;
+-      nextFakeProc = createFakeProc({ stdoutLines: [initLine, assistantLine] }).proc;
+-
+-      const ctr = new HeterogeneousAgentCtr({
+-        appStoragePath,
+-        storeManager: { get: vi.fn() },
+-      } as any);
+-      const { sessionId } = await ctr.startSession({ agentType: 'amp', command: 'amp' });
+-      await ctr.sendPrompt({ operationId: 'op-test', prompt: 'hello', sessionId });
+-
+-      const errorIdx = broadcasts.findIndex(
+-        (broadcast) =>
+-          broadcast.channel === 'heteroAgentEvent' &&
+-          (broadcast.data as any)?.event?.type === 'error' &&
+-          (broadcast.data as any)?.event?.data?.code === 'protocol_error',
+-      );
+-      const completeIdx = broadcasts.findIndex(
+-        (broadcast) => broadcast.channel === 'heteroAgentSessionComplete',
+-      );
+-      const runtimeEnd = broadcasts.find(
+-        (broadcast) =>
+-          broadcast.channel === 'heteroAgentEvent' &&
+-          (broadcast.data as any)?.event?.type === 'agent_runtime_end',
+-      );
+-
+-      expect(errorIdx).toBeGreaterThan(-1);
+-      expect(errorIdx).toBeLessThan(completeIdx);
+-      expect(runtimeEnd).toBeUndefined();
+-    });
+-
+     it('delivers late final Codex stdout chunks BEFORE heteroAgentSessionComplete', async () => {
+       const threadStarted = `${JSON.stringify({ thread_id: 't1', type: 'thread.started' })}\n`;
+       const turnStarted = `${JSON.stringify({ type: 'turn.started' })}\n`;
+diff --git a/apps/server/src/routers/lambda/agentNotify.ts b/apps/server/src/routers/lambda/agentNotify.ts
+index 52dfe8a358..910fdc34a2 100644
+--- a/apps/server/src/routers/lambda/agentNotify.ts
++++ b/apps/server/src/routers/lambda/agentNotify.ts
+@@ -79,6 +79,7 @@ const NotifySchema = z.object({
+    * in-place, keeping a single bubble in the UI.
+    */
+   messageId: z.string().optional(),
++  operationId: z.string().optional(),
+   /**
+    * Role of the message to write:
+    * - 'user' (default): write as user message and trigger the agent to reply
+@@ -139,8 +140,8 @@ export const agentNotifyRouter = router({
+ 
+     // Extract the operationId seeded by execAgent for remote hetero agents.
+     // Used to publish notify_update / agent_runtime_end events to the gateway WS.
+-    const remoteOperationId = (topic.metadata as any)?.runningOperation?.operationId as
+-      string | undefined;
++    const marker = (topic.metadata as any)?.runningOperation;
++    const remoteOperationId = input.operationId ?? marker?.operationId ?? marker?.childOperations?.[0]?.operationId;
+ 
+     const agentId = inputAgentId ?? topic.agentId;
+     if (!agentId) {
+@@ -190,8 +191,11 @@ export const agentNotifyRouter = router({
+           // (Previously this fired the stripped-down dispatchTerminalHooks, which
+           // skipped persist + verify — so openclaw/hermes tasks never auto-verified.)
+           // Hooks were serialized onto runningOperation at dispatch time.
+-          const serializedHooks = (topic.metadata as any)?.runningOperation?.hooks as
+-            SerializedHook[] | undefined;
++          const currentMarker = (await ctx.topicModel.findById(topicId))?.metadata?.runningOperation as any;
++          const activeOperation = currentMarker?.operationId === remoteOperationId
++            ? currentMarker
++            : currentMarker?.childOperations?.find((child: any) => child.operationId === remoteOperationId);
++          const serializedHooks = activeOperation?.hooks as SerializedHook[] | undefined;
+           let lastAssistantContent: string | undefined = content || undefined;
+           if (!lastAssistantContent && writtenMessageId) {
+             const msg = await ctx.messageModel.findById(writtenMessageId).catch(() => undefined);
+@@ -264,7 +268,11 @@ export const agentNotifyRouter = router({
+ 
+           // The operation is finished — drop the running marker so a duplicate
+           // terminal signal / reconnect doesn't re-fire the hooks.
+-          await ctx.topicModel.updateMetadata(topicId, { runningOperation: null }).catch(() => {});
++          if (currentMarker?.operationId === remoteOperationId) {
++            await ctx.topicModel.updateMetadata(topicId, { runningOperation: null }).catch(() => {});
++          } else {
++            await ctx.topicModel.removeRunningOperationChild(topicId, remoteOperationId).catch(() => {});
++          }
+         } else {
+           // Lightweight invalidation — frontend calls fetchAndReplaceMessages.
+           await stream.publishStreamEvent(remoteOperationId, {
+diff --git a/apps/server/src/services/aiAgent/__tests__/execAgent.heteroFiles.test.ts b/apps/server/src/services/aiAgent/__tests__/execAgent.heteroFiles.test.ts
+index d4fcdc2867..f2645e6bb6 100644
+--- a/apps/server/src/services/aiAgent/__tests__/execAgent.heteroFiles.test.ts
++++ b/apps/server/src/services/aiAgent/__tests__/execAgent.heteroFiles.test.ts
+@@ -769,6 +769,35 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () =>
+         .map((call) => call[1])
+         .find((patch: any) => patch?.runningOperation?.operationId);
+ 
++    it('keeps the supervisor marker when an in-group hetero child is dispatched', async () => {
++      topicMock.findById.mockResolvedValue({
++        metadata: {
++          runningOperation: {
++            assistantMessageId: 'supervisor-assistant',
++            operationId: 'parent-operation',
++          },
++        },
++      });
++
++      await service.execAgent({
++        agentId: 'agent-1',
++        appContext: {
++          isolationThread: false,
++          orchestrationRole: 'member',
++          topicId: 'topic-1',
++        },
++        parentOperationId: 'parent-operation',
++        prompt: 'speak as member',
++        topicStartOwnerOperationId: 'parent-operation',
++      } as any);
++
++      const seed = findRunningOpSeed();
++      expect(seed.runningOperation.operationId).toBe('parent-operation');
++      expect(seed.runningOperation.childOperations).toEqual([
++        expect.objectContaining({ operationId: expect.stringContaining('op_') }),
++      ]);
++    });
++
+     it('serializes the onComplete webhook hook onto runningOperation (sandbox dispatch)', async () => {
+       await service.execAgent({
+         agentId: 'agent-1',
+diff --git a/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts b/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
+index a964ccd847..91b4c8cbd6 100644
+--- a/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
++++ b/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
+@@ -251,6 +251,16 @@ describe('AiAgentService.execAgent - threadId handling', () => {
+       });
+     });
+ 
++    it('does not trust a public member role to suppress the marker', async () => {
++      await service.execAgent({
++        agentId: 'agent-1',
++        appContext: { orchestrationRole: 'member', topicId: 'topic-1' },
++        prompt: 'Test prompt',
++      });
++
++      expect(runningMarkCalls()).toHaveLength(1);
++    });
++
+     it('does not claim the mark for an isolation-thread run', async () => {
+       // A callAgent / callSubAgent / group-member child executes on the PARENT's
+       // topic. Claiming the mark pointed every client reconnect at the child's
 diff --git a/apps/server/src/services/aiAgent/index.ts b/apps/server/src/services/aiAgent/index.ts
-index a284740651..d84d2aed66 100644
+index a284740651..5c34aac10a 100644
 --- a/apps/server/src/services/aiAgent/index.ts
 +++ b/apps/server/src/services/aiAgent/index.ts
-@@ -516,0 +517,2 @@ interface InternalExecAgentParams extends ExecAgentParams {
+@@ -509,6 +509,8 @@ interface InternalExecAgentParams extends ExecAgentParams {
+    * chatConfig AND workspace member-mode overrides.
+    */
+   toolModeOverride?: 'agent' | 'chat';
 +  /** Running operation that owns the topic for an internally spawned child run. */
 +  topicStartOwnerOperationId?: string;
-@@ -1257,0 +1260 @@ export class AiAgentService {
+   /**
+    * Re-enter a topic-start reservation already acquired by an upstream caller,
+    * such as TaskResultBridgeService.
+@@ -793,7 +795,12 @@ export class AiAgentService {
+     // 3. The operation never started — drop the running marker so reconnect /
+     //    heteroIngest validation and the next turn don't see a stale operation.
+     try {
+-      await this.topicModel.updateMetadata(topicId, { runningOperation: null });
++      const marker = (await this.topicModel.findById(topicId))?.metadata?.runningOperation;
++      if (marker?.operationId === operationId) {
++        await this.topicModel.updateMetadata(topicId, { runningOperation: null });
++      } else if (marker?.childOperations) {
++        await this.topicModel.removeRunningOperationChild(topicId, operationId);
++      }
+     } catch (err) {
+       log('finalizeHeteroDispatchError: clear runningOperation failed (non-fatal): %O', err);
+     }
+@@ -1251,10 +1258,13 @@ export class AiAgentService {
+     // advance the topic's main spine. They may start while their parent
+     // operation owns `runningOperation` (for example callAgent/callSubAgent),
+     // so making them wait for the topic-start claim deadlocks the child start.
+-    if (!topicId || params.appContext?.threadId) return this.execAgentWithReservation(params);
++    if (!topicId || params.appContext?.threadId || params.topicStartOwnerOperationId) {
++      return this.execAgentWithReservation(params);
++    }
+ 
+     const reservationId = params.topicStartReservationId ?? `agent-start-${nanoid()}`;
+     const reserved = await acquireTopicStartReservation({
 +      allowRunningOperationId: params.topicStartOwnerOperationId,
-@@ -4620 +4623,3 @@ export class AiAgentService {
+       reservationId,
+       topicId,
+       topicModel: this.topicModel,
+@@ -2435,24 +2445,31 @@ export class AiAgentService {
+       // operation, and so every terminal site (heteroFinish, agentNotify done,
+       // dispatch failure) can re-fire the serialized hooks across a process
+       // boundary in queue mode.
+-      await this.topicModel.updateMetadata(topicId, {
+-        runningOperation: {
+-          assistantMessageId: assistantMessageRecord.id,
+-          hooks: serializedHooks,
+-          // Store deviceId + heteroType so interruptTask can cancel remote processes
+-          ...(isRemoteHetero && remoteDeviceId
+-            ? {
+-                deviceId: remoteDeviceId,
+-                deviceUserId: remoteDeviceUserId,
+-                deviceWorkspaceId: remoteDeviceWorkspaceId,
+-                heteroType,
+-              }
+-            : undefined),
+-          operationId,
+-          scope: appContext?.scope ?? undefined,
+-          threadId: appContext?.threadId ?? undefined,
+-        },
+-      });
++      const childOperation = {
++        assistantMessageId: assistantMessageRecord.id,
++        hooks: serializedHooks,
++        ...(isRemoteHetero && remoteDeviceId
++          ? {
++              deviceId: remoteDeviceId,
++              deviceUserId: remoteDeviceUserId,
++              deviceWorkspaceId: remoteDeviceWorkspaceId,
++              heteroType,
++            }
++          : {}),
++        ...(isRemoteHetero && remoteDeviceId ? { deviceId: remoteDeviceId, deviceUserId: remoteDeviceUserId, deviceWorkspaceId: remoteDeviceWorkspaceId, heteroType } : {}),
++        operationId,
++        scope: appContext?.scope ?? undefined,
++        threadId: appContext?.threadId ?? undefined,
++      };
++      if (params.topicStartOwnerOperationId) {
++        await this.topicModel.appendRunningOperationChild(
++          topicId,
++          params.topicStartOwnerOperationId,
++          childOperation,
++        );
++      } else {
++        await this.topicModel.updateMetadata(topicId, { runningOperation: childOperation });
++      }
+ 
+       // Notify-based platform agents (openclaw / hermes) communicate back via
+       // agentNotify.notify. A local run uses the requesting desktop's device ID;
+@@ -4617,7 +4634,9 @@ export class AiAgentService {
+       // WebSocket for the rest of the run. The parent's mark stays authoritative;
+       // a child's live progress already rides down the parent channel via
+       // `appContext.subAgentProgress`.
 -      if (!appContext?.isolationThread) {
 +      // `orchestrationRole` is public rendering metadata. Only the internally
 +      // propagated parent operation id proves child ownership of this topic.
 +      if (!appContext?.isolationThread && !params.topicStartOwnerOperationId) {
-@@ -4979,0 +4983 @@ export class AiAgentService {
+         await this.topicModel.updateMetadata(topicId, {
+           runningOperation: {
+             assistantMessageId: assistantMessageRecord.id,
+@@ -4977,6 +4996,7 @@ export class AiAgentService {
+       parentOperationId,
+       prompt: speakerInstruction,
+       suppressUserMessage: true,
 +      topicStartOwnerOperationId: parentOperationId,
+       trigger: inheritedTrigger,
+       userInterventionConfig: { approvalMode: 'headless' },
+     });
+@@ -4998,6 +5018,7 @@ export class AiAgentService {
+     params: ExecSubAgentParams | ExecVirtualSubAgentParams,
+     options: {
+       /**
++      topicStartOwnerOperationId: parentOperationId,
+        * Override the default sub-agent completion bridge with a custom hook
+        * (e.g. the group-action member bridge for isolated executeAgentTask(s)).
+        * Receives the freshly-created isolation thread id. Only used when
 diff --git a/apps/server/src/services/aiAgent/topicStartReservation.test.ts b/apps/server/src/services/aiAgent/topicStartReservation.test.ts
 index e47c819511..0b5b8ac7ab 100644
 --- a/apps/server/src/services/aiAgent/topicStartReservation.test.ts
 +++ b/apps/server/src/services/aiAgent/topicStartReservation.test.ts
-@@ -43,0 +44,20 @@ describe('acquireTopicStartReservation', () => {
+@@ -41,4 +41,24 @@ describe('acquireTopicStartReservation', () => {
+       }),
+     ).resolves.toBe(false);
+   });
 +
 +  it('passes the parent operation ownership through for in-group children', async () => {
 +    const tryReserveTaskCallback = vi.fn().mockResolvedValue(true);
@@ -39,26 +374,132 @@ index e47c819511..0b5b8ac7ab 100644
 +      'parent-operation',
 +    );
 +  });
+ });
 diff --git a/apps/server/src/services/aiAgent/topicStartReservation.ts b/apps/server/src/services/aiAgent/topicStartReservation.ts
 index 3ccd094d89..d32e6ad96a 100644
 --- a/apps/server/src/services/aiAgent/topicStartReservation.ts
 +++ b/apps/server/src/services/aiAgent/topicStartReservation.ts
-@@ -20,0 +21 @@ export const acquireTopicStartReservation = async ({
+@@ -18,16 +18,22 @@ const delay = (milliseconds: number): Promise<void> =>
+  * 500 response, while interactive callers receive a finite busy failure.
+  */
+ export const acquireTopicStartReservation = async ({
 +  allowRunningOperationId,
-@@ -24,0 +26 @@ export const acquireTopicStartReservation = async ({
+   reservationId,
+   topicId,
+   topicModel,
+ }: {
 +  allowRunningOperationId?: string;
-@@ -30 +32,5 @@ export const acquireTopicStartReservation = async ({
+   reservationId: string;
+   topicId: string;
+   topicModel: TopicModel;
+ }): Promise<boolean> => {
+   for (let attempt = 0; attempt < MAX_RESERVATION_ATTEMPTS; attempt += 1) {
 -    const reservation = await topicModel.tryReserveTaskCallback(topicId, reservationId);
 +    const reservation = await topicModel.tryReserveTaskCallback(
 +      topicId,
 +      reservationId,
 +      allowRunningOperationId,
 +    );
+ 
+     if (reservation === null) return false;
+     if (reservation) return true;
+diff --git a/apps/server/src/services/heterogeneousAgent/HeterogeneousPersistenceHandler.ts b/apps/server/src/services/heterogeneousAgent/HeterogeneousPersistenceHandler.ts
+index 90ac39c2c0..00b2717c86 100644
+--- a/apps/server/src/services/heterogeneousAgent/HeterogeneousPersistenceHandler.ts
++++ b/apps/server/src/services/heterogeneousAgent/HeterogeneousPersistenceHandler.ts
+@@ -414,7 +414,11 @@ export class HeterogeneousPersistenceHandler {
+     }
+ 
+     const topic = await this.deps.topicModel.findById(topicId);
+-    const running = topic?.metadata?.runningOperation;
++    const marker = topic?.metadata?.runningOperation;
++    const running =
++      marker?.operationId === operationId
++        ? marker
++        : marker?.childOperations?.find((child) => child.operationId === operationId);
+ 
+     if (!running && !(allowMissingRunningOperation && seedAssistantMessageId)) {
+       throw new StaleHeteroOperationError(
+@@ -422,9 +426,9 @@ export class HeterogeneousPersistenceHandler {
+       );
+     }
+ 
+-    if (running && running.operationId !== operationId) {
++    if (!running && !(allowMissingRunningOperation && seedAssistantMessageId)) {
+       throw new StaleHeteroOperationError(
+-        `Stale hetero operation ${operationId} on topic ${topicId}; current operation is ${running.operationId}`,
++        `Stale hetero operation ${operationId} on topic ${topicId}; current operation is ${marker?.operationId ?? 'unknown'}`,
+       );
+     }
+ 
+@@ -797,9 +801,10 @@ export class HeterogeneousPersistenceHandler {
+ 
+   private async syncAssistantPointerForAdvancedStep(state: OperationState): Promise<void> {
+     const topic = await this.deps.topicModel.findById(state.topicId);
+-    const running = topic?.metadata?.runningOperation;
++    const marker = topic?.metadata?.runningOperation;
++    const running = marker?.operationId === state.operationId ? marker : marker?.childOperations?.find((child) => child.operationId === state.operationId);
+ 
+-    if (running && running.operationId !== state.operationId) {
++    if (!running) {
+       throw new StaleHeteroOperationError(
+         `Stale hetero operation ${state.operationId} on topic ${state.topicId}; current operation is ${running.operationId}`,
+       );
+diff --git a/apps/server/src/services/heterogeneousAgent/index.ts b/apps/server/src/services/heterogeneousAgent/index.ts
+index 9c66a86326..5caad7b668 100644
+--- a/apps/server/src/services/heterogeneousAgent/index.ts
++++ b/apps/server/src/services/heterogeneousAgent/index.ts
+@@ -319,8 +319,13 @@ export class HeterogeneousAgentService {
+     let isolationThreadId: string | undefined;
+     try {
+       const topic = await this.topicModel.findById(topicId);
+-      serializedHooks = topic?.metadata?.runningOperation?.hooks as SerializedHook[] | undefined;
+-      isolationThreadId = topic?.metadata?.runningOperation?.threadId ?? undefined;
++      const marker = topic?.metadata?.runningOperation;
++      const running =
++        marker?.operationId === operationId
++          ? marker
++          : marker?.childOperations?.find((child) => child.operationId === operationId);
++      serializedHooks = running?.hooks as SerializedHook[] | undefined;
++      isolationThreadId = running?.threadId ?? undefined;
+       // Prefer heteroCurrentMsgId — the persistence handler updates this pointer
+       // on every step boundary, so it refers to the LAST assistant message with
+       // the complete final content.  Fall back to the initial placeholder id
+@@ -330,13 +335,19 @@ export class HeterogeneousAgentService {
+       assistantMessageId =
+         currentMsgRef?.operationId === operationId
+           ? currentMsgRef.msgId
+-          : topic?.metadata?.runningOperation?.assistantMessageId;
+-      await this.topicModel.updateMetadata(topicId, { runningOperation: null });
+-      // Settle `status: 'running'` for runs with no renderer attached (e.g. a
+-      // cron-dispatched scheduled resume) — otherwise nothing ever moves the
+-      // topic off `running`. Guarded in the model: an attached client's own
+-      // terminal write ('active'/'unread') is never clobbered.
+-      await this.topicModel.settleRunningStatus(topicId);
++          : running?.assistantMessageId;
++      if (marker?.operationId === operationId) {
++        await this.topicModel.updateMetadata(topicId, { runningOperation: null });
++      } else if (marker?.childOperations) {
++        await this.topicModel.removeRunningOperationChild(topicId, operationId);
++      }
++      if (marker?.operationId === operationId) {
++        // Settle `status: 'running'` for runs with no renderer attached (e.g. a
++        // cron-dispatched scheduled resume) — otherwise nothing ever moves the
++        // topic off `running`. Guarded in the model: an attached client's own
++        // terminal write ('active'/'unread') is never clobbered.
++        await this.topicModel.settleRunningStatus(topicId);
++      }
+     } catch (err) {
+       log('heteroFinish: failed to clear runningOperation (non-fatal): %O', err);
+     }
 diff --git a/packages/database/src/models/__tests__/topics/topic.update.test.ts b/packages/database/src/models/__tests__/topics/topic.update.test.ts
-index 20b5e0f26a..71dc4ccf1b 100644
+index 20b5e0f26a..2297c37059 100644
 --- a/packages/database/src/models/__tests__/topics/topic.update.test.ts
 +++ b/packages/database/src/models/__tests__/topics/topic.update.test.ts
-@@ -172,0 +173,29 @@ describe('TopicModel - Update', () => {
+@@ -170,6 +170,61 @@ describe('TopicModel - Update', () => {
+       await expect(topicModel.tryReserveTaskCallback(topicId, 'callback-1')).resolves.toBe(true);
+     });
+ 
 +    it('allows a child operation to re-enter its parent running operation', async () => {
 +      const topicId = 'task-callback-parent-operation';
 +      await serverDB.insert(topics).values({
@@ -88,18 +529,110 @@ index 20b5e0f26a..71dc4ccf1b 100644
 +      expect(topic?.metadata?.runningOperation?.operationId).toBe('operation-parent');
 +    });
 +
++    it('atomically appends children to the parent running operation', async () => {
++      const topicId = 'task-callback-parent-operation-children';
++      await serverDB.insert(topics).values({
++        userId,
++        id: topicId,
++        title: 'Test',
++        metadata: { runningOperation: { assistantMessageId: 'assistant-parent', operationId: 'parent-operation' } },
++      });
++
++      await Promise.all([
++        topicModel.appendRunningOperationChild(topicId, 'parent-operation', {
++          assistantMessageId: 'assistant-child-1', operationId: 'child-operation-1',
++        }),
++        topicModel.appendRunningOperationChild(topicId, 'parent-operation', {
++          assistantMessageId: 'assistant-child-2', operationId: 'child-operation-2',
++        }),
++      ]);
++
++      const topic = await topicModel.findById(topicId);
++      expect(topic?.metadata?.runningOperation?.childOperations).toEqual(
++        expect.arrayContaining([
++          expect.objectContaining({ operationId: 'child-operation-1' }),
++          expect.objectContaining({ operationId: 'child-operation-2' }),
++        ]),
++      );
++    });
+     it('recovers a stale reservation left by a crashed delivery worker', async () => {
+       const topicId = 'task-callback-stale-reservation';
+       await serverDB.insert(topics).values({
 diff --git a/packages/database/src/models/topic.ts b/packages/database/src/models/topic.ts
-index ac73fdeca5..bad2d46d1a 100644
+index ac73fdeca5..eaaf63215b 100644
 --- a/packages/database/src/models/topic.ts
 +++ b/packages/database/src/models/topic.ts
-@@ -1429 +1429,5 @@ export class TopicModel {
+@@ -1417,6 +1417,53 @@ export class TopicModel {
+     });
+   };
+ 
++  appendRunningOperationChild = async (
++    id: string,
++    parentOperationId: string,
++    child: NonNullable<ChatTopicMetadata['runningOperation']>,
++  ): Promise<boolean> =>
++    this.db.transaction(async (tx) => {
++      const [existing] = await tx
++        .select({ metadata: topics.metadata })
++        .from(topics)
++        .where(and(eq(topics.id, id), this.ownership()))
++        .for('update');
++      const runningOperation = existing?.metadata?.runningOperation;
++      if (!existing || runningOperation?.operationId !== parentOperationId) return false;
++
++      await tx
++        .update(topics)
++        .set({
++          metadata: {
++            ...existing.metadata,
++            runningOperation: {
++              ...runningOperation,
++              childOperations: [
++                ...(runningOperation.childOperations ?? []).filter(
++                  (operation) => operation.operationId !== child.operationId,
++                ),
++                child,
++              ],
++            },
++          },
++        })
++        .where(and(eq(topics.id, id), this.ownership()));
++      return true;
++    });
++
++  removeRunningOperationChild = async (id: string, operationId: string): Promise<boolean> =>
++    this.db.transaction(async (tx) => {
++      const [existing] = await tx.select({ metadata: topics.metadata }).from(topics)
++        .where(and(eq(topics.id, id), this.ownership())).for('update');
++      const runningOperation = existing?.metadata?.runningOperation;
++      if (!existing || !runningOperation?.childOperations) return false;
++      await tx.update(topics).set({ metadata: {
++        ...existing.metadata,
++        runningOperation: { ...runningOperation, childOperations: runningOperation.childOperations.filter((child) => child.operationId !== operationId) },
++      }}).where(and(eq(topics.id, id), this.ownership()));
++      return true;
++    });
++
+   /**
+    * Atomically reserve an idle topic for one task-callback delivery.
+    *
+@@ -1426,7 +1473,11 @@ export class TopicModel {
+    * callback can claim the topic, so the callback always re-anchors on the
+    * completed turn's latest spine.
+    */
 -  tryReserveTaskCallback = async (id: string, messageId: string): Promise<boolean | null> =>
 +  tryReserveTaskCallback = async (
 +    id: string,
 +    messageId: string,
 +    allowRunningOperationId?: string,
 +  ): Promise<boolean | null> =>
-@@ -1447 +1451,9 @@ export class TopicModel {
+     this.db.transaction(async (tx) => {
+       const [existing] = await tx
+         .select({ metadata: topics.metadata })
+@@ -1444,7 +1495,15 @@ export class TopicModel {
+         Date.now() - reservedAt < TASK_CALLBACK_RESERVATION_TTL_MS;
+ 
+       if (reservation?.messageId === messageId && hasLiveReservation) return true;
 -      if (existing.metadata?.runningOperation || hasLiveReservation) return false;
 +      const runningOperation = existing.metadata?.runningOperation;
 +      const ownedRunningOperation =
@@ -110,18 +643,419 @@ index ac73fdeca5..bad2d46d1a 100644
 +      // themselves; the parent's runningOperation remains authoritative.
 +      if (allowRunningOperationId) return ownedRunningOperation;
 +      if (runningOperation || hasLiveReservation) return false;
-
-diff --git a/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts b/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
---- a/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
-+++ b/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
-@@ -252,0 +253,10 @@ describe('AiAgentService.execAgent - threadId handling', () => {
-+    it('does not trust a public member role to suppress the marker', async () => {
-+      await service.execAgent({
-+        agentId: 'agent-1',
-+        appContext: { orchestrationRole: 'member', topicId: 'topic-1' },
-+        prompt: 'Test prompt',
-+      });
-+
-+      expect(runningMarkCalls()).toHaveLength(1);
-+    });
-+
+ 
+       await tx
+         .update(topics)
+diff --git a/packages/heterogeneous-agents/src/adapters/amp.test.ts b/packages/heterogeneous-agents/src/adapters/amp.test.ts
+index 8ce94ec736..1a439c354a 100644
+--- a/packages/heterogeneous-agents/src/adapters/amp.test.ts
++++ b/packages/heterogeneous-agents/src/adapters/amp.test.ts
+@@ -53,7 +53,6 @@ describe('AmpAdapter', () => {
+       'visible_output_end',
+       'agent_runtime_end',
+     ]);
+-    expect(adapter.validateCompletion()).toEqual([]);
+   });
+ 
+   it('keeps tool lifecycle and the post-tool assistant in separate steps', () => {
+@@ -194,32 +193,6 @@ describe('AmpAdapter', () => {
+     });
+   });
+ 
+-  it('emits a protocol error when a successful process exit has no terminal result', () => {
+-    const adapter = new AmpAdapter();
+-    adapter.adapt(init);
+-    adapter.adapt(assistant([{ text: 'partial answer', type: 'text' }]));
+-
+-    const events = adapter.validateCompletion();
+-
+-    expect(events.map((event) => event.type)).toEqual([
+-      'stream_end',
+-      'visible_output_end',
+-      'error',
+-    ]);
+-    expect(events.at(-1)?.data).toEqual({
+-      agentType: 'amp',
+-      clearEchoedContent: true,
+-      code: 'protocol_error',
+-      details: {
+-        expectedEventType: 'result',
+-        sessionId: 'T-amp-123',
+-      },
+-      error: 'Amp stream ended without the required terminal `result` event.',
+-      message: 'Amp stream ended without the required terminal `result` event.',
+-    });
+-    expect(adapter.validateCompletion()).toEqual([]);
+-  });
+-
+   it('routes subagent events with synthetic turn ids and one-time spawn metadata', () => {
+     const adapter = new AmpAdapter();
+     adapter.adapt(init);
+diff --git a/packages/heterogeneous-agents/src/adapters/amp.ts b/packages/heterogeneous-agents/src/adapters/amp.ts
+index f847371323..9fe8b7e6cb 100644
+--- a/packages/heterogeneous-agents/src/adapters/amp.ts
++++ b/packages/heterogeneous-agents/src/adapters/amp.ts
+@@ -17,7 +17,6 @@ import type {
+ 
+ const AMP_IDENTIFIER = 'amp';
+ const AMP_DOCS_URL = getHeterogeneousAgentConfigOrThrow(AMP_IDENTIFIER).auth.docsUrl;
+-const AMP_MISSING_RESULT_MESSAGE = 'Amp stream ended without the required terminal `result` event.';
+ 
+ interface AmpUsage {
+   cache_creation_input_tokens?: number;
+@@ -229,33 +228,6 @@ export class AmpAdapter implements AgentEventAdapter {
+     return this.drainPendingToolEndEvents();
+   }
+ 
+-  validateCompletion(): HeterogeneousAgentEvent[] {
+-    if (this.terminalEmitted) return [];
+-    this.terminalEmitted = true;
+-
+-    const events = this.drainPendingToolEndEvents();
+-    if (this.started) {
+-      events.push(this.makeEvent('stream_end', {}));
+-      events.push(this.makeEvent('visible_output_end', {}));
+-    }
+-    events.push(
+-      this.makeEvent('error', {
+-        agentType: AMP_IDENTIFIER,
+-        clearEchoedContent: true,
+-        code: 'protocol_error',
+-        details: {
+-          expectedEventType: 'result',
+-          ...(this.sessionId ? { sessionId: this.sessionId } : {}),
+-        },
+-        error: AMP_MISSING_RESULT_MESSAGE,
+-        message: AMP_MISSING_RESULT_MESSAGE,
+-      } satisfies HeterogeneousTerminalErrorData),
+-    );
+-    this.clearRunState();
+-
+-    return events;
+-  }
+-
+   private captureSessionId(raw: Record<string, unknown>): void {
+     if (typeof raw.session_id === 'string' && raw.session_id) {
+       this.sessionId = raw.session_id;
+diff --git a/packages/heterogeneous-agents/src/spawn/agentStreamPipeline.ts b/packages/heterogeneous-agents/src/spawn/agentStreamPipeline.ts
+index 1d0bc7500c..661fd037a5 100644
+--- a/packages/heterogeneous-agents/src/spawn/agentStreamPipeline.ts
++++ b/packages/heterogeneous-agents/src/spawn/agentStreamPipeline.ts
+@@ -130,14 +130,6 @@ export class AgentStreamPipeline {
+     ]);
+   }
+ 
+-  /**
+-   * Validate provider-specific terminal contracts after a successful process
+-   * exit. Call only after {@link flush} has drained the full stdout stream.
+-   */
+-  validateCompletion(): AgentStreamEvent[] {
+-    return this.toStreamEvents(this.adapter.validateCompletion?.() ?? []);
+-  }
+-
+   private async processPayloads(payloads: unknown[]): Promise<AgentStreamEvent[]> {
+     const out: AgentStreamEvent[] = this.drainQueuedEvents();
+ 
+diff --git a/packages/heterogeneous-agents/src/spawn/resolveCliCommand.test.ts b/packages/heterogeneous-agents/src/spawn/resolveCliCommand.test.ts
+index e83a05b093..fecff04264 100644
+--- a/packages/heterogeneous-agents/src/spawn/resolveCliCommand.test.ts
++++ b/packages/heterogeneous-agents/src/spawn/resolveCliCommand.test.ts
+@@ -217,7 +217,7 @@ describe('resolveCliCommand', () => {
+       });
+     });
+ 
+-    it("falls back to Cursor's unambiguous alias when another CLI owns `agent`", async () => {
++    it("rejects an unrelated `agent` binary and falls back to Cursor's user-local install", async () => {
+       const originalPath = process.env.PATH;
+       const originalShell = process.env.SHELL;
+       process.env.PATH = '/usr/bin:/bin';
+@@ -226,7 +226,6 @@ describe('resolveCliCommand', () => {
+       try {
+         callExecFile('/Users/x/.grok/bin/agent\n');
+         callExecFile('Usage: agent [flags]\nGrok CLI agent');
+-        callExecFile('Usage: agent [flags]\nGrok CLI agent');
+         callExecFile('Usage: agent [options] [command] [prompt...]\nStart the Cursor Agent');
+ 
+         const { detectHeterogeneousCliCommand } = await importModule();
+@@ -234,12 +233,11 @@ describe('resolveCliCommand', () => {
+ 
+         expect(status).toMatchObject({
+           available: true,
+-          path: path.join(os.homedir(), '.local', 'bin', 'cursor-agent'),
++          path: path.join(os.homedir(), '.local', 'bin', 'agent'),
+           version: undefined,
+         });
+         expect(execFileMock.mock.calls[1]![1]).toEqual(['--help']);
+         expect(execFileMock.mock.calls[2]![1]).toEqual(['--help']);
+-        expect(execFileMock.mock.calls[3]![1]).toEqual(['--help']);
+       } finally {
+         process.env.PATH = originalPath;
+         if (originalShell === undefined) delete process.env.SHELL;
+diff --git a/packages/heterogeneous-agents/src/spawn/resolveCliCommand.ts b/packages/heterogeneous-agents/src/spawn/resolveCliCommand.ts
+index 0402ae1c4c..f31fbce09b 100644
+--- a/packages/heterogeneous-agents/src/spawn/resolveCliCommand.ts
++++ b/packages/heterogeneous-agents/src/spawn/resolveCliCommand.ts
+@@ -620,12 +620,7 @@ const getWellKnownCommandPaths = (agentType: HeterogeneousCliAgentType): string[
+     }
+     case 'cursor': {
+       if (platform() !== 'darwin' && platform() !== 'linux') return [];
+-      return [
+-        path.join(homedir(), '.local', 'bin', 'agent'),
+-        // Cursor's installer creates both names. Keep the unambiguous legacy
+-        // alias as a fallback when another CLI shadows the generic `agent`.
+-        path.join(homedir(), '.local', 'bin', 'cursor-agent'),
+-      ];
++      return [path.join(homedir(), '.local', 'bin', 'agent')];
+     }
+     case 'kimi-code': {
+       if (platform() !== 'darwin' && platform() !== 'linux') return [];
+diff --git a/packages/heterogeneous-agents/src/spawn/spawnAgent.test.ts b/packages/heterogeneous-agents/src/spawn/spawnAgent.test.ts
+index d41985094f..62fc4d9448 100644
+--- a/packages/heterogeneous-agents/src/spawn/spawnAgent.test.ts
++++ b/packages/heterogeneous-agents/src/spawn/spawnAgent.test.ts
+@@ -327,53 +327,6 @@ describe('spawnAgent', () => {
+     });
+   });
+ 
+-  it('emits a protocol error when AMP exits zero without a terminal result', async () => {
+-    const fake = createFakeProc({ stdoutChunks: [ccInit, ccText] });
+-    nextFakeProc = fake.proc;
+-    const { spawnAgent } = await import('./spawnAgent');
+-    const handle = await spawnAgent({
+-      agentType: 'amp',
+-      operationId: 'op-amp',
+-      prompt: 'hello',
+-    });
+-    fake.start();
+-
+-    const events: any[] = [];
+-    for await (const event of handle.events) events.push(event);
+-    await handle.exit;
+-
+-    expect(events.some((event) => event.type === 'agent_runtime_end')).toBe(false);
+-    expect(events.at(-1)).toMatchObject({
+-      data: {
+-        agentType: 'amp',
+-        code: 'protocol_error',
+-        details: { expectedEventType: 'result', sessionId: 'cc-1' },
+-      },
+-      operationId: 'op-amp',
+-      type: 'error',
+-    });
+-  });
+-
+-  it('does not classify a user-killed AMP process as a missing-result protocol error', async () => {
+-    const fake = createFakeProc({ stdoutChunks: [ccInit] });
+-    nextFakeProc = fake.proc;
+-    const { spawnAgent } = await import('./spawnAgent');
+-    const handle = await spawnAgent({
+-      agentType: 'amp',
+-      operationId: 'op-amp-cancelled',
+-      prompt: 'hello',
+-    });
+-
+-    handle.kill();
+-    fake.start();
+-
+-    const events: any[] = [];
+-    for await (const event of handle.events) events.push(event);
+-    await handle.exit;
+-
+-    expect(events.some((event) => event.data?.code === 'protocol_error')).toBe(false);
+-  });
+-
+   it('uses `threads continue <id>` before AMP execution flags on resume', async () => {
+     nextFakeProc = createFakeProc().proc;
+     const { spawnAgent } = await import('./spawnAgent');
+diff --git a/packages/heterogeneous-agents/src/spawn/spawnAgent.ts b/packages/heterogeneous-agents/src/spawn/spawnAgent.ts
+index 3951b56a04..6578ba6b48 100644
+--- a/packages/heterogeneous-agents/src/spawn/spawnAgent.ts
++++ b/packages/heterogeneous-agents/src/spawn/spawnAgent.ts
+@@ -471,7 +471,6 @@ export const spawnAgent = async (options: SpawnAgentOptions): Promise<SpawnAgent
+   // wakeup promise — keeps backpressure simple and avoids a third-party
+   // dependency.
+   const queue: AgentStreamEvent[] = [];
+-  let killedByUs = false;
+   let streamEnded = false;
+   let streamError: Error | undefined;
+   let wakeup: (() => void) | undefined;
+@@ -539,10 +538,6 @@ export const spawnAgent = async (options: SpawnAgentOptions): Promise<SpawnAgent
+       try {
+         const events = await pipeline.flush();
+         for (const event of events) queue.push(event);
+-        const { code } = await exit;
+-        if (code === 0 && !killedByUs) {
+-          for (const event of pipeline.validateCompletion()) queue.push(event);
+-        }
+       } catch (err) {
+         streamError = err instanceof Error ? err : new Error(String(err));
+       } finally {
+@@ -599,10 +594,7 @@ export const spawnAgent = async (options: SpawnAgentOptions): Promise<SpawnAgent
+   return {
+     events,
+     exit,
+-    kill: (signal: NodeJS.Signals = 'SIGINT') => {
+-      killedByUs = true;
+-      killProcessTree(proc, signal);
+-    },
++    kill: (signal: NodeJS.Signals = 'SIGINT') => killProcessTree(proc, signal),
+     pid: proc.pid,
+     get sessionId() {
+       return pipeline.sessionId;
+diff --git a/packages/heterogeneous-agents/src/types.ts b/packages/heterogeneous-agents/src/types.ts
+index eaa74f31ae..74aee06ba0 100644
+--- a/packages/heterogeneous-agents/src/types.ts
++++ b/packages/heterogeneous-agents/src/types.ts
+@@ -392,12 +392,6 @@ export interface AgentEventAdapter {
+ 
+   /** The session ID extracted from the agent's init event (for multi-turn resume). */
+   sessionId?: string;
+-
+-  /**
+-   * Validate provider-specific terminal contracts after stdout has drained and
+-   * the upstream process has reported a successful exit.
+-   */
+-  validateCompletion?: () => HeterogeneousAgentEvent[];
+ }
+ 
+ // ─── Agent Process Config ───
+diff --git a/packages/types/src/topic/topic.ts b/packages/types/src/topic/topic.ts
+index 2587ba392e..fe61bbc16b 100644
+--- a/packages/types/src/topic/topic.ts
++++ b/packages/types/src/topic/topic.ts
+@@ -214,6 +214,17 @@ export interface ChatTopicMetadata {
+    */
+   runningOperation?: {
+     assistantMessageId: string;
++    childOperations?: Array<{
++      assistantMessageId: string;
++      deviceId?: string;
++      deviceUserId?: string;
++      deviceWorkspaceId?: string;
++      heteroType?: string;
++      hooks?: SerializedAgentHook[];
++      operationId: string;
++      scope?: string;
++      threadId?: string | null;
++    }>;
+     /** Device selected for a notify-based platform task. */
+     deviceId?: string;
+     /** Personal-device owner used to route dispatch and cancellation through the same principal. */
+@@ -476,6 +487,21 @@ export const chatTopicMetadataUpdateSchema = z.object({
+   runningOperation: z
+     .object({
+       assistantMessageId: z.string(),
++      childOperations: z
++        .array(
++          z.object({
++            assistantMessageId: z.string(),
++            deviceId: z.string().optional(),
++            deviceUserId: z.string().optional(),
++            deviceWorkspaceId: z.string().optional(),
++            heteroType: z.string().optional(),
++            hooks: z.array(serializedAgentHookSchema).optional(),
++            operationId: z.string(),
++            scope: z.string().optional(),
++            threadId: z.string().nullish(),
++          }),
++        )
++        .optional(),
+       deviceId: z.string().optional(),
+       deviceUserId: z.string().optional(),
+       deviceWorkspaceId: z.string().optional(),
+diff --git a/src/features/AgentTasks/AgentTaskDetail/TopicCard.test.tsx b/src/features/AgentTasks/AgentTaskDetail/TopicCard.test.tsx
+deleted file mode 100644
+index 9d646bdcb5..0000000000
+--- a/src/features/AgentTasks/AgentTaskDetail/TopicCard.test.tsx
++++ /dev/null
+@@ -1,67 +0,0 @@
+-/**
+- * @vitest-environment happy-dom
+- */
+-import type { TaskDetailActivity } from '@lobechat/types';
+-import { render, screen } from '@testing-library/react';
+-import userEvent from '@testing-library/user-event';
+-import type { ReactNode } from 'react';
+-import { describe, expect, it, vi } from 'vitest';
+-
+-import TopicCard from './TopicCard';
+-
+-vi.mock('react-i18next', () => ({
+-  useTranslation: () => ({ t: (key: string) => key }),
+-}));
+-
+-vi.mock('@/store/task', () => ({
+-  useTaskStore: (selector: (state: any) => unknown) =>
+-    selector({
+-      activeTaskId: 'T-1',
+-      addComment: vi.fn(),
+-      cancelTopic: vi.fn(),
+-      openTopicDrawer: vi.fn(),
+-      taskDetailMap: {},
+-    }),
+-}));
+-
+-vi.mock('@/hooks/usePermission', () => ({
+-  usePermission: () => ({ allowed: true }),
+-}));
+-
+-vi.mock('@/hooks/useActivityTime', () => ({
+-  useActivityTime: () => ({ text: '4m ago', title: '4m ago' }),
+-}));
+-
+-// None of these render for this activity; they are stubbed only to keep the
+-// reply editor's upload stack and the verify feature out of the module graph.
+-vi.mock('./RunReplyEditor', () => ({ default: () => null }));
+-vi.mock('./RunVerifyDetail', () => ({ default: () => null }));
+-vi.mock('./RunVerifyTag', () => ({ default: () => null }));
+-
+-vi.mock('@/features/AgentProfileCard/AgentProfilePopup', () => ({
+-  default: ({ children }: { children: ReactNode }) => <>{children}</>,
+-}));
+-
+-const activity = {
+-  content: 'See [primes.py](https://example.com/primes.py) for the script.',
+-  id: 'run-1',
+-  operationId: 'op-1',
+-  status: 'success',
+-  time: new Date('2026-08-13T00:00:00.000Z').toISOString(),
+-  title: 'Run title',
+-  topicId: 'topic-1',
+-  type: 'topic',
+-} as unknown as TaskDetailActivity;
+-
+-describe('TopicCard', () => {
+-  it('leaves links in the run output clickable', async () => {
+-    render(<TopicCard activity={activity} />);
+-
+-    const link = screen.getByRole('link', { name: 'primes.py' });
+-
+-    // The run body used to carry `pointer-events: none` so that clicks fell
+-    // through to the card behind it. user-event refuses to click through that
+-    // rule, which is exactly what a reader hit: a link that ignores the mouse.
+-    await expect(userEvent.click(link)).resolves.not.toThrow();
+-  });
+-});
+diff --git a/src/features/AgentTasks/AgentTaskDetail/TopicCard.tsx b/src/features/AgentTasks/AgentTaskDetail/TopicCard.tsx
+index 398bfa5dcc..87529ae549 100644
+--- a/src/features/AgentTasks/AgentTaskDetail/TopicCard.tsx
++++ b/src/features/AgentTasks/AgentTaskDetail/TopicCard.tsx
+@@ -54,17 +54,11 @@ const formatDuration = (ms: number): string => {
+ // the shared collapse clamps it with a fade and offers "show more", while the
+ // run drawer remains available from the explicit overflow action. The preview
+ // itself is reading content, not an unlabeled navigation target.
+-//
+-// It also stays interactive. While the whole card was one big button to the run
+-// drawer, the body carried `pointer-events: none` so clicks fell through to it;
+-// the card stopped being that button, and the rule was left behind killing every
+-// link, code-copy and text selection in the output with nothing to fall through
+-// to. Anything added here that swallows clicks has to earn it again.
+ const RUN_CONTENT_MAX_HEIGHT = 160;
+ 
+ const RunContent = memo<{ content: string }>(({ content }) => (
+   <CollapsibleContent key={content} maxHeight={RUN_CONTENT_MAX_HEIGHT}>
+-    <Markdown style={{ overflow: 'unset' }} variant={'chat'}>
++    <Markdown style={{ overflow: 'unset', pointerEvents: 'none' }} variant={'chat'}>
+       {content}
+     </Markdown>
+   </CollapsibleContent>
