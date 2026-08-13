@@ -1,36 +1,74 @@
 diff --git a/src/features/Conversation/store/slices/generation/action.test.ts b/src/features/Conversation/store/slices/generation/action.test.ts
-index fd1c4ec029..53bdacb8db 100644
+index fd1c4ec029..0a9285e3b3 100644
 --- a/src/features/Conversation/store/slices/generation/action.test.ts
 +++ b/src/features/Conversation/store/slices/generation/action.test.ts
-@@ -27,6 +27,7 @@ const mockCompleteOperation = vi.fn();
- const mockAssociateMessageWithOperation = vi.fn();
- const mockFailOperation = vi.fn();
- const mockExecuteClientAgent = vi.fn();
+@@ -6,0 +7 @@ import { agentSelectors } from '@/store/agent/selectors';
++import { useChatStore } from '@/store/chat';
+@@ -29,0 +31 @@ const mockExecuteClientAgent = vi.fn();
 +const mockInternalExecGroupOrchestration = vi.fn();
- const mockIsGatewayModeEnabled = vi.fn(() => false);
- const mockExecuteGatewayAgent = vi.fn();
- 
-@@ -55,6 +56,7 @@ vi.mock('@/store/chat', () => ({
-       completeOperation: mockCompleteOperation,
-       failOperation: mockFailOperation,
-       executeClientAgent: mockExecuteClientAgent,
-+      internal_execGroupOrchestration: mockInternalExecGroupOrchestration,
-       isGatewayModeEnabled: mockIsGatewayModeEnabled,
-       executeGatewayAgent: mockExecuteGatewayAgent,
-     })),
-@@ -69,6 +71,7 @@ describe('Generation Actions', () => {
- 
-   afterEach(() => {
-     vi.clearAllTimers();
+@@ -32,0 +35,28 @@ const mockExecuteGatewayAgent = vi.fn();
++const createDefaultChatStoreState = () => ({
++  messagesMap: {
++    'session-1-': [
++      { id: 'msg-1', role: 'user', content: 'Hello' },
++      { id: 'msg-2', role: 'assistant', content: 'Hi there', parentId: 'msg-1' },
++    ],
++  },
++  operations: {},
++  operationsByMessage: {},
++
++  cancelOperations: mockCancelOperations,
++  cancelOperation: mockCancelOperation,
++  cancelSendMessageInServer: mockCancelSendMessageInServer,
++  regenerateUserMessage: mockRegenerateUserMessage,
++  regenerateAssistantMessage: mockRegenerateAssistantMessage,
++  continueGenerationMessage: mockContinueGenerationMessage,
++  deleteMessage: mockDeleteMessage,
++  switchMessageBranch: mockSwitchMessageBranch,
++  startOperation: mockStartOperation,
++  associateMessageWithOperation: mockAssociateMessageWithOperation,
++  completeOperation: mockCompleteOperation,
++  failOperation: mockFailOperation,
++  executeClientAgent: mockExecuteClientAgent,
++  internal_execGroupOrchestration: mockInternalExecGroupOrchestration,
++  isGatewayModeEnabled: mockIsGatewayModeEnabled,
++  executeGatewayAgent: mockExecuteGatewayAgent,
++});
++
+@@ -35,26 +65 @@ vi.mock('@/store/chat', () => ({
+-    getState: vi.fn(() => ({
+-      messagesMap: {
+-        'session-1-': [
+-          { id: 'msg-1', role: 'user', content: 'Hello' },
+-          { id: 'msg-2', role: 'assistant', content: 'Hi there', parentId: 'msg-1' },
+-        ],
+-      },
+-      operations: {},
+-      operationsByMessage: {},
+-
+-      cancelOperations: mockCancelOperations,
+-      cancelOperation: mockCancelOperation,
+-      cancelSendMessageInServer: mockCancelSendMessageInServer,
+-      regenerateUserMessage: mockRegenerateUserMessage,
+-      regenerateAssistantMessage: mockRegenerateAssistantMessage,
+-      continueGenerationMessage: mockContinueGenerationMessage,
+-      deleteMessage: mockDeleteMessage,
+-      switchMessageBranch: mockSwitchMessageBranch,
+-      startOperation: mockStartOperation,
+-      associateMessageWithOperation: mockAssociateMessageWithOperation,
+-      completeOperation: mockCompleteOperation,
+-      failOperation: mockFailOperation,
+-      executeClientAgent: mockExecuteClientAgent,
+-      isGatewayModeEnabled: mockIsGatewayModeEnabled,
+-      executeGatewayAgent: mockExecuteGatewayAgent,
+-    })),
++    getState: vi.fn(createDefaultChatStoreState),
+@@ -67,0 +73 @@ describe('Generation Actions', () => {
++    vi.mocked(useChatStore.getState).mockReset().mockImplementation(createDefaultChatStoreState);
+@@ -71,0 +78 @@ describe('Generation Actions', () => {
 +    mockIsGatewayModeEnabled.mockReset().mockReturnValue(false);
-   });
- 
-   describe('stopGenerating', () => {
-@@ -1222,6 +1225,374 @@ describe('Generation Actions', () => {
-       );
-     });
- 
-+    it('reuses the active member branch identity instead of the group supervisor', async () => {
+@@ -1224,0 +1232,311 @@ describe('Generation Actions', () => {
++    it('restarts orchestration when the active branch was produced by a member', async () => {
 +      const context: ConversationContext = {
 +        agentId: 'supervisor-agent',
 +        groupId: 'group-1',
@@ -68,75 +106,18 @@ index fd1c4ec029..53bdacb8db 100644
 +        await store.getState().regenerateUserMessage('user-1');
 +      });
 +
-+      expect(mockExecuteClientAgent).toHaveBeenCalledWith(
++      expect(mockSwitchMessageBranch).toHaveBeenCalledWith('user-1', 2, {
++        operationId: 'test-op-id',
++      });
++      expect(mockInternalExecGroupOrchestration).toHaveBeenCalledWith(
 +        expect.objectContaining({
-+          context: expect.objectContaining({
-+            agentId: 'supervisor-agent',
-+            isSupervisor: undefined,
-+            orchestrationRole: 'member',
-+            subAgentId: 'selected-member',
-+          }),
++          groupId: 'group-1',
++          parentMessageId: 'user-1',
++          supervisorAgentId: 'supervisor-agent',
 +        }),
 +      );
-+    });
-+
-+    it('executes a member gateway retry with the member but keeps the group owner', async () => {
-+      const { useChatStore } = await import('@/store/chat');
-+      vi.mocked(useChatStore.getState).mockReturnValue({
-+        messagesMap: {},
-+        operations: {},
-+        operationsByMessage: {},
-+        startOperation: mockStartOperation,
-+        associateMessageWithOperation: mockAssociateMessageWithOperation,
-+        completeOperation: mockCompleteOperation,
-+        failOperation: mockFailOperation,
-+        executeClientAgent: mockExecuteClientAgent,
-+        executeGatewayAgent: mockExecuteGatewayAgent,
-+        isGatewayModeEnabled: mockIsGatewayModeEnabled,
-+        switchMessageBranch: mockSwitchMessageBranch,
-+      } as any);
-+      mockIsGatewayModeEnabled.mockImplementation(
-+        ((agentId: string) => agentId === 'member-agent') as any,
-+      );
-+      const context: ConversationContext = {
-+        agentId: 'supervisor-agent',
-+        groupId: 'group-1',
-+        scope: 'group',
-+        threadId: null,
-+        topicId: 'topic-1',
-+      };
-+      const store = createStore({ context });
-+
-+      act(() => {
-+        store.setState({
-+          dbMessages: [
-+            { id: 'user-1', role: 'user', content: 'Hello' },
-+            {
-+              agentId: 'member-agent',
-+              content: 'Member response',
-+              id: 'assistant-1',
-+              metadata: { orchestrationRole: 'member', subAgentId: 'member-agent' },
-+              parentId: 'user-1',
-+              role: 'assistant',
-+            },
-+          ],
-+          displayMessages: [{ id: 'user-1', role: 'user', content: 'Hello' }],
-+        } as any);
-+      });
-+
-+      await act(async () => {
-+        await store.getState().regenerateUserMessage('user-1');
-+      });
-+
-+      expect(mockExecuteGatewayAgent).toHaveBeenCalledWith(
-+        expect.objectContaining({
-+          context: expect.objectContaining({ agentId: 'member-agent', subAgentId: undefined }),
-+          messageContext: expect.objectContaining({
-+            agentId: 'supervisor-agent',
-+            subAgentId: 'member-agent',
-+          }),
-+        }),
-+      );
++      expect(mockExecuteClientAgent).not.toHaveBeenCalled();
++      expect(mockExecuteGatewayAgent).not.toHaveBeenCalled();
 +    });
 +
 +    it('restarts orchestration when regenerating an Orchestrator bubble', async () => {
@@ -398,33 +379,15 @@ index fd1c4ec029..53bdacb8db 100644
 +      );
 +    });
 +
-     it('should bail out if the interim op was cancelled during preflight (Stop pressed)', async () => {
-       const { useChatStore } = await import('@/store/chat');
-       vi.mocked(useChatStore.getState).mockReturnValue({
 diff --git a/src/features/Conversation/store/slices/generation/action.ts b/src/features/Conversation/store/slices/generation/action.ts
 index b19d4c856f..beeec1af92 100644
 --- a/src/features/Conversation/store/slices/generation/action.ts
 +++ b/src/features/Conversation/store/slices/generation/action.ts
-@@ -6,6 +6,7 @@ import type {
-   ChatTTS,
-   ConversationContext,
-   HeterogeneousProviderConfig,
+@@ -8,0 +9 @@ import type {
 +  UIChatMessage,
- } from '@lobechat/types';
- import { resolveAgentAgencyConfig } from '@lobechat/types';
- import { toast } from '@lobehub/ui/base-ui';
-@@ -22,6 +23,7 @@ import { globalAgentContextManager } from '@/helpers/GlobalAgentContextManager';
- import { messageService } from '@/services/message';
- import { getAgentStoreState } from '@/store/agent';
- import { agentByIdSelectors, agentSelectors } from '@/store/agent/selectors';
+@@ -24,0 +26 @@ import { agentByIdSelectors, agentSelectors } from '@/store/agent/selectors';
 +import { agentGroupByIdSelectors, getChatGroupStoreState } from '@/store/agentGroup';
- import { useChatStore } from '@/store/chat';
- import { topicSelectors } from '@/store/chat/selectors';
- import { selectRuntimeType } from '@/store/chat/slices/agentRun/actions/dispatch/agentDispatcher';
-@@ -253,6 +255,105 @@ interface RegenerateUserMessageSource {
-   readDbMessages: () => ConversationStore['dbMessages'];
- }
- 
+@@ -255,0 +258,99 @@ interface RegenerateUserMessageSource {
 +type RetryExecutionContext = Pick<
 +  ConversationContext,
 +  'agentId' | 'groupId' | 'scope' | 'subAgentId' | 'isSupervisor' | 'orchestrationRole'
@@ -524,24 +487,12 @@ index b19d4c856f..beeec1af92 100644
 +  );
 +};
 +
- const captureRegenerateUserMessageSource = (
-   get: () => ConversationStore,
- ): RegenerateUserMessageSource => {
-@@ -275,8 +376,9 @@ const captureRegenerateUserMessageSource = (
- const regenerateUserMessageFromSource = async (
-   messageId: string,
-   source: RegenerateUserMessageSource,
+@@ -277,0 +379 @@ const regenerateUserMessageFromSource = async (
 +  retryExecutionContext?: RetryExecutionContext,
- ) => {
+@@ -279 +381 @@ const regenerateUserMessageFromSource = async (
 -  const { context, displayMessages, hooks, readDbMessages } = source;
 +  const { context: sourceContext, displayMessages, hooks, readDbMessages } = source;
-   const chatStore = useChatStore.getState();
- 
-   // Block a genuine double-regenerate, and ONLY that. The guard used to be
-@@ -297,6 +399,20 @@ const regenerateUserMessageFromSource = async (
-   const currentIndex = displayMessages.findIndex((c) => c.id === messageId);
-   const item = displayMessages[currentIndex];
-   if (!item) return;
+@@ -299,0 +402,14 @@ const regenerateUserMessageFromSource = async (
 +  const dbMessages = readDbMessages();
 +  const retrySourceMessage = findRetrySourceMessage(item, dbMessages);
 +  const context =
@@ -556,13 +507,7 @@ index b19d4c856f..beeec1af92 100644
 +      : retryExecutionContext
 +        ? { ...sourceContext, ...retryExecutionContext }
 +        : getRetryExecutionContext(retrySourceMessage, sourceContext);
-   // Start the interim regenerate op BEFORE the async preflight below
-   // (document-context resolve + onBeforeRegenerate hook). In page / bound-
-   // document contexts those reads are real round trips, so creating the op
-@@ -342,8 +458,36 @@ const regenerateUserMessageFromSource = async (
-     // Read the database messages from the captured conversation. If the shared
-     // ConversationStore has switched context, the source falls back to the old
-     // context's ChatStore bucket instead of observing the new topic.
+@@ -345,2 +461,30 @@ const regenerateUserMessageFromSource = async (
 -    const dbMessages = readDbMessages();
 -    const childrenCount = dbMessages.filter((m) => m.parentId === messageId).length;
 +    const shouldRestartGroupOrchestration =
@@ -595,56 +540,26 @@ index b19d4c856f..beeec1af92 100644
 +    const childrenCount = dbMessages.filter(
 +      (message) => message.parentId === messageId && message.role !== 'tool',
 +    ).length;
-     const nextBranchIndex = childrenCount;
- 
-     // Switch to the new branch so the UI shows the incoming response immediately
-@@ -358,13 +502,14 @@ const regenerateUserMessageFromSource = async (
-     const postSwitchOp = operationSelectors.getOperationById(operationId)(useChatStore.getState());
-     if (postSwitchOp && postSwitchOp.status !== 'running') return;
- 
+@@ -361 +505,2 @@ const regenerateUserMessageFromSource = async (
 -    const { agencyConfig, workspaceScoped } = getEffectiveAgencyConfig(context.agentId);
 +    const executionAgentId = getRetryExecutionAgentId(context);
 +    const { agencyConfig, workspaceScoped } = getEffectiveAgencyConfig(executionAgentId);
-     const heterogeneousProvider = agencyConfig?.heterogeneousProvider;
-     const runtimeType = selectRuntimeType({
-       boundDeviceId: agencyConfig?.boundDeviceId,
-       executionTarget: agencyConfig?.executionTarget,
-       heterogeneousProvider,
+@@ -367 +512 @@ const regenerateUserMessageFromSource = async (
 -      isGatewayMode: chatStore.isGatewayModeEnabled(context.agentId),
 +      isGatewayMode: chatStore.isGatewayModeEnabled(executionAgentId),
-       isWorkspaceAgent: workspaceScoped,
-     });
- 
-@@ -383,8 +528,9 @@ const regenerateUserMessageFromSource = async (
-       // `onComplete` still fires at session end for the UI hook; re-completing
-       // the already-settled wrapper is an idempotent no-op.
-       await chatStore.executeGatewayAgent({
+@@ -386 +531 @@ const regenerateUserMessageFromSource = async (
 -        context,
 +        context: getRetryGatewayExecutionContext(context),
-         message: item.content,
+@@ -387,0 +533 @@ const regenerateUserMessageFromSource = async (
 +        messageContext: context,
-         onComplete: () =>
-           settleGenerationEntry(chatStore, operationId, () =>
-             hooks.onRegenerateComplete?.(messageId),
-@@ -1162,7 +1308,7 @@ export const generationSlice: StateCreator<
-   },
- 
-   regenerateAssistantMessage: async (messageId: string) => {
+@@ -1165 +1311 @@ export const generationSlice: StateCreator<
 -    const { displayMessages } = get();
 +    const { dbMessages, displayMessages } = get();
- 
-     // Find the assistant message
-     const currentIndex = displayMessages.findIndex((c) => c.id === messageId);
-@@ -1170,12 +1316,16 @@ export const generationSlice: StateCreator<
- 
-     if (!currentMessage) return;
- 
+@@ -1173,2 +1319 @@ export const generationSlice: StateCreator<
 -    // Find the parent user message
 -    const userId = currentMessage.parentId;
 +    const userId = findUserMessageId(currentMessage, [...dbMessages, ...displayMessages]);
-     if (!userId) return;
- 
-     // Delegate to regenerateUserMessage with the parent user message
+@@ -1178 +1323,6 @@ export const generationSlice: StateCreator<
 -    await get().regenerateUserMessage(userId);
 +    const source = captureRegenerateUserMessageSource(get);
 +    await regenerateUserMessageFromSource(
@@ -652,17 +567,11 @@ index b19d4c856f..beeec1af92 100644
 +      source,
 +      getRetryExecutionContext(currentMessage, source.context),
 +    );
-   },
- 
-   regenerateUserMessage: async (messageId: string) =>
 diff --git a/src/store/chat/agents/GroupOrchestration/__tests__/call-supervisor.test.ts b/src/store/chat/agents/GroupOrchestration/__tests__/call-supervisor.test.ts
 index c624026afc..7d8a519546 100644
 --- a/src/store/chat/agents/GroupOrchestration/__tests__/call-supervisor.test.ts
 +++ b/src/store/chat/agents/GroupOrchestration/__tests__/call-supervisor.test.ts
-@@ -80,6 +80,65 @@ const createInitialState = (overrides: Partial<AgentState> = {}): AgentState =>
- 
- describe('createGroupOrchestrationExecutors', () => {
-   describe('call_supervisor executor', () => {
+@@ -82,0 +83,59 @@ describe('createGroupOrchestrationExecutors', () => {
 +    it('starts a retried supervisor turn from the requested User branch', async () => {
 +      const previousAssistantId = 'previous-assistant-id';
 +      const mockStore = createMockStore({
@@ -722,39 +631,19 @@ index c624026afc..7d8a519546 100644
 +      );
 +    });
 +
-     it('should NOT pass operationId to executeClientAgent (creates new child operation)', async () => {
-       const mockStore = createMockStore({
-         dbMessagesMap: {
 diff --git a/src/store/chat/agents/GroupOrchestration/createGroupOrchestrationExecutors.ts b/src/store/chat/agents/GroupOrchestration/createGroupOrchestrationExecutors.ts
 index 158bf73353..73529856b3 100644
 --- a/src/store/chat/agents/GroupOrchestration/createGroupOrchestrationExecutors.ts
 +++ b/src/store/chat/agents/GroupOrchestration/createGroupOrchestrationExecutors.ts
-@@ -66,6 +66,7 @@ export interface GroupOrchestrationExecutorsContext {
-    */
-   messageContext: ConversationContext;
-   orchestrationOperationId: string;
+@@ -68,0 +69 @@ export interface GroupOrchestrationExecutorsContext {
 +  parentMessageId?: string;
-   supervisorAgentId: string;
- }
- 
-@@ -110,10 +111,12 @@ export interface GroupOrchestrationExecutorsContext {
- export const createGroupOrchestrationExecutors = (
-   context: GroupOrchestrationExecutorsContext,
- ): Partial<Record<SupervisorInstruction['type'], GroupOrchestrationExecutor>> => {
+@@ -113 +114,2 @@ export const createGroupOrchestrationExecutors = (
 -  const { get, messageContext, orchestrationOperationId, supervisorAgentId } = context;
 +  const { get, messageContext, orchestrationOperationId, parentMessageId, supervisorAgentId } =
 +    context;
- 
-   // Pre-compute the chat key for message fetching
-   const chatKey = messageMapKey(messageContext);
+@@ -116,0 +119 @@ export const createGroupOrchestrationExecutors = (
 +  let initialSupervisorParentMessageId = parentMessageId;
- 
-   /**
-    * Helper to get current messages for the group conversation
-@@ -138,8 +141,16 @@ export const createGroupOrchestrationExecutors = (
-       const sessionLogId = `${state.operationId}:call_supervisor`;
-       log(`[${sessionLogId}] Starting supervisor agent: ${agentId}`);
- 
+@@ -141,2 +144,10 @@ export const createGroupOrchestrationExecutors = (
 -      const messages = getMessages();
 -      const lastMessage = messages.at(-1);
 +      const allMessages = getMessages();
@@ -767,35 +656,14 @@ index 158bf73353..73529856b3 100644
 +        ? allMessages[parentMessageIndex]
 +        : messages.at(-1);
 +      initialSupervisorParentMessageId = undefined;
- 
-       if (!lastMessage) {
-         log(`[${sessionLogId}] No messages found, cannot execute supervisor`);
 diff --git a/src/store/chat/slices/aiAgent/actions/groupOrchestration.ts b/src/store/chat/slices/aiAgent/actions/groupOrchestration.ts
 index 6dec932393..b771012a06 100644
 --- a/src/store/chat/slices/aiAgent/actions/groupOrchestration.ts
 +++ b/src/store/chat/slices/aiAgent/actions/groupOrchestration.ts
-@@ -33,6 +33,7 @@ export interface GroupOrchestrationParams {
-    * This is the first ExecutorResult that will be passed to Supervisor.decide()
-    */
-   initialResult: ExecutorResult;
+@@ -35,0 +36 @@ export interface GroupOrchestrationParams {
 +  parentMessageId?: string;
-   supervisorAgentId: string;
-   topicId?: string;
- }
-@@ -255,7 +256,7 @@ export class GroupOrchestrationActionImpl {
-   internal_execGroupOrchestration = async (
-     params: GroupOrchestrationParams,
-   ): Promise<AgentState> => {
+@@ -258 +259 @@ export class GroupOrchestrationActionImpl {
 -    const { groupId, topicId, initialResult, supervisorAgentId } = params;
 +    const { groupId, topicId, initialResult, parentMessageId, supervisorAgentId } = params;
- 
-     log(
-       '[internal_execGroupOrchestration] Starting orchestration for group: %s, supervisorAgentId: %s, initialResult: %s',
-@@ -292,6 +293,7 @@ export class GroupOrchestrationActionImpl {
-       get: this.#get,
-       messageContext: { agentId: supervisorAgentId, groupId, scope: 'group', topicId },
-       orchestrationOperationId: operationId,
+@@ -294,0 +296 @@ export class GroupOrchestrationActionImpl {
 +      parentMessageId,
-       supervisorAgentId: groupConfig.supervisorAgentId,
-     });
- 
