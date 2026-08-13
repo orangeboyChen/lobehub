@@ -1,5 +1,5 @@
 diff --git a/src/features/Conversation/store/slices/generation/action.test.ts b/src/features/Conversation/store/slices/generation/action.test.ts
-index fd1c4ec029..0a9285e3b3 100644
+index fd1c4ec029..26f4797451 100644
 --- a/src/features/Conversation/store/slices/generation/action.test.ts
 +++ b/src/features/Conversation/store/slices/generation/action.test.ts
 @@ -6,0 +7 @@ import { agentSelectors } from '@/store/agent/selectors';
@@ -7,7 +7,7 @@ index fd1c4ec029..0a9285e3b3 100644
 @@ -29,0 +31 @@ const mockExecuteClientAgent = vi.fn();
 +const mockInternalExecGroupOrchestration = vi.fn();
 @@ -32,0 +35,28 @@ const mockExecuteGatewayAgent = vi.fn();
-+const createDefaultChatStoreState = () => ({
++const createDefaultChatStoreState = (): any => ({
 +  messagesMap: {
 +    'session-1-': [
 +      { id: 'msg-1', role: 'user', content: 'Hello' },
