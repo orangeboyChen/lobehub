@@ -1,15 +1,8 @@
 diff --git a/src/features/Conversation/store/slices/generation/action.test.ts b/src/features/Conversation/store/slices/generation/action.test.ts
-index fd1c4ec029..52b0a286ca 100644
+index fd1c4ec029..53bdacb8db 100644
 --- a/src/features/Conversation/store/slices/generation/action.test.ts
 +++ b/src/features/Conversation/store/slices/generation/action.test.ts
-@@ -21,12 +21,14 @@ const mockRegenerateUserMessage = vi.fn();
- const mockRegenerateAssistantMessage = vi.fn();
- const mockContinueGenerationMessage = vi.fn();
- const mockDeleteMessage = vi.fn();
-+const mockDeleteMessages = vi.fn();
- const mockSwitchMessageBranch = vi.fn();
- const mockStartOperation = vi.fn(() => ({ operationId: 'test-op-id' }));
- const mockCompleteOperation = vi.fn();
+@@ -27,6 +27,7 @@ const mockCompleteOperation = vi.fn();
  const mockAssociateMessageWithOperation = vi.fn();
  const mockFailOperation = vi.fn();
  const mockExecuteClientAgent = vi.fn();
@@ -17,14 +10,7 @@ index fd1c4ec029..52b0a286ca 100644
  const mockIsGatewayModeEnabled = vi.fn(() => false);
  const mockExecuteGatewayAgent = vi.fn();
  
-@@ -49,12 +51,14 @@ vi.mock('@/store/chat', () => ({
-       regenerateAssistantMessage: mockRegenerateAssistantMessage,
-       continueGenerationMessage: mockContinueGenerationMessage,
-       deleteMessage: mockDeleteMessage,
-+      deleteMessages: mockDeleteMessages,
-       switchMessageBranch: mockSwitchMessageBranch,
-       startOperation: mockStartOperation,
-       associateMessageWithOperation: mockAssociateMessageWithOperation,
+@@ -55,6 +56,7 @@ vi.mock('@/store/chat', () => ({
        completeOperation: mockCompleteOperation,
        failOperation: mockFailOperation,
        executeClientAgent: mockExecuteClientAgent,
@@ -32,7 +18,7 @@ index fd1c4ec029..52b0a286ca 100644
        isGatewayModeEnabled: mockIsGatewayModeEnabled,
        executeGatewayAgent: mockExecuteGatewayAgent,
      })),
-@@ -69,6 +73,7 @@ describe('Generation Actions', () => {
+@@ -69,6 +71,7 @@ describe('Generation Actions', () => {
  
    afterEach(() => {
      vi.clearAllTimers();
@@ -40,7 +26,7 @@ index fd1c4ec029..52b0a286ca 100644
    });
  
    describe('stopGenerating', () => {
-@@ -1222,6 +1227,366 @@ describe('Generation Actions', () => {
+@@ -1222,6 +1225,374 @@ describe('Generation Actions', () => {
        );
      });
  
@@ -198,11 +184,14 @@ index fd1c4ec029..52b0a286ca 100644
 +        expect.objectContaining({
 +          groupId: 'group-1',
 +          initialResult: { payload: { groupId: 'group-1' }, type: 'init' },
++          parentMessageId: 'user-1',
 +          supervisorAgentId: 'orchestrator-agent',
 +          topicId: 'topic-1',
 +        }),
 +      );
-+      expect(mockDeleteMessages).toHaveBeenCalledWith(['assistant-1']);
++      expect(mockSwitchMessageBranch).toHaveBeenCalledWith('user-1', 1, {
++        operationId: 'test-op-id',
++      });
 +      expect(mockExecuteClientAgent).not.toHaveBeenCalled();
 +    });
 +
@@ -227,17 +216,20 @@ index fd1c4ec029..52b0a286ca 100644
 +        await store.getState().regenerateUserMessage('user-1');
 +      });
 +
-+      expect(mockDeleteMessages).not.toHaveBeenCalled();
++      expect(mockSwitchMessageBranch).toHaveBeenCalledWith('user-1', 0, {
++        operationId: 'test-op-id',
++      });
 +      expect(mockInternalExecGroupOrchestration).toHaveBeenCalledWith({
 +        groupId: 'group-1',
 +        initialResult: { payload: { groupId: 'group-1' }, type: 'init' },
++        parentMessageId: 'user-1',
 +        supervisorAgentId: 'orchestrator-agent',
 +        topicId: 'topic-1',
 +      });
 +      expect(mockExecuteClientAgent).not.toHaveBeenCalled();
 +    });
 +
-+    it('deletes the Orchestrator and member descendants before retrying the group turn', async () => {
++    it('keeps the existing group turn and opens a new User branch before retrying', async () => {
 +      const context: ConversationContext = {
 +        agentId: 'orchestrator-agent',
 +        groupId: 'group-1',
@@ -262,7 +254,9 @@ index fd1c4ec029..52b0a286ca 100644
 +        await store.getState().regenerateUserMessage('user-1');
 +      });
 +
-+      expect(mockDeleteMessages).toHaveBeenCalledWith(['orchestrator-1', 'member-1']);
++      expect(mockSwitchMessageBranch).toHaveBeenCalledWith('user-1', 1, {
++        operationId: 'test-op-id',
++      });
 +      expect(mockInternalExecGroupOrchestration).toHaveBeenCalled();
 +    });
 +
@@ -408,7 +402,7 @@ index fd1c4ec029..52b0a286ca 100644
        const { useChatStore } = await import('@/store/chat');
        vi.mocked(useChatStore.getState).mockReturnValue({
 diff --git a/src/features/Conversation/store/slices/generation/action.ts b/src/features/Conversation/store/slices/generation/action.ts
-index b19d4c856f..942fe0b779 100644
+index b19d4c856f..977c294b0e 100644
 --- a/src/features/Conversation/store/slices/generation/action.ts
 +++ b/src/features/Conversation/store/slices/generation/action.ts
 @@ -6,6 +6,7 @@ import type {
@@ -419,7 +413,15 @@ index b19d4c856f..942fe0b779 100644
  } from '@lobechat/types';
  import { resolveAgentAgencyConfig } from '@lobechat/types';
  import { toast } from '@lobehub/ui/base-ui';
-@@ -253,6 +254,120 @@ interface RegenerateUserMessageSource {
+@@ -22,6 +23,7 @@ import { globalAgentContextManager } from '@/helpers/GlobalAgentContextManager';
+ import { messageService } from '@/services/message';
+ import { getAgentStoreState } from '@/store/agent';
+ import { agentByIdSelectors, agentSelectors } from '@/store/agent/selectors';
++import { agentGroupByIdSelectors, getChatGroupStoreState } from '@/store/agentGroup';
+ import { useChatStore } from '@/store/chat';
+ import { topicSelectors } from '@/store/chat/selectors';
+ import { selectRuntimeType } from '@/store/chat/slices/agentRun/actions/dispatch/agentDispatcher';
+@@ -253,6 +255,103 @@ interface RegenerateUserMessageSource {
    readDbMessages: () => ConversationStore['dbMessages'];
  }
  
@@ -499,32 +501,6 @@ index b19d4c856f..942fe0b779 100644
 +  }
 +};
 +
-+const findDescendantMessageIds = (parentId: string, messages: UIChatMessage[]): string[] => {
-+  const childrenByParent = new Map<string, UIChatMessage[]>();
-+
-+  for (const message of messages) {
-+    if (!message.parentId) continue;
-+    const children = childrenByParent.get(message.parentId) ?? [];
-+    children.push(message);
-+    childrenByParent.set(message.parentId, children);
-+  }
-+
-+  const descendantIds: string[] = [];
-+  const pendingIds = [parentId];
-+
-+  while (pendingIds.length > 0) {
-+    const currentId = pendingIds.shift()!;
-+    const children = childrenByParent.get(currentId) ?? [];
-+
-+    for (const child of children) {
-+      descendantIds.push(child.id);
-+      pendingIds.push(child.id);
-+    }
-+  }
-+
-+  return descendantIds;
-+};
-+
 +const getRetryExecutionAgentId = (context: ConversationContext) =>
 +  context.groupId && context.orchestrationRole === 'member'
 +    ? context.subAgentId || context.agentId
@@ -537,10 +513,19 @@ index b19d4c856f..942fe0b779 100644
 +  return { ...context, agentId, subAgentId: undefined };
 +};
 +
++const getGroupSupervisorAgentId = (context: ConversationContext) => {
++  if (!context.groupId) return context.agentId;
++
++  return (
++    agentGroupByIdSelectors.groupById(context.groupId)(getChatGroupStoreState())
++      ?.supervisorAgentId ?? context.agentId
++  );
++};
++
  const captureRegenerateUserMessageSource = (
    get: () => ConversationStore,
  ): RegenerateUserMessageSource => {
-@@ -275,8 +390,9 @@ const captureRegenerateUserMessageSource = (
+@@ -275,8 +374,9 @@ const captureRegenerateUserMessageSource = (
  const regenerateUserMessageFromSource = async (
    messageId: string,
    source: RegenerateUserMessageSource,
@@ -551,34 +536,47 @@ index b19d4c856f..942fe0b779 100644
    const chatStore = useChatStore.getState();
  
    // Block a genuine double-regenerate, and ONLY that. The guard used to be
-@@ -297,6 +413,11 @@ const regenerateUserMessageFromSource = async (
+@@ -297,6 +397,20 @@ const regenerateUserMessageFromSource = async (
    const currentIndex = displayMessages.findIndex((c) => c.id === messageId);
    const item = displayMessages[currentIndex];
    if (!item) return;
 +  const dbMessages = readDbMessages();
 +  const retrySourceMessage = findRetrySourceMessage(item, dbMessages);
-+  const context = retryExecutionContext
-+    ? { ...sourceContext, ...retryExecutionContext }
-+    : getRetryExecutionContext(retrySourceMessage, sourceContext);
++  const context =
++    item.role === 'user' && sourceContext.groupId
++      ? {
++          ...sourceContext,
++          agentId: getGroupSupervisorAgentId(sourceContext),
++          isSupervisor: true,
++          orchestrationRole: 'supervisor' as const,
++          subAgentId: undefined,
++        }
++      : retryExecutionContext
++        ? { ...sourceContext, ...retryExecutionContext }
++        : getRetryExecutionContext(retrySourceMessage, sourceContext);
    // Start the interim regenerate op BEFORE the async preflight below
    // (document-context resolve + onBeforeRegenerate hook). In page / bound-
    // document contexts those reads are real round trips, so creating the op
-@@ -342,7 +463,24 @@ const regenerateUserMessageFromSource = async (
+@@ -342,7 +456,28 @@ const regenerateUserMessageFromSource = async (
      // Read the database messages from the captured conversation. If the shared
      // ConversationStore has switched context, the source falls back to the old
      // context's ChatStore bucket instead of observing the new topic.
 -    const dbMessages = readDbMessages();
 +    const shouldRestartGroupOrchestration =
-+      !!context.groupId &&
-+      (context.orchestrationRole === 'supervisor' || !retrySourceMessage);
++      !!context.groupId && (item.role === 'user' || context.orchestrationRole === 'supervisor');
 +
 +    if (shouldRestartGroupOrchestration) {
-+      const descendantIds = findDescendantMessageIds(messageId, dbMessages);
-+      if (descendantIds.length > 0) await chatStore.deleteMessages(descendantIds);
++      const nextBranchIndex = dbMessages.filter((message) => message.parentId === messageId).length;
++
++      await chatStore.switchMessageBranch(messageId, nextBranchIndex, { operationId });
++
++      const postSwitchOp = operationSelectors.getOperationById(operationId)(useChatStore.getState());
++      if (postSwitchOp && postSwitchOp.status !== 'running') return;
 +
 +      await chatStore.internal_execGroupOrchestration({
 +        groupId: context.groupId!,
 +        initialResult: { payload: { groupId: context.groupId }, type: 'init' },
++        parentMessageId: messageId,
 +        supervisorAgentId: context.agentId,
 +        topicId: context.topicId ?? undefined,
 +      });
@@ -589,7 +587,7 @@ index b19d4c856f..942fe0b779 100644
      const childrenCount = dbMessages.filter((m) => m.parentId === messageId).length;
      const nextBranchIndex = childrenCount;
  
-@@ -358,13 +496,14 @@ const regenerateUserMessageFromSource = async (
+@@ -358,13 +493,14 @@ const regenerateUserMessageFromSource = async (
      const postSwitchOp = operationSelectors.getOperationById(operationId)(useChatStore.getState());
      if (postSwitchOp && postSwitchOp.status !== 'running') return;
  
@@ -606,7 +604,7 @@ index b19d4c856f..942fe0b779 100644
        isWorkspaceAgent: workspaceScoped,
      });
  
-@@ -383,8 +522,9 @@ const regenerateUserMessageFromSource = async (
+@@ -383,8 +519,9 @@ const regenerateUserMessageFromSource = async (
        // `onComplete` still fires at session end for the UI hook; re-completing
        // the already-settled wrapper is an idempotent no-op.
        await chatStore.executeGatewayAgent({
@@ -617,7 +615,7 @@ index b19d4c856f..942fe0b779 100644
          onComplete: () =>
            settleGenerationEntry(chatStore, operationId, () =>
              hooks.onRegenerateComplete?.(messageId),
-@@ -1162,7 +1302,7 @@ export const generationSlice: StateCreator<
+@@ -1162,7 +1299,7 @@ export const generationSlice: StateCreator<
    },
  
    regenerateAssistantMessage: async (messageId: string) => {
@@ -626,7 +624,7 @@ index b19d4c856f..942fe0b779 100644
  
      // Find the assistant message
      const currentIndex = displayMessages.findIndex((c) => c.id === messageId);
-@@ -1170,12 +1310,16 @@ export const generationSlice: StateCreator<
+@@ -1170,12 +1307,16 @@ export const generationSlice: StateCreator<
  
      if (!currentMessage) return;
  
@@ -646,3 +644,140 @@ index b19d4c856f..942fe0b779 100644
    },
  
    regenerateUserMessage: async (messageId: string) =>
+diff --git a/src/store/chat/agents/GroupOrchestration/__tests__/call-supervisor.test.ts b/src/store/chat/agents/GroupOrchestration/__tests__/call-supervisor.test.ts
+index c624026afc..7d8a519546 100644
+--- a/src/store/chat/agents/GroupOrchestration/__tests__/call-supervisor.test.ts
++++ b/src/store/chat/agents/GroupOrchestration/__tests__/call-supervisor.test.ts
+@@ -80,6 +80,65 @@ const createInitialState = (overrides: Partial<AgentState> = {}): AgentState =>
+ 
+ describe('createGroupOrchestrationExecutors', () => {
+   describe('call_supervisor executor', () => {
++    it('starts a retried supervisor turn from the requested User branch', async () => {
++      const previousAssistantId = 'previous-assistant-id';
++      const mockStore = createMockStore({
++        dbMessagesMap: {
++          [`group_${TEST_IDS.GROUP_ID}_${TEST_IDS.TOPIC_ID}`]: [
++            {
++              content: 'Hello',
++              createdAt: Date.now(),
++              id: TEST_IDS.USER_MESSAGE_ID,
++              role: 'user',
++              updatedAt: Date.now(),
++            } as UIChatMessage,
++            {
++              content: 'Old response',
++              createdAt: Date.now(),
++              id: previousAssistantId,
++              parentId: TEST_IDS.USER_MESSAGE_ID,
++              role: 'assistant',
++              updatedAt: Date.now(),
++            } as UIChatMessage,
++          ],
++        },
++      });
++
++      const executors = createGroupOrchestrationExecutors({
++        get: () => mockStore,
++        messageContext: {
++          agentId: TEST_IDS.SUPERVISOR_AGENT_ID,
++          groupId: TEST_IDS.GROUP_ID,
++          scope: 'group',
++          topicId: TEST_IDS.TOPIC_ID,
++        },
++        orchestrationOperationId: TEST_IDS.ORCHESTRATION_OPERATION_ID,
++        parentMessageId: TEST_IDS.USER_MESSAGE_ID,
++        supervisorAgentId: TEST_IDS.SUPERVISOR_AGENT_ID,
++      });
++
++      await executors.call_supervisor!(
++        {
++          payload: { round: 1, supervisorAgentId: TEST_IDS.SUPERVISOR_AGENT_ID },
++          type: 'call_supervisor',
++        },
++        createInitialState(),
++      );
++
++      expect(mockStore.executeClientAgent).toHaveBeenCalledWith(
++        expect.objectContaining({
++          messages: expect.arrayContaining([
++            expect.objectContaining({ id: TEST_IDS.USER_MESSAGE_ID }),
++          ]),
++          parentMessageId: TEST_IDS.USER_MESSAGE_ID,
++          parentMessageType: 'user',
++        }),
++      );
++      expect(mockStore.executeClientAgent).not.toHaveBeenCalledWith(
++        expect.objectContaining({ parentMessageId: previousAssistantId }),
++      );
++    });
++
+     it('should NOT pass operationId to executeClientAgent (creates new child operation)', async () => {
+       const mockStore = createMockStore({
+         dbMessagesMap: {
+diff --git a/src/store/chat/agents/GroupOrchestration/createGroupOrchestrationExecutors.ts b/src/store/chat/agents/GroupOrchestration/createGroupOrchestrationExecutors.ts
+index 158bf73353..3a6e53c035 100644
+--- a/src/store/chat/agents/GroupOrchestration/createGroupOrchestrationExecutors.ts
++++ b/src/store/chat/agents/GroupOrchestration/createGroupOrchestrationExecutors.ts
+@@ -66,6 +66,7 @@ export interface GroupOrchestrationExecutorsContext {
+    */
+   messageContext: ConversationContext;
+   orchestrationOperationId: string;
++  parentMessageId?: string;
+   supervisorAgentId: string;
+ }
+ 
+@@ -110,7 +111,8 @@ export interface GroupOrchestrationExecutorsContext {
+ export const createGroupOrchestrationExecutors = (
+   context: GroupOrchestrationExecutorsContext,
+ ): Partial<Record<SupervisorInstruction['type'], GroupOrchestrationExecutor>> => {
+-  const { get, messageContext, orchestrationOperationId, supervisorAgentId } = context;
++  const { get, messageContext, orchestrationOperationId, parentMessageId, supervisorAgentId } =
++    context;
+ 
+   // Pre-compute the chat key for message fetching
+   const chatKey = messageMapKey(messageContext);
+@@ -138,8 +140,13 @@ export const createGroupOrchestrationExecutors = (
+       const sessionLogId = `${state.operationId}:call_supervisor`;
+       log(`[${sessionLogId}] Starting supervisor agent: ${agentId}`);
+ 
+-      const messages = getMessages();
+-      const lastMessage = messages.at(-1);
++      const allMessages = getMessages();
++      const parentMessageIndex = parentMessageId
++        ? allMessages.findIndex((message) => message.id === parentMessageId)
++        : -1;
++      const messages =
++        parentMessageIndex >= 0 ? allMessages.slice(0, parentMessageIndex + 1) : allMessages;
++      const lastMessage = parentMessageId ? allMessages[parentMessageIndex] : messages.at(-1);
+ 
+       if (!lastMessage) {
+         log(`[${sessionLogId}] No messages found, cannot execute supervisor`);
+diff --git a/src/store/chat/slices/aiAgent/actions/groupOrchestration.ts b/src/store/chat/slices/aiAgent/actions/groupOrchestration.ts
+index 6dec932393..b771012a06 100644
+--- a/src/store/chat/slices/aiAgent/actions/groupOrchestration.ts
++++ b/src/store/chat/slices/aiAgent/actions/groupOrchestration.ts
+@@ -33,6 +33,7 @@ export interface GroupOrchestrationParams {
+    * This is the first ExecutorResult that will be passed to Supervisor.decide()
+    */
+   initialResult: ExecutorResult;
++  parentMessageId?: string;
+   supervisorAgentId: string;
+   topicId?: string;
+ }
+@@ -255,7 +256,7 @@ export class GroupOrchestrationActionImpl {
+   internal_execGroupOrchestration = async (
+     params: GroupOrchestrationParams,
+   ): Promise<AgentState> => {
+-    const { groupId, topicId, initialResult, supervisorAgentId } = params;
++    const { groupId, topicId, initialResult, parentMessageId, supervisorAgentId } = params;
+ 
+     log(
+       '[internal_execGroupOrchestration] Starting orchestration for group: %s, supervisorAgentId: %s, initialResult: %s',
+@@ -292,6 +293,7 @@ export class GroupOrchestrationActionImpl {
+       get: this.#get,
+       messageContext: { agentId: supervisorAgentId, groupId, scope: 'group', topicId },
+       orchestrationOperationId: operationId,
++      parentMessageId,
+       supervisorAgentId: groupConfig.supervisorAgentId,
+     });
+ 
