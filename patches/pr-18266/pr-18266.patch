@@ -1,5 +1,5 @@
 diff --git a/src/features/Conversation/store/slices/generation/action.test.ts b/src/features/Conversation/store/slices/generation/action.test.ts
-index fd1c4ec029..26f4797451 100644
+index fd1c4ec029..480892e038 100644
 --- a/src/features/Conversation/store/slices/generation/action.test.ts
 +++ b/src/features/Conversation/store/slices/generation/action.test.ts
 @@ -6,0 +7 @@ import { agentSelectors } from '@/store/agent/selectors';
@@ -62,7 +62,7 @@ index fd1c4ec029..26f4797451 100644
 -      isGatewayModeEnabled: mockIsGatewayModeEnabled,
 -      executeGatewayAgent: mockExecuteGatewayAgent,
 -    })),
-+    getState: vi.fn(createDefaultChatStoreState),
++    getState: vi.fn(),
 @@ -67,0 +73 @@ describe('Generation Actions', () => {
 +    vi.mocked(useChatStore.getState).mockReset().mockImplementation(createDefaultChatStoreState);
 @@ -71,0 +78 @@ describe('Generation Actions', () => {
