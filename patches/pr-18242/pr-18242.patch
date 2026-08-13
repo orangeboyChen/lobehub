@@ -7,9 +7,11 @@ index a284740651..d84d2aed66 100644
 +  topicStartOwnerOperationId?: string;
 @@ -1257,0 +1260 @@ export class AiAgentService {
 +      allowRunningOperationId: params.topicStartOwnerOperationId,
-@@ -4620 +4623 @@ export class AiAgentService {
+@@ -4620 +4623,3 @@ export class AiAgentService {
 -      if (!appContext?.isolationThread) {
-+      if (!appContext?.isolationThread && appContext?.orchestrationRole !== 'member') {
++      // `orchestrationRole` is public rendering metadata. Only the internally
++      // propagated parent operation id proves child ownership of this topic.
++      if (!appContext?.isolationThread && !params.topicStartOwnerOperationId) {
 @@ -4979,0 +4983 @@ export class AiAgentService {
 +      topicStartOwnerOperationId: parentOperationId,
 diff --git a/apps/server/src/services/aiAgent/topicStartReservation.test.ts b/apps/server/src/services/aiAgent/topicStartReservation.test.ts
@@ -106,5 +108,20 @@ index ac73fdeca5..bad2d46d1a 100644
 +      // In-group members are children of the operation that already owns the
 +      // topic. They may start concurrently without claiming the topic for
 +      // themselves; the parent's runningOperation remains authoritative.
-+      if (ownedRunningOperation) return true;
++      if (allowRunningOperationId) return ownedRunningOperation;
 +      if (runningOperation || hasLiveReservation) return false;
+
+diff --git a/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts b/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
+--- a/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
++++ b/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
+@@ -252,0 +253,10 @@ describe('AiAgentService.execAgent - threadId handling', () => {
++    it('does not trust a public member role to suppress the marker', async () => {
++      await service.execAgent({
++        agentId: 'agent-1',
++        appContext: { orchestrationRole: 'member', topicId: 'topic-1' },
++        prompt: 'Test prompt',
++      });
++
++      expect(runningMarkCalls()).toHaveLength(1);
++    });
++
