@@ -1,18 +1,26 @@
-From b2c523eadbc9e12d72b9bcf8abb0e49ad757425a Mon Sep 17 00:00:00 2001
+From cb5f1658a9253b0750b0a7339c0946291a4c812b Mon Sep 17 00:00:00 2001
 From: orangeboyChen <chenenhan@qq.com>
 Date: Thu, 13 Aug 2026 20:23:34 +0800
 Subject: [PATCH] fix(group): preserve retry execution identity
 
 ---
- .../store/slices/generation/action.test.ts    | 156 ++++++++++++++++++
- .../store/slices/generation/action.ts         |  87 +++++++++-
- 2 files changed, 237 insertions(+), 6 deletions(-)
+ .../store/slices/generation/action.test.ts    | 300 ++++++++++++++++++
+ .../store/slices/generation/action.ts         | 118 ++++++-
+ 2 files changed, 409 insertions(+), 9 deletions(-)
 
 diff --git a/src/features/Conversation/store/slices/generation/action.test.ts b/src/features/Conversation/store/slices/generation/action.test.ts
-index fd1c4ec029..2a39aae5ca 100644
+index fd1c4ec029..273508992e 100644
 --- a/src/features/Conversation/store/slices/generation/action.test.ts
 +++ b/src/features/Conversation/store/slices/generation/action.test.ts
-@@ -1222,6 +1222,162 @@ describe('Generation Actions', () => {
+@@ -69,6 +69,7 @@ describe('Generation Actions', () => {
+ 
+   afterEach(() => {
+     vi.clearAllTimers();
++    mockIsGatewayModeEnabled.mockReset().mockReturnValue(false);
+   });
+ 
+   describe('stopGenerating', () => {
+@@ -1222,6 +1223,305 @@ describe('Generation Actions', () => {
        );
      });
  
@@ -57,10 +65,69 @@ index fd1c4ec029..2a39aae5ca 100644
 +      expect(mockExecuteClientAgent).toHaveBeenCalledWith(
 +        expect.objectContaining({
 +          context: expect.objectContaining({
-+            agentId: 'selected-member',
++            agentId: 'supervisor-agent',
 +            isSupervisor: undefined,
 +            orchestrationRole: 'member',
 +            subAgentId: 'selected-member',
++          }),
++        }),
++      );
++    });
++
++    it('executes a member gateway retry with the member but keeps the group owner', async () => {
++      const { useChatStore } = await import('@/store/chat');
++      vi.mocked(useChatStore.getState).mockReturnValue({
++        messagesMap: {},
++        operations: {},
++        operationsByMessage: {},
++        startOperation: mockStartOperation,
++        associateMessageWithOperation: mockAssociateMessageWithOperation,
++        completeOperation: mockCompleteOperation,
++        failOperation: mockFailOperation,
++        executeClientAgent: mockExecuteClientAgent,
++        executeGatewayAgent: mockExecuteGatewayAgent,
++        isGatewayModeEnabled: mockIsGatewayModeEnabled,
++        switchMessageBranch: mockSwitchMessageBranch,
++      } as any);
++      mockIsGatewayModeEnabled.mockImplementation(
++        ((agentId: string) => agentId === 'member-agent') as any,
++      );
++      const context: ConversationContext = {
++        agentId: 'supervisor-agent',
++        groupId: 'group-1',
++        scope: 'group',
++        threadId: null,
++        topicId: 'topic-1',
++      };
++      const store = createStore({ context });
++
++      act(() => {
++        store.setState({
++          dbMessages: [
++            { id: 'user-1', role: 'user', content: 'Hello' },
++            {
++              agentId: 'member-agent',
++              content: 'Member response',
++              id: 'assistant-1',
++              metadata: { orchestrationRole: 'member', subAgentId: 'member-agent' },
++              parentId: 'user-1',
++              role: 'assistant',
++            },
++          ],
++          displayMessages: [{ id: 'user-1', role: 'user', content: 'Hello' }],
++        } as any);
++      });
++
++      await act(async () => {
++        await store.getState().regenerateUserMessage('user-1');
++      });
++
++      expect(mockExecuteGatewayAgent).toHaveBeenCalledWith(
++        expect.objectContaining({
++          context: expect.objectContaining({ agentId: 'member-agent', subAgentId: undefined }),
++          messageContext: expect.objectContaining({
++            agentId: 'supervisor-agent',
++            subAgentId: 'member-agent',
 +          }),
 +        }),
 +      );
@@ -118,7 +185,91 @@ index fd1c4ec029..2a39aae5ca 100644
 +      );
 +    });
 +
++    it('preserves a member assistant identity through gateway regeneration', async () => {
++      const { useChatStore } = await import('@/store/chat');
++      vi.mocked(useChatStore.getState).mockReturnValue({
++        messagesMap: {},
++        operations: {},
++        operationsByMessage: {},
++        startOperation: mockStartOperation,
++        associateMessageWithOperation: mockAssociateMessageWithOperation,
++        completeOperation: mockCompleteOperation,
++        failOperation: mockFailOperation,
++        executeClientAgent: mockExecuteClientAgent,
++        executeGatewayAgent: mockExecuteGatewayAgent,
++        isGatewayModeEnabled: mockIsGatewayModeEnabled,
++        switchMessageBranch: mockSwitchMessageBranch,
++      } as any);
++      mockIsGatewayModeEnabled.mockImplementation(
++        ((agentId: string) => agentId === 'member-agent') as any,
++      );
++      const context: ConversationContext = {
++        agentId: 'supervisor-agent',
++        groupId: 'group-1',
++        scope: 'group',
++        threadId: null,
++        topicId: 'topic-1',
++      };
++      const store = createStore({ context });
++
++      act(() => {
++        store.setState({
++          dbMessages: [
++            { id: 'user-1', role: 'user', content: 'Hello' },
++            {
++              agentId: 'member-agent',
++              content: 'Member response',
++              id: 'assistant-1',
++              metadata: { orchestrationRole: 'member', subAgentId: 'member-agent' },
++              parentId: 'user-1',
++              role: 'assistant',
++            },
++          ],
++          displayMessages: [
++            { id: 'user-1', role: 'user', content: 'Hello' },
++            {
++              agentId: 'member-agent',
++              content: 'Member response',
++              id: 'assistant-1',
++              metadata: { orchestrationRole: 'member', subAgentId: 'member-agent' },
++              parentId: 'user-1',
++              role: 'assistant',
++            },
++          ],
++        } as any);
++      });
++
++      await act(async () => {
++        await store.getState().regenerateAssistantMessage('assistant-1');
++      });
++
++      expect(mockExecuteGatewayAgent).toHaveBeenCalledWith(
++        expect.objectContaining({
++          context: expect.objectContaining({ agentId: 'member-agent', subAgentId: undefined }),
++          messageContext: expect.objectContaining({
++            agentId: 'supervisor-agent',
++            orchestrationRole: 'member',
++            subAgentId: 'member-agent',
++          }),
++        }),
++      );
++    });
++
 +    it('reuses a member identity when its assistant bubble is nested below a tool message', async () => {
++      const { useChatStore } = await import('@/store/chat');
++      vi.mocked(useChatStore.getState).mockReturnValue({
++        messagesMap: {},
++        operations: {},
++        operationsByMessage: {},
++        startOperation: mockStartOperation,
++        associateMessageWithOperation: mockAssociateMessageWithOperation,
++        completeOperation: mockCompleteOperation,
++        failOperation: mockFailOperation,
++        executeClientAgent: mockExecuteClientAgent,
++        executeGatewayAgent: mockExecuteGatewayAgent,
++        isGatewayModeEnabled: mockIsGatewayModeEnabled,
++        switchMessageBranch: mockSwitchMessageBranch,
++      } as any);
 +      const context: ConversationContext = {
 +        agentId: 'supervisor-agent',
 +        groupId: 'group-1',
@@ -163,7 +314,7 @@ index fd1c4ec029..2a39aae5ca 100644
 +      expect(mockExecuteClientAgent).toHaveBeenCalledWith(
 +        expect.objectContaining({
 +          context: expect.objectContaining({
-+            agentId: 'member-agent',
++            agentId: 'supervisor-agent',
 +            orchestrationRole: 'member',
 +            subAgentId: 'member-agent',
 +          }),
@@ -176,7 +327,7 @@ index fd1c4ec029..2a39aae5ca 100644
        const { useChatStore } = await import('@/store/chat');
        vi.mocked(useChatStore.getState).mockReturnValue({
 diff --git a/src/features/Conversation/store/slices/generation/action.ts b/src/features/Conversation/store/slices/generation/action.ts
-index b19d4c856f..f4f01339b7 100644
+index b19d4c856f..9b635961b6 100644
 --- a/src/features/Conversation/store/slices/generation/action.ts
 +++ b/src/features/Conversation/store/slices/generation/action.ts
 @@ -6,6 +6,7 @@ import type {
@@ -187,7 +338,7 @@ index b19d4c856f..f4f01339b7 100644
  } from '@lobechat/types';
  import { resolveAgentAgencyConfig } from '@lobechat/types';
  import { toast } from '@lobehub/ui/base-ui';
-@@ -253,6 +254,71 @@ interface RegenerateUserMessageSource {
+@@ -253,6 +254,94 @@ interface RegenerateUserMessageSource {
    readDbMessages: () => ConversationStore['dbMessages'];
  }
  
@@ -211,17 +362,28 @@ index b19d4c856f..f4f01339b7 100644
 +  const orchestrationRole = message.metadata?.orchestrationRole;
 +  const isSupervisor =
 +    orchestrationRole === 'supervisor' || message.metadata?.isSupervisor === true;
++  const isGroupMember = !!fallback.groupId && orchestrationRole === 'member';
++  const memberAgentId = message.metadata?.subAgentId || message.agentId;
 +
 +  return {
 +    ...fallback,
-+    ...(message.agentId && {
-+      agentId: message.agentId === 'supervisor' ? fallback.agentId : message.agentId,
-+    }),
++    ...(isGroupMember
++      ? {
++          subAgentId: memberAgentId,
++          orchestrationRole: 'member' as const,
++          isSupervisor: undefined,
++        }
++      : message.agentId && message.agentId !== 'supervisor'
++        ? { agentId: message.agentId }
++        : {}),
 +    ...(message.groupId && { groupId: message.groupId }),
 +    ...(message.metadata?.scope && {
 +      scope: message.metadata.scope as RetryExecutionContext['scope'],
 +    }),
-+    ...(message.metadata?.subAgentId && { subAgentId: message.metadata.subAgentId }),
++    ...(!isGroupMember &&
++      message.metadata?.subAgentId && {
++        subAgentId: message.metadata.subAgentId,
++      }),
 +    isSupervisor: isSupervisor || undefined,
 +    orchestrationRole: orchestrationRole || (isSupervisor ? 'supervisor' : undefined),
 +  };
@@ -256,10 +418,22 @@ index b19d4c856f..f4f01339b7 100644
 +  }
 +};
 +
++const getRetryExecutionAgentId = (context: ConversationContext) =>
++  context.groupId && context.orchestrationRole === 'member'
++    ? context.subAgentId || context.agentId
++    : context.agentId;
++
++const getRetryGatewayExecutionContext = (context: ConversationContext): ConversationContext => {
++  const agentId = getRetryExecutionAgentId(context);
++  if (agentId === context.agentId) return context;
++
++  return { ...context, agentId, subAgentId: undefined };
++};
++
  const captureRegenerateUserMessageSource = (
    get: () => ConversationStore,
  ): RegenerateUserMessageSource => {
-@@ -275,8 +341,9 @@ const captureRegenerateUserMessageSource = (
+@@ -275,8 +364,9 @@ const captureRegenerateUserMessageSource = (
  const regenerateUserMessageFromSource = async (
    messageId: string,
    source: RegenerateUserMessageSource,
@@ -270,7 +444,7 @@ index b19d4c856f..f4f01339b7 100644
    const chatStore = useChatStore.getState();
  
    // Block a genuine double-regenerate, and ONLY that. The guard used to be
-@@ -297,6 +364,11 @@ const regenerateUserMessageFromSource = async (
+@@ -297,6 +387,11 @@ const regenerateUserMessageFromSource = async (
    const currentIndex = displayMessages.findIndex((c) => c.id === messageId);
    const item = displayMessages[currentIndex];
    if (!item) return;
@@ -282,7 +456,7 @@ index b19d4c856f..f4f01339b7 100644
    // Start the interim regenerate op BEFORE the async preflight below
    // (document-context resolve + onBeforeRegenerate hook). In page / bound-
    // document contexts those reads are real round trips, so creating the op
-@@ -342,7 +414,6 @@ const regenerateUserMessageFromSource = async (
+@@ -342,7 +437,6 @@ const regenerateUserMessageFromSource = async (
      // Read the database messages from the captured conversation. If the shared
      // ConversationStore has switched context, the source falls back to the old
      // context's ChatStore bucket instead of observing the new topic.
@@ -290,7 +464,35 @@ index b19d4c856f..f4f01339b7 100644
      const childrenCount = dbMessages.filter((m) => m.parentId === messageId).length;
      const nextBranchIndex = childrenCount;
  
-@@ -1162,7 +1233,7 @@ export const generationSlice: StateCreator<
+@@ -358,13 +452,14 @@ const regenerateUserMessageFromSource = async (
+     const postSwitchOp = operationSelectors.getOperationById(operationId)(useChatStore.getState());
+     if (postSwitchOp && postSwitchOp.status !== 'running') return;
+ 
+-    const { agencyConfig, workspaceScoped } = getEffectiveAgencyConfig(context.agentId);
++    const executionAgentId = getRetryExecutionAgentId(context);
++    const { agencyConfig, workspaceScoped } = getEffectiveAgencyConfig(executionAgentId);
+     const heterogeneousProvider = agencyConfig?.heterogeneousProvider;
+     const runtimeType = selectRuntimeType({
+       boundDeviceId: agencyConfig?.boundDeviceId,
+       executionTarget: agencyConfig?.executionTarget,
+       heterogeneousProvider,
+-      isGatewayMode: chatStore.isGatewayModeEnabled(context.agentId),
++      isGatewayMode: chatStore.isGatewayModeEnabled(executionAgentId),
+       isWorkspaceAgent: workspaceScoped,
+     });
+ 
+@@ -383,8 +478,9 @@ const regenerateUserMessageFromSource = async (
+       // `onComplete` still fires at session end for the UI hook; re-completing
+       // the already-settled wrapper is an idempotent no-op.
+       await chatStore.executeGatewayAgent({
+-        context,
++        context: getRetryGatewayExecutionContext(context),
+         message: item.content,
++        messageContext: context,
+         onComplete: () =>
+           settleGenerationEntry(chatStore, operationId, () =>
+             hooks.onRegenerateComplete?.(messageId),
+@@ -1162,7 +1258,7 @@ export const generationSlice: StateCreator<
    },
  
    regenerateAssistantMessage: async (messageId: string) => {
@@ -299,7 +501,7 @@ index b19d4c856f..f4f01339b7 100644
  
      // Find the assistant message
      const currentIndex = displayMessages.findIndex((c) => c.id === messageId);
-@@ -1170,12 +1241,16 @@ export const generationSlice: StateCreator<
+@@ -1170,12 +1266,16 @@ export const generationSlice: StateCreator<
  
      if (!currentMessage) return;
  
