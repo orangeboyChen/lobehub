@@ -1,5 +1,7 @@
 patches/bug/ios-viewport.patch
 patches/pr-18239/pr-18239.patch
+patches/pr-18240/pr-18240.patch
+patches/pr-18242/pr-18242.patch
 patches/bug/lobehub-skill.patch
 patches/bug/docker-canvas-native-packages.patch
 patches/pr-16609/pr-16609.patch

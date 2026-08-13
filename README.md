@@ -10,7 +10,13 @@ The upstream image needs a small patch set for iOS viewport behavior, input zoom
 
 ## Active patch set
 
-- Local fixes: `ios-viewport`, `sidebar-orphan-agents`, `lobehub-skill`, `docker-canvas-native-packages`
+- Local fixes: `ios-viewport`, `lobehub-skill`, `docker-canvas-native-packages`
+- Upstream PRs:
+  - [#16609](https://github.com/lobehub/lobehub/pull/16609): make the connector detail header responsive
+  - [#16616](https://github.com/lobehub/lobehub/pull/16616): localize the API Keys empty state
+  - [#18239](https://github.com/lobehub/lobehub/pull/18239): show agents without sessions in the SPA sidebar
+  - [#18240](https://github.com/lobehub/lobehub/pull/18240): preserve desktop group conversation routes
+  - [#18242](https://github.com/lobehub/lobehub/pull/18242): allow group members to start under an active Supervisor
 
 ## Trigger
 

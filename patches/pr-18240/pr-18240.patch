@@ -1,0 +1,195 @@
+diff --git a/apps/server/src/modules/AgentRuntime/__tests__/executorHelpers.groupMember.test.ts b/apps/server/src/modules/AgentRuntime/__tests__/executorHelpers.groupMember.test.ts
+new file mode 100644
+index 0000000000..40e30350f4
+--- /dev/null
++++ b/apps/server/src/modules/AgentRuntime/__tests__/executorHelpers.groupMember.test.ts
+@@ -0,0 +1,27 @@
++import { describe, expect, it } from 'vitest';
++
++import { resolveGroupMemberId } from '../executorHelpers';
++
++describe('resolveGroupMemberId', () => {
++  const agentMap = {
++    agt_member: { name: 'Meituan Assistant' },
++    agt_supervisor: { name: 'Supervisor' },
++  };
++
++  it('keeps a persisted agent id unchanged', () => {
++    expect(resolveGroupMemberId('agt_member', agentMap)).toBe('agt_member');
++  });
++
++  it('resolves an exact member display name to its persisted agent id', () => {
++    expect(resolveGroupMemberId('Meituan Assistant', agentMap)).toBe('agt_member');
++  });
++
++  it('does not guess when a display name is ambiguous', () => {
++    expect(
++      resolveGroupMemberId('Assistant', {
++        agt_first: { name: 'Assistant' },
++        agt_second: { name: 'Assistant' },
++      }),
++    ).toBe('Assistant');
++  });
++});
+diff --git a/apps/server/src/modules/AgentRuntime/executorHelpers.ts b/apps/server/src/modules/AgentRuntime/executorHelpers.ts
+index 6ac03bc04d..ede9ed8006 100644
+--- a/apps/server/src/modules/AgentRuntime/executorHelpers.ts
++++ b/apps/server/src/modules/AgentRuntime/executorHelpers.ts
+@@ -39,0 +40,15 @@ export const GEN_AI_FUNCTION_TOOL_TYPE: ToolType = 'function';
++/**
++ * Models occasionally select a member by its displayed name even though group
++ * management actions require its persisted agent id. Accept an exact display
++ * name only when it resolves unambiguously within this operation's snapshot.
++ */
++export const resolveGroupMemberId = (
++  requestedAgentId: string,
++  agentMap: Record<string, { name: string }> | undefined,
++): string => {
++  if (!agentMap || requestedAgentId in agentMap) return requestedAgentId;
++
++  const matches = Object.entries(agentMap).filter(([, member]) => member.name === requestedAgentId);
++  return matches.length === 1 ? matches[0][0] : requestedAgentId;
++};
++
+@@ -336 +351,7 @@ export const buildServerAgentMemberRunner = (
+-      const expectedMembers = members.length;
++      const agentMap = (state.metadata?.agentGroup as { agentMap?: Record<string, { name: string }> }
++        | undefined)?.agentMap;
++      const resolvedMembers = members.map((member) => ({
++        ...member,
++        agentId: resolveGroupMemberId(member.agentId, agentMap),
++      }));
++      const expectedMembers = resolvedMembers.length;
+@@ -395 +416 @@ export const buildServerAgentMemberRunner = (
+-        members.map(async (member, i) => {
++        resolvedMembers.map(async (member, i) => {
+diff --git a/src/features/Electron/ActiveConversationBridge/coordinate.test.ts b/src/features/Electron/ActiveConversationBridge/coordinate.test.ts
+index 51aca37da3..86751fc62b 100644
+--- a/src/features/Electron/ActiveConversationBridge/coordinate.test.ts
++++ b/src/features/Electron/ActiveConversationBridge/coordinate.test.ts
+@@ -37,0 +38,18 @@ describe('active conversation coordinate', () => {
++  it('resolves group routes and keeps subsequent topic navigation in the group route', () => {
++    const coordinate = resolveActiveConversationCoordinate({
++      params: { gid: 'group-a', topicId: 'topic-a' },
++      url: '/team/group/group-a/topic-a?thread=thread-a',
++    });
++
++    expect(coordinate).toMatchObject({
++      groupBasePath: '/team/group/group-a',
++      groupId: 'group-a',
++      isConversation: true,
++      threadId: 'thread-a',
++      topicId: 'topic-a',
++    });
++    expect(buildActiveConversationUrl(coordinate, 'topic-b', null)).toBe(
++      '/team/group/group-a/topic-b',
++    );
++  });
++
+diff --git a/src/features/Electron/ActiveConversationBridge/coordinate.ts b/src/features/Electron/ActiveConversationBridge/coordinate.ts
+index e6331ed65e..cbdef8bf88 100644
+--- a/src/features/Electron/ActiveConversationBridge/coordinate.ts
++++ b/src/features/Electron/ActiveConversationBridge/coordinate.ts
+@@ -3,0 +4,2 @@ export interface ActiveConversationCoordinate {
++  groupBasePath?: string;
++  groupId?: string;
+@@ -14 +16 @@ interface ResolveActiveConversationCoordinateOptions {
+-  params: { aid?: string; topicId?: string };
++  params: { aid?: string; gid?: string; topicId?: string };
+@@ -26,0 +29 @@ export const resolveActiveConversationCoordinate = ({
++  const groupSegmentIndex = segments.lastIndexOf('group');
+@@ -28 +31 @@ export const resolveActiveConversationCoordinate = ({
+-  const isConversation =
++  const agentConversation =
+@@ -31,0 +35,6 @@ export const resolveActiveConversationCoordinate = ({
++  const groupSuffixLength = groupSegmentIndex < 0 ? -1 : segments.length - groupSegmentIndex - 2;
++  const groupConversation =
++    !!params.gid &&
++    groupSegmentIndex >= 0 &&
++    (groupSuffixLength === 0 || (groupSuffixLength === 1 && params.topicId !== undefined));
++  const isConversation = agentConversation || groupConversation;
+@@ -33,0 +43,2 @@ export const resolveActiveConversationCoordinate = ({
++  const groupBasePath =
++    groupSegmentIndex >= 0 ? `/${segments.slice(0, groupSegmentIndex + 2).join('/')}` : undefined;
+@@ -37 +48,3 @@ export const resolveActiveConversationCoordinate = ({
+-    agentId: params.aid ? resolvedAgentId || params.aid : undefined,
++    agentId: agentConversation && params.aid ? resolvedAgentId || params.aid : undefined,
++    groupBasePath,
++    groupId: groupConversation ? params.gid : undefined,
+@@ -53 +66,2 @@ export const buildActiveConversationUrl = (
+-  if (!coordinate.agentBasePath) {
++  const basePath = coordinate.groupBasePath || coordinate.agentBasePath;
++  if (!basePath) {
+@@ -63 +77 @@ export const buildActiveConversationUrl = (
+-  const pathname = topicId ? `${coordinate.agentBasePath}/${topicId}` : coordinate.agentBasePath;
++  const pathname = topicId ? `${basePath}/${topicId}` : basePath;
+diff --git a/src/features/Electron/ActiveConversationBridge/index.tsx b/src/features/Electron/ActiveConversationBridge/index.tsx
+index b3258ba1cb..943f66e0f8 100644
+--- a/src/features/Electron/ActiveConversationBridge/index.tsx
++++ b/src/features/Electron/ActiveConversationBridge/index.tsx
+@@ -15 +15 @@ const ActiveConversationBridge = () => {
+-  const params = useActiveRouteParams<{ aid?: string; topicId?: string }>();
++  const params = useActiveRouteParams<{ aid?: string; gid?: string; topicId?: string }>();
+diff --git a/src/features/Electron/ActiveConversationBridge/navigation.ts b/src/features/Electron/ActiveConversationBridge/navigation.ts
+index e8a6575d7b..2064255e27 100644
+--- a/src/features/Electron/ActiveConversationBridge/navigation.ts
++++ b/src/features/Electron/ActiveConversationBridge/navigation.ts
+@@ -21 +21 @@ export const subscribeActiveConversationNavigation = (
+-    if (!coordinate.isConversation || !coordinate.routeAgentId) return;
++    if (!coordinate.isConversation || (!coordinate.routeAgentId && !coordinate.groupId)) return;
+diff --git a/src/features/Electron/ActiveConversationBridge/projectCoordinate.test.ts b/src/features/Electron/ActiveConversationBridge/projectCoordinate.test.ts
+index 0b93e807ee..40723d3e33 100644
+--- a/src/features/Electron/ActiveConversationBridge/projectCoordinate.test.ts
++++ b/src/features/Electron/ActiveConversationBridge/projectCoordinate.test.ts
+@@ -40,0 +41,17 @@ describe('active conversation projection', () => {
++  it('projects a group route without clearing it as a non-conversation page', () => {
++    const coordinate = resolveActiveConversationCoordinate({
++      params: { gid: 'group-new', topicId: 'topic-new' },
++      url: '/group/group-new/topic-new?thread=thread-new',
++    });
++
++    projectActiveConversationCoordinate(coordinate);
++
++    expect(useChatStore.getState()).toMatchObject({
++      activeAgentId: undefined,
++      activeGroupId: 'group-new',
++      activeThreadId: 'thread-new',
++      activeTopicId: 'topic-new',
++    });
++    expect(useAgentStore.getState().activeAgentId).toBeUndefined();
++  });
++
+diff --git a/src/features/Electron/ActiveConversationBridge/projectCoordinate.ts b/src/features/Electron/ActiveConversationBridge/projectCoordinate.ts
+index 632c23a599..48512155c1 100644
+--- a/src/features/Electron/ActiveConversationBridge/projectCoordinate.ts
++++ b/src/features/Electron/ActiveConversationBridge/projectCoordinate.ts
+@@ -10,0 +11,29 @@ export const projectActiveConversationCoordinate = (
++  if (coordinate.groupId) {
++    const chatState = useChatStore.getState();
++    if (useAgentStore.getState().activeAgentId !== undefined) {
++      useAgentStore.setState(
++        { activeAgentId: undefined },
++        false,
++        'ActiveConversationBridge/enterGroupConversation',
++      );
++    }
++    if (
++      chatState.activeAgentId !== undefined ||
++      chatState.activeGroupId !== coordinate.groupId ||
++      chatState.activeTopicId !== coordinate.topicId ||
++      chatState.activeThreadId !== coordinate.threadId
++    ) {
++      useChatStore.setState(
++        {
++          activeAgentId: undefined,
++          activeGroupId: coordinate.groupId,
++          activeThreadId: coordinate.threadId!,
++          activeTopicId: coordinate.topicId!,
++        },
++        false,
++        'ActiveConversationBridge/syncGroupConversation',
++      );
++    }
++    return;
++  }
++

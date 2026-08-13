@@ -10,7 +10,13 @@
 
 ## 当前 patch 清单
 
-- 本地修复：`ios-viewport`、`sidebar-orphan-agents`、`lobehub-skill`、`docker-canvas-native-packages`
+- 本地修复：`ios-viewport`、`lobehub-skill`、`docker-canvas-native-packages`
+- 上游 PR：
+  - [#16609](https://github.com/lobehub/lobehub/pull/16609)：让 connector 详情页头部支持响应式布局
+  - [#16616](https://github.com/lobehub/lobehub/pull/16616)：本地化 API Keys 空状态
+  - [#18239](https://github.com/lobehub/lobehub/pull/18239)：在 SPA 侧边栏显示没有会话的 Agent
+  - [#18240](https://github.com/lobehub/lobehub/pull/18240)：保持桌面端群组会话路由状态
+  - [#18242](https://github.com/lobehub/lobehub/pull/18242)：允许群组成员在 Supervisor 运行期间启动
 
 ## 触发
 

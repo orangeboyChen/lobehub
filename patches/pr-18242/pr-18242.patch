@@ -1,0 +1,110 @@
+diff --git a/apps/server/src/services/aiAgent/index.ts b/apps/server/src/services/aiAgent/index.ts
+index a284740651..d84d2aed66 100644
+--- a/apps/server/src/services/aiAgent/index.ts
++++ b/apps/server/src/services/aiAgent/index.ts
+@@ -516,0 +517,2 @@ interface InternalExecAgentParams extends ExecAgentParams {
++  /** Running operation that owns the topic for an internally spawned child run. */
++  topicStartOwnerOperationId?: string;
+@@ -1257,0 +1260 @@ export class AiAgentService {
++      allowRunningOperationId: params.topicStartOwnerOperationId,
+@@ -4620 +4623 @@ export class AiAgentService {
+-      if (!appContext?.isolationThread) {
++      if (!appContext?.isolationThread && appContext?.orchestrationRole !== 'member') {
+@@ -4979,0 +4983 @@ export class AiAgentService {
++      topicStartOwnerOperationId: parentOperationId,
+diff --git a/apps/server/src/services/aiAgent/topicStartReservation.test.ts b/apps/server/src/services/aiAgent/topicStartReservation.test.ts
+index e47c819511..0b5b8ac7ab 100644
+--- a/apps/server/src/services/aiAgent/topicStartReservation.test.ts
++++ b/apps/server/src/services/aiAgent/topicStartReservation.test.ts
+@@ -43,0 +44,20 @@ describe('acquireTopicStartReservation', () => {
++
++  it('passes the parent operation ownership through for in-group children', async () => {
++    const tryReserveTaskCallback = vi.fn().mockResolvedValue(true);
++    const topicModel = { tryReserveTaskCallback } as unknown as TopicModel;
++
++    await expect(
++      acquireTopicStartReservation({
++        allowRunningOperationId: 'parent-operation',
++        reservationId: 'child-operation',
++        topicId: 'topic-1',
++        topicModel,
++      }),
++    ).resolves.toBe(true);
++
++    expect(tryReserveTaskCallback).toHaveBeenCalledWith(
++      'topic-1',
++      'child-operation',
++      'parent-operation',
++    );
++  });
+diff --git a/apps/server/src/services/aiAgent/topicStartReservation.ts b/apps/server/src/services/aiAgent/topicStartReservation.ts
+index 3ccd094d89..d32e6ad96a 100644
+--- a/apps/server/src/services/aiAgent/topicStartReservation.ts
++++ b/apps/server/src/services/aiAgent/topicStartReservation.ts
+@@ -20,0 +21 @@ export const acquireTopicStartReservation = async ({
++  allowRunningOperationId,
+@@ -24,0 +26 @@ export const acquireTopicStartReservation = async ({
++  allowRunningOperationId?: string;
+@@ -30 +32,5 @@ export const acquireTopicStartReservation = async ({
+-    const reservation = await topicModel.tryReserveTaskCallback(topicId, reservationId);
++    const reservation = await topicModel.tryReserveTaskCallback(
++      topicId,
++      reservationId,
++      allowRunningOperationId,
++    );
+diff --git a/packages/database/src/models/__tests__/topics/topic.update.test.ts b/packages/database/src/models/__tests__/topics/topic.update.test.ts
+index 20b5e0f26a..71dc4ccf1b 100644
+--- a/packages/database/src/models/__tests__/topics/topic.update.test.ts
++++ b/packages/database/src/models/__tests__/topics/topic.update.test.ts
+@@ -172,0 +173,29 @@ describe('TopicModel - Update', () => {
++    it('allows a child operation to re-enter its parent running operation', async () => {
++      const topicId = 'task-callback-parent-operation';
++      await serverDB.insert(topics).values({
++        userId,
++        id: topicId,
++        title: 'Test',
++        metadata: {
++          runningOperation: {
++            assistantMessageId: 'assistant-parent',
++            operationId: 'operation-parent',
++          },
++        },
++      });
++
++      await expect(
++        topicModel.tryReserveTaskCallback(topicId, 'child-operation-1', 'operation-parent'),
++      ).resolves.toBe(true);
++      await expect(
++        topicModel.tryReserveTaskCallback(topicId, 'child-operation-2', 'operation-parent'),
++      ).resolves.toBe(true);
++      await expect(
++        topicModel.tryReserveTaskCallback(topicId, 'unrelated-operation', 'operation-other'),
++      ).resolves.toBe(false);
++
++      const topic = await topicModel.findById(topicId);
++      expect(topic?.metadata?.taskCallbackReservation).toBeUndefined();
++      expect(topic?.metadata?.runningOperation?.operationId).toBe('operation-parent');
++    });
++
+diff --git a/packages/database/src/models/topic.ts b/packages/database/src/models/topic.ts
+index ac73fdeca5..bad2d46d1a 100644
+--- a/packages/database/src/models/topic.ts
++++ b/packages/database/src/models/topic.ts
+@@ -1429 +1429,5 @@ export class TopicModel {
+-  tryReserveTaskCallback = async (id: string, messageId: string): Promise<boolean | null> =>
++  tryReserveTaskCallback = async (
++    id: string,
++    messageId: string,
++    allowRunningOperationId?: string,
++  ): Promise<boolean | null> =>
+@@ -1447 +1451,9 @@ export class TopicModel {
+-      if (existing.metadata?.runningOperation || hasLiveReservation) return false;
++      const runningOperation = existing.metadata?.runningOperation;
++      const ownedRunningOperation =
++        allowRunningOperationId && runningOperation?.operationId === allowRunningOperationId;
++
++      // In-group members are children of the operation that already owns the
++      // topic. They may start concurrently without claiming the topic for
++      // themselves; the parent's runningOperation remains authoritative.
++      if (ownedRunningOperation) return true;
++      if (runningOperation || hasLiveReservation) return false;
