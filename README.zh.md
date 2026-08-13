@@ -10,7 +10,7 @@
 
 ## 当前 patch 清单
 
-- 本地修复：`ios-viewport`、`sidebar-orphan-agents`、`lobehub-skill`、`docker-canvas-native-packages`
+- 本地修复：`ios-viewport`、`lobehub-skill`、`docker-canvas-native-packages`
 
 ## 触发
 
