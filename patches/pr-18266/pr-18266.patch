@@ -402,7 +402,7 @@ index fd1c4ec029..53bdacb8db 100644
        const { useChatStore } = await import('@/store/chat');
        vi.mocked(useChatStore.getState).mockReturnValue({
 diff --git a/src/features/Conversation/store/slices/generation/action.ts b/src/features/Conversation/store/slices/generation/action.ts
-index b19d4c856f..977c294b0e 100644
+index b19d4c856f..beeec1af92 100644
 --- a/src/features/Conversation/store/slices/generation/action.ts
 +++ b/src/features/Conversation/store/slices/generation/action.ts
 @@ -6,6 +6,7 @@ import type {
@@ -421,7 +421,7 @@ index b19d4c856f..977c294b0e 100644
  import { useChatStore } from '@/store/chat';
  import { topicSelectors } from '@/store/chat/selectors';
  import { selectRuntimeType } from '@/store/chat/slices/agentRun/actions/dispatch/agentDispatcher';
-@@ -253,6 +255,103 @@ interface RegenerateUserMessageSource {
+@@ -253,6 +255,105 @@ interface RegenerateUserMessageSource {
    readDbMessages: () => ConversationStore['dbMessages'];
  }
  
@@ -478,7 +478,9 @@ index b19d4c856f..977c294b0e 100644
 +): UIChatMessage | undefined => {
 +  if (message.role !== 'user') return message;
 +
-+  const children = dbMessages.filter((candidate) => candidate.parentId === message.id);
++  const children = dbMessages.filter(
++    (candidate) => candidate.parentId === message.id && candidate.role !== 'tool',
++  );
 +  if (children.length === 0) return undefined;
 +
 +  const branchIndex =
@@ -525,7 +527,7 @@ index b19d4c856f..977c294b0e 100644
  const captureRegenerateUserMessageSource = (
    get: () => ConversationStore,
  ): RegenerateUserMessageSource => {
-@@ -275,8 +374,9 @@ const captureRegenerateUserMessageSource = (
+@@ -275,8 +376,9 @@ const captureRegenerateUserMessageSource = (
  const regenerateUserMessageFromSource = async (
    messageId: string,
    source: RegenerateUserMessageSource,
@@ -536,14 +538,14 @@ index b19d4c856f..977c294b0e 100644
    const chatStore = useChatStore.getState();
  
    // Block a genuine double-regenerate, and ONLY that. The guard used to be
-@@ -297,6 +397,20 @@ const regenerateUserMessageFromSource = async (
+@@ -297,6 +399,20 @@ const regenerateUserMessageFromSource = async (
    const currentIndex = displayMessages.findIndex((c) => c.id === messageId);
    const item = displayMessages[currentIndex];
    if (!item) return;
 +  const dbMessages = readDbMessages();
 +  const retrySourceMessage = findRetrySourceMessage(item, dbMessages);
 +  const context =
-+    item.role === 'user' && sourceContext.groupId
++    !retryExecutionContext && sourceContext.groupId && sourceContext.scope === 'group'
 +      ? {
 +          ...sourceContext,
 +          agentId: getGroupSupervisorAgentId(sourceContext),
@@ -557,16 +559,22 @@ index b19d4c856f..977c294b0e 100644
    // Start the interim regenerate op BEFORE the async preflight below
    // (document-context resolve + onBeforeRegenerate hook). In page / bound-
    // document contexts those reads are real round trips, so creating the op
-@@ -342,7 +456,28 @@ const regenerateUserMessageFromSource = async (
+@@ -342,8 +458,36 @@ const regenerateUserMessageFromSource = async (
      // Read the database messages from the captured conversation. If the shared
      // ConversationStore has switched context, the source falls back to the old
      // context's ChatStore bucket instead of observing the new topic.
 -    const dbMessages = readDbMessages();
+-    const childrenCount = dbMessages.filter((m) => m.parentId === messageId).length;
 +    const shouldRestartGroupOrchestration =
-+      !!context.groupId && (item.role === 'user' || context.orchestrationRole === 'supervisor');
++      !!context.groupId &&
++      context.scope === 'group' &&
++      (context.orchestrationRole === 'supervisor' ||
++        (!retryExecutionContext && item.role === 'user'));
 +
 +    if (shouldRestartGroupOrchestration) {
-+      const nextBranchIndex = dbMessages.filter((message) => message.parentId === messageId).length;
++      const nextBranchIndex = dbMessages.filter(
++        (message) => message.parentId === messageId && message.role !== 'tool',
++      ).length;
 +
 +      await chatStore.switchMessageBranch(messageId, nextBranchIndex, { operationId });
 +
@@ -584,10 +592,13 @@ index b19d4c856f..977c294b0e 100644
 +      return;
 +    }
 +
-     const childrenCount = dbMessages.filter((m) => m.parentId === messageId).length;
++    const childrenCount = dbMessages.filter(
++      (message) => message.parentId === messageId && message.role !== 'tool',
++    ).length;
      const nextBranchIndex = childrenCount;
  
-@@ -358,13 +493,14 @@ const regenerateUserMessageFromSource = async (
+     // Switch to the new branch so the UI shows the incoming response immediately
+@@ -358,13 +502,14 @@ const regenerateUserMessageFromSource = async (
      const postSwitchOp = operationSelectors.getOperationById(operationId)(useChatStore.getState());
      if (postSwitchOp && postSwitchOp.status !== 'running') return;
  
@@ -604,7 +615,7 @@ index b19d4c856f..977c294b0e 100644
        isWorkspaceAgent: workspaceScoped,
      });
  
-@@ -383,8 +519,9 @@ const regenerateUserMessageFromSource = async (
+@@ -383,8 +528,9 @@ const regenerateUserMessageFromSource = async (
        // `onComplete` still fires at session end for the UI hook; re-completing
        // the already-settled wrapper is an idempotent no-op.
        await chatStore.executeGatewayAgent({
@@ -615,7 +626,7 @@ index b19d4c856f..977c294b0e 100644
          onComplete: () =>
            settleGenerationEntry(chatStore, operationId, () =>
              hooks.onRegenerateComplete?.(messageId),
-@@ -1162,7 +1299,7 @@ export const generationSlice: StateCreator<
+@@ -1162,7 +1308,7 @@ export const generationSlice: StateCreator<
    },
  
    regenerateAssistantMessage: async (messageId: string) => {
@@ -624,7 +635,7 @@ index b19d4c856f..977c294b0e 100644
  
      // Find the assistant message
      const currentIndex = displayMessages.findIndex((c) => c.id === messageId);
-@@ -1170,12 +1307,16 @@ export const generationSlice: StateCreator<
+@@ -1170,12 +1316,16 @@ export const generationSlice: StateCreator<
  
      if (!currentMessage) return;
  
