@@ -59,7 +59,7 @@ export const projectActiveConversationCoordinate = (
 
   if (useAgentGroupStore.getState().activeGroupId !== undefined) {
     useAgentGroupStore.setState(
-      { activeGroupId: undefined },
+      { activeGroupId: undefined, router: undefined },
       false,
       'ActiveConversationBridge/leaveGroup',
     );

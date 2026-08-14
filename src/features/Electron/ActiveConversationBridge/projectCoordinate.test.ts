@@ -2,6 +2,7 @@ import { type AgentGroupDetail } from '@lobechat/types';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { useAgentStore } from '@/store/agent/store';
+import type { QueryRouter } from '@/store/agentGroup/initialState';
 import { initialChatGroupState } from '@/store/agentGroup/initialState';
 import { useAgentGroupStore } from '@/store/agentGroup/store';
 import { initialState as initialChatState } from '@/store/chat/initialState';
@@ -71,7 +72,8 @@ describe('active conversation projection', () => {
   });
 
   it('clears stale group scope when projecting an agent route', () => {
-    useAgentGroupStore.setState({ activeGroupId: 'group-old' }, false);
+    const router: QueryRouter = { push: () => {}, replace: () => {} };
+    useAgentGroupStore.setState({ activeGroupId: 'group-old', router }, false);
     useChatStore.setState({ activeGroupId: 'group-old' }, false);
     const coordinate = resolveActiveConversationCoordinate({
       params: { aid: 'agent-new' },
@@ -82,6 +84,7 @@ describe('active conversation projection', () => {
     projectActiveConversationCoordinate(coordinate);
 
     expect(useAgentGroupStore.getState().activeGroupId).toBeUndefined();
+    expect(useAgentGroupStore.getState().router).toBeUndefined();
     expect(useChatStore.getState().activeGroupId).toBeUndefined();
   });
 
