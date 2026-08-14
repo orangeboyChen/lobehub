@@ -67,6 +67,7 @@ describe('active conversation projection', () => {
       activeTopicId: 'topic-new',
     });
     expect(useAgentStore.getState().activeAgentId).toBe('supervisor-new');
+    expect(useAgentGroupStore.getState().activeGroupId).toBe('group-new');
   });
 
   it('clears stale group scope when projecting an agent route', () => {
@@ -82,6 +83,58 @@ describe('active conversation projection', () => {
 
     expect(useAgentGroupStore.getState().activeGroupId).toBeUndefined();
     expect(useChatStore.getState().activeGroupId).toBeUndefined();
+  });
+
+  it('clears group scope when projecting an agent conversation', () => {
+    useAgentGroupStore.setState({ activeGroupId: 'group-old' }, false);
+    useChatStore.setState(
+      {
+        activeAgentId: 'agent-old',
+        activeGroupId: 'group-old',
+        activeThreadId: 'thread-old',
+        activeTopicId: 'topic-old',
+      },
+      false,
+    );
+    const coordinate = resolveActiveConversationCoordinate({
+      params: { aid: 'agent-new', topicId: 'topic-new' },
+      resolvedAgentId: 'agent-new',
+      url: '/agent/agent-new/topic-new?thread=thread-new',
+    });
+
+    projectActiveConversationCoordinate(coordinate);
+
+    expect(useChatStore.getState()).toMatchObject({
+      activeAgentId: 'agent-new',
+      activeGroupId: undefined,
+      activeThreadId: 'thread-new',
+      activeTopicId: 'topic-new',
+    });
+  });
+
+  it('clears thread state when an agent profile follows a route-less tab', () => {
+    useChatStore.setState(
+      {
+        activeAgentId: undefined,
+        activeGroupId: undefined,
+        activeThreadId: 'thread-old',
+        activeTopicId: undefined,
+      },
+      false,
+    );
+    const coordinate = resolveActiveConversationCoordinate({
+      params: { aid: 'agent-new' },
+      resolvedAgentId: 'agent-new',
+      url: '/agent/agent-new/profile',
+    });
+
+    projectActiveConversationCoordinate(coordinate);
+
+    expect(useChatStore.getState()).toMatchObject({
+      activeAgentId: 'agent-new',
+      activeThreadId: undefined,
+      activeTopicId: null,
+    });
   });
 
   it('keeps the group scope on a group subpage', () => {
@@ -113,6 +166,35 @@ describe('active conversation projection', () => {
       activeGroupId: 'group-new',
       activeTopicId: 'topic-old',
     });
+  });
+
+  it('clears a previous group conversation when opening another group subpage', () => {
+    useChatStore.setState({ activeGroupId: 'group-old' }, false);
+    useAgentGroupStore.setState({ activeGroupId: 'group-old' }, false);
+    const coordinate = resolveActiveConversationCoordinate({
+      params: { gid: 'group-new' },
+      url: '/group/group-new/profile',
+    });
+
+    projectActiveConversationCoordinate(coordinate);
+
+    expect(useChatStore.getState()).toMatchObject({
+      activeGroupId: 'group-new',
+      activeThreadId: undefined,
+      activeTopicId: null,
+    });
+  });
+
+  it('does not clear an active agent before the group supervisor hydrates', () => {
+    const coordinate = resolveActiveConversationCoordinate({
+      params: { gid: 'group-new', topicId: 'topic-new' },
+      url: '/group/group-new/topic-new?thread=thread-new',
+    });
+
+    projectActiveConversationCoordinate(coordinate);
+
+    expect(useAgentStore.getState().activeAgentId).toBe('agent-old');
+    expect(useChatStore.getState().activeAgentId).toBe('agent-old');
   });
 
   it('preserves topic state on a subpage of the same agent', () => {

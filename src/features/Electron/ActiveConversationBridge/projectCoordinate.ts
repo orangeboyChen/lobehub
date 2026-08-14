@@ -13,8 +13,20 @@ export const projectActiveConversationCoordinate = (
     const chatState = useChatStore.getState();
     const group = useAgentGroupStore.getState().groupMap[coordinate.groupId];
     const supervisorAgentId = group?.supervisorAgentId;
+    const groupChanged = chatState.activeGroupId !== coordinate.groupId;
 
-    if (useAgentStore.getState().activeAgentId !== supervisorAgentId) {
+    if (useAgentGroupStore.getState().activeGroupId !== coordinate.groupId) {
+      useAgentGroupStore.setState(
+        { activeGroupId: coordinate.groupId },
+        false,
+        'ActiveConversationBridge/syncGroupRoute',
+      );
+    }
+
+    if (
+      supervisorAgentId !== undefined &&
+      useAgentStore.getState().activeAgentId !== supervisorAgentId
+    ) {
       useAgentStore.setState(
         { activeAgentId: supervisorAgentId },
         false,
@@ -22,18 +34,20 @@ export const projectActiveConversationCoordinate = (
       );
     }
     if (
-      chatState.activeAgentId !== supervisorAgentId ||
       chatState.activeGroupId !== coordinate.groupId ||
-      (coordinate.isConversation &&
+      (supervisorAgentId !== undefined && chatState.activeAgentId !== supervisorAgentId) ||
+      ((coordinate.isConversation || groupChanged) &&
         (chatState.activeTopicId !== coordinate.topicId ||
           chatState.activeThreadId !== coordinate.threadId))
     ) {
       useChatStore.setState(
         {
-          activeAgentId: supervisorAgentId,
           activeGroupId: coordinate.groupId,
+          ...(supervisorAgentId !== undefined ? { activeAgentId: supervisorAgentId } : {}),
           ...(coordinate.isConversation
             ? { activeThreadId: coordinate.threadId!, activeTopicId: coordinate.topicId! }
+            : groupChanged
+              ? { activeThreadId: undefined, activeTopicId: null! }
             : {}),
         },
         false,
@@ -65,7 +79,12 @@ export const projectActiveConversationCoordinate = (
       useChatStore.getState().activeTopicId !== undefined
     ) {
       useChatStore.setState(
-        { activeAgentId: undefined, activeGroupId: undefined, activeTopicId: undefined },
+        {
+          activeAgentId: undefined,
+          activeGroupId: undefined,
+          activeThreadId: undefined,
+          activeTopicId: undefined,
+        },
         false,
         'ActiveConversationBridge/leaveAgent',
       );
@@ -83,16 +102,19 @@ export const projectActiveConversationCoordinate = (
   }
 
   const chatState = useChatStore.getState();
+  const leavingGroup = chatState.activeGroupId !== undefined;
 
   if (coordinate.isConversation) {
     if (
       chatState.activeAgentId !== agentId ||
+      leavingGroup ||
       chatState.activeTopicId !== coordinate.topicId ||
       chatState.activeThreadId !== coordinate.threadId
     ) {
       useChatStore.setState(
         {
           activeAgentId: agentId,
+          activeGroupId: undefined,
           activeThreadId: coordinate.threadId!,
           activeTopicId: coordinate.topicId!,
         },
@@ -103,11 +125,15 @@ export const projectActiveConversationCoordinate = (
     return;
   }
 
-  if (chatState.activeAgentId !== agentId || agentChanged) {
+  const agentContextChanged = chatState.activeAgentId !== agentId || leavingGroup || agentChanged;
+
+  if (agentContextChanged) {
     useChatStore.setState(
       {
         activeAgentId: agentId,
-        ...(agentChanged ? { activeThreadId: undefined, activeTopicId: null! } : {}),
+        activeGroupId: undefined,
+        activeThreadId: undefined,
+        activeTopicId: null!,
       },
       false,
       'ActiveConversationBridge/syncAgent',
