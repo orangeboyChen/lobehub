@@ -19,6 +19,7 @@ describe('active conversation projection', () => {
       {
         ...initialChatState,
         activeAgentId: 'agent-old',
+        activeGroupId: undefined,
         activeThreadId: 'thread-old',
         activeTopicId: 'topic-old',
       },
@@ -72,7 +73,7 @@ describe('active conversation projection', () => {
   });
 
   it('clears stale group scope when projecting an agent route', () => {
-    const router: QueryRouter = { push: () => {}, replace: () => {} };
+    const router: QueryRouter = { push: () => {} };
     useAgentGroupStore.setState({ activeGroupId: 'group-old', router }, false);
     useChatStore.setState({ activeGroupId: 'group-old' }, false);
     const coordinate = resolveActiveConversationCoordinate({
@@ -167,7 +168,7 @@ describe('active conversation projection', () => {
     expect(useChatStore.getState()).toMatchObject({
       activeAgentId: 'supervisor-new',
       activeGroupId: 'group-new',
-      activeTopicId: 'topic-old',
+      activeTopicId: null,
     });
   });
 

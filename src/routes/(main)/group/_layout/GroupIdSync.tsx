@@ -1,8 +1,7 @@
+import { isDesktop } from '@lobechat/const';
 import { usePrevious, useUnmount } from 'ahooks';
 import { use, useEffect, useLayoutEffect } from 'react';
 import { useParams } from 'react-router';
-
-import { isDesktop } from '@lobechat/const';
 
 import { TabIdContext } from '@/features/Electron/TabHost/TabIdContext';
 import { useQueryRoute } from '@/hooks/useQueryRoute';
