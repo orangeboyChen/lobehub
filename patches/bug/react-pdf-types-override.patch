@@ -1,0 +1,12 @@
+diff --git a/pnpm-workspace.yaml b/pnpm-workspace.yaml
+index 287c2fa2..5c00f239 100644
+--- a/pnpm-workspace.yaml
++++ b/pnpm-workspace.yaml
+@@ -21,6 +21,7 @@ overrides:
+   react: 19.2.4
+   react-dom: 19.2.4
+   '@react-pdf/image': 3.0.4
++  '@react-pdf/types': 2.11.2
+ 
+ patchedDependencies:
+   '@upstash/qstash': patches/@upstash__qstash.patch
