@@ -265,6 +265,7 @@ export const agentNotifyRouter = router({
               error: terminalError ?? undefined,
               goal,
               operationId: remoteOperationId,
+              orchestrationRole: activeOperation?.orchestrationRole,
               serializedHooks,
               topicId,
               userId: ctx.userId,

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { hookDispatcher } from '@/server/services/agentRuntime/hooks';
 import type { AgentHook } from '@/server/services/agentRuntime/hooks/types';
+import { CompletionLifecycle } from '@/server/services/agentRuntime/CompletionLifecycle';
 
 // serverDatabase middleware calls getServerDB(); stub it (our model mocks
 // ignore the db handle anyway).
@@ -206,11 +207,14 @@ describe('agentNotifyRouter.notify — remote hetero terminal signal', () => {
 
   it('finalizes a child operation without clearing the supervisor marker', async () => {
     const childOperationId = 'op-child-1';
+    const completeOperationSpy = vi
+      .spyOn(CompletionLifecycle.prototype, 'completeOperation')
+      .mockResolvedValue(undefined);
     mockTopicFindById.mockResolvedValue({
       agentId: 'agent-1',
       metadata: {
         runningOperation: {
-          childOperations: [{ operationId: childOperationId }],
+          childOperations: [{ operationId: childOperationId, orchestrationRole: 'member' }],
           operationId: OP,
         },
       },
@@ -230,7 +234,13 @@ describe('agentNotifyRouter.notify — remote hetero terminal signal', () => {
     await vi.waitFor(() =>
       expect(mockTopicRemoveRunningOperationChild).toHaveBeenCalledWith(TOPIC, childOperationId),
     );
+    expect(completeOperationSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ operationId: childOperationId, orchestrationRole: 'member' }),
+      'done',
+      expect.anything(),
+    );
     expect(mockTopicUpdateMetadata).not.toHaveBeenCalledWith(TOPIC, { runningOperation: null });
+    completeOperationSpy.mockRestore();
   });
 
   it('writes a child notification to its own placeholder message', async () => {
