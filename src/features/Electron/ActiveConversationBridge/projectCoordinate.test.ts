@@ -1,6 +1,9 @@
+import { type AgentGroupDetail } from '@lobechat/types';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { useAgentStore } from '@/store/agent/store';
+import { initialChatGroupState } from '@/store/agentGroup/initialState';
+import { useAgentGroupStore } from '@/store/agentGroup/store';
 import { initialState as initialChatState } from '@/store/chat/initialState';
 import { useChatStore } from '@/store/chat/store';
 
@@ -10,6 +13,7 @@ import { projectActiveConversationCoordinate } from './projectCoordinate';
 describe('active conversation projection', () => {
   beforeEach(() => {
     useAgentStore.setState({ activeAgentId: 'agent-old' }, false);
+    useAgentGroupStore.setState(initialChatGroupState, false);
     useChatStore.setState(
       {
         ...initialChatState,
@@ -39,6 +43,16 @@ describe('active conversation projection', () => {
   });
 
   it('projects a group route without clearing it as a non-conversation page', () => {
+    const group: AgentGroupDetail = {
+      agents: [],
+      createdAt: new Date(),
+      id: 'group-new',
+      supervisorAgentId: 'supervisor-new',
+      title: 'Group New',
+      updatedAt: new Date(),
+      userId: 'user-1',
+    };
+    useAgentGroupStore.setState({ groupMap: { [group.id]: group } }, false);
     const coordinate = resolveActiveConversationCoordinate({
       params: { gid: 'group-new', topicId: 'topic-new' },
       url: '/group/group-new/topic-new?thread=thread-new',
@@ -47,12 +61,58 @@ describe('active conversation projection', () => {
     projectActiveConversationCoordinate(coordinate);
 
     expect(useChatStore.getState()).toMatchObject({
-      activeAgentId: undefined,
+      activeAgentId: 'supervisor-new',
       activeGroupId: 'group-new',
       activeThreadId: 'thread-new',
       activeTopicId: 'topic-new',
     });
-    expect(useAgentStore.getState().activeAgentId).toBeUndefined();
+    expect(useAgentStore.getState().activeAgentId).toBe('supervisor-new');
+  });
+
+  it('clears stale group scope when projecting an agent route', () => {
+    useAgentGroupStore.setState({ activeGroupId: 'group-old' }, false);
+    useChatStore.setState({ activeGroupId: 'group-old' }, false);
+    const coordinate = resolveActiveConversationCoordinate({
+      params: { aid: 'agent-new' },
+      resolvedAgentId: 'agent-new',
+      url: '/agent/agent-new/profile',
+    });
+
+    projectActiveConversationCoordinate(coordinate);
+
+    expect(useAgentGroupStore.getState().activeGroupId).toBeUndefined();
+    expect(useChatStore.getState().activeGroupId).toBeUndefined();
+  });
+
+  it('keeps the group scope on a group subpage', () => {
+    useAgentGroupStore.setState(
+      {
+        groupMap: {
+          'group-new': {
+            agents: [],
+            createdAt: new Date(),
+            id: 'group-new',
+            supervisorAgentId: 'supervisor-new',
+            title: 'Group New',
+            updatedAt: new Date(),
+            userId: 'user-1',
+          },
+        },
+      },
+      false,
+    );
+    const coordinate = resolveActiveConversationCoordinate({
+      params: { gid: 'group-new' },
+      url: '/group/group-new/profile',
+    });
+
+    projectActiveConversationCoordinate(coordinate);
+
+    expect(useChatStore.getState()).toMatchObject({
+      activeAgentId: 'supervisor-new',
+      activeGroupId: 'group-new',
+      activeTopicId: 'topic-old',
+    });
   });
 
   it('preserves topic state on a subpage of the same agent', () => {

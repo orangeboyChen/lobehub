@@ -1,4 +1,5 @@
 import { useAgentStore } from '@/store/agent';
+import { useAgentGroupStore } from '@/store/agentGroup';
 import { useChatStore } from '@/store/chat';
 
 import { type ActiveConversationCoordinate } from './coordinate';
@@ -10,31 +11,44 @@ export const projectActiveConversationCoordinate = (
 
   if (coordinate.groupId) {
     const chatState = useChatStore.getState();
-    if (useAgentStore.getState().activeAgentId !== undefined) {
+    const group = useAgentGroupStore.getState().groupMap[coordinate.groupId];
+    const supervisorAgentId = group?.supervisorAgentId;
+
+    if (useAgentStore.getState().activeAgentId !== supervisorAgentId) {
       useAgentStore.setState(
-        { activeAgentId: undefined },
+        { activeAgentId: supervisorAgentId },
         false,
-        'ActiveConversationBridge/enterGroupConversation',
+        'ActiveConversationBridge/syncGroupSupervisor',
       );
     }
     if (
-      chatState.activeAgentId !== undefined ||
+      chatState.activeAgentId !== supervisorAgentId ||
       chatState.activeGroupId !== coordinate.groupId ||
-      chatState.activeTopicId !== coordinate.topicId ||
-      chatState.activeThreadId !== coordinate.threadId
+      (coordinate.isConversation &&
+        (chatState.activeTopicId !== coordinate.topicId ||
+          chatState.activeThreadId !== coordinate.threadId))
     ) {
       useChatStore.setState(
         {
-          activeAgentId: undefined,
+          activeAgentId: supervisorAgentId,
           activeGroupId: coordinate.groupId,
-          activeThreadId: coordinate.threadId!,
-          activeTopicId: coordinate.topicId!,
+          ...(coordinate.isConversation
+            ? { activeThreadId: coordinate.threadId!, activeTopicId: coordinate.topicId! }
+            : {}),
         },
         false,
-        'ActiveConversationBridge/syncGroupConversation',
+        'ActiveConversationBridge/syncGroupRoute',
       );
     }
     return;
+  }
+
+  if (useAgentGroupStore.getState().activeGroupId !== undefined) {
+    useAgentGroupStore.setState(
+      { activeGroupId: undefined },
+      false,
+      'ActiveConversationBridge/leaveGroup',
+    );
   }
 
   if (!coordinate.routeAgentId) {
@@ -45,9 +59,13 @@ export const projectActiveConversationCoordinate = (
         'ActiveConversationBridge/leaveAgent',
       );
     }
-    if (currentAgentId !== undefined || useChatStore.getState().activeTopicId !== undefined) {
+    if (
+      currentAgentId !== undefined ||
+      useChatStore.getState().activeGroupId !== undefined ||
+      useChatStore.getState().activeTopicId !== undefined
+    ) {
       useChatStore.setState(
-        { activeAgentId: undefined, activeTopicId: undefined },
+        { activeAgentId: undefined, activeGroupId: undefined, activeTopicId: undefined },
         false,
         'ActiveConversationBridge/leaveAgent',
       );
