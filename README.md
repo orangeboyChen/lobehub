@@ -10,7 +10,7 @@ The upstream image needs a small patch set for iOS viewport behavior, input zoom
 
 ## Active patch set
 
-- Local fixes: `ios-viewport`, `lobehub-skill`, `docker-canvas-native-packages`
+- Local fixes: `ios-viewport`, `lobehub-skill`, `docker-canvas-native-packages`, `docker-swc-helpers-runtime`
 - Upstream PRs:
   - [#16609](https://github.com/lobehub/lobehub/pull/16609): make the connector detail header responsive
   - [#16616](https://github.com/lobehub/lobehub/pull/16616): localize the API Keys empty state

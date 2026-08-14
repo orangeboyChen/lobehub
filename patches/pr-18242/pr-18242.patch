@@ -1,64 +1,192 @@
 diff --git a/apps/server/src/routers/lambda/agentNotify.ts b/apps/server/src/routers/lambda/agentNotify.ts
-index 52dfe8a3..4c74bcdd 100644
+index 52dfe8a358..53ab661ecf 100644
 --- a/apps/server/src/routers/lambda/agentNotify.ts
 +++ b/apps/server/src/routers/lambda/agentNotify.ts
-@@ -81,0 +82 @@ const NotifySchema = z.object({
+@@ -79,6 +79,7 @@ const NotifySchema = z.object({
+    * in-place, keeping a single bubble in the UI.
+    */
+   messageId: z.string().optional(),
 +  operationId: z.string().optional(),
-@@ -142,2 +143,14 @@ export const agentNotifyRouter = router({
+   /**
+    * Role of the message to write:
+    * - 'user' (default): write as user message and trigger the agent to reply
+@@ -139,8 +140,9 @@ export const agentNotifyRouter = router({
+ 
+     // Extract the operationId seeded by execAgent for remote hetero agents.
+     // Used to publish notify_update / agent_runtime_end events to the gateway WS.
 -    const remoteOperationId = (topic.metadata as any)?.runningOperation?.operationId as
 -      string | undefined;
 +    const marker = (topic.metadata as any)?.runningOperation;
 +    const remoteOperationId =
 +      input.operationId ?? marker?.operationId ?? marker?.childOperations?.[0]?.operationId;
-+    const resolveActiveOperation = async () => {
-+      const currentMarker = (await ctx.topicModel.findById(topicId))?.metadata?.runningOperation as any;
-+      const activeOperation =
-+        currentMarker?.operationId === remoteOperationId
-+          ? currentMarker
-+          : currentMarker?.childOperations?.find(
-+              (child: any) => child.operationId === remoteOperationId,
-+            );
-+
-+      return { activeOperation, currentMarker };
-+    };
-@@ -193,2 +206,2 @@ export const agentNotifyRouter = router({
+ 
+     const agentId = inputAgentId ?? topic.agentId;
+     if (!agentId) {
+@@ -190,8 +192,15 @@ export const agentNotifyRouter = router({
+           // (Previously this fired the stripped-down dispatchTerminalHooks, which
+           // skipped persist + verify — so openclaw/hermes tasks never auto-verified.)
+           // Hooks were serialized onto runningOperation at dispatch time.
 -          const serializedHooks = (topic.metadata as any)?.runningOperation?.hooks as
 -            SerializedHook[] | undefined;
-+          const { activeOperation, currentMarker } = await resolveActiveOperation();
++          const currentMarker = (await ctx.topicModel.findById(topicId))?.metadata
++            ?.runningOperation as any;
++          const activeOperation =
++            currentMarker?.operationId === remoteOperationId
++              ? currentMarker
++              : currentMarker?.childOperations?.find(
++                  (child: any) => child.operationId === remoteOperationId,
++                );
 +          const serializedHooks = activeOperation?.hooks as SerializedHook[] | undefined;
-@@ -267 +280,5 @@ export const agentNotifyRouter = router({
+           let lastAssistantContent: string | undefined = content || undefined;
+           if (!lastAssistantContent && writtenMessageId) {
+             const msg = await ctx.messageModel.findById(writtenMessageId).catch(() => undefined);
+@@ -264,7 +273,15 @@ export const agentNotifyRouter = router({
+ 
+           // The operation is finished — drop the running marker so a duplicate
+           // terminal signal / reconnect doesn't re-fire the hooks.
 -          await ctx.topicModel.updateMetadata(topicId, { runningOperation: null }).catch(() => {});
 +          if (currentMarker?.operationId === remoteOperationId) {
-+            await ctx.topicModel.updateMetadata(topicId, { runningOperation: null }).catch(() => {});
++            await ctx.topicModel
++              .updateMetadata(topicId, { runningOperation: null })
++              .catch(() => {});
 +          } else {
-+            await ctx.topicModel.removeRunningOperationChild(topicId, remoteOperationId).catch(() => {});
++            await ctx.topicModel
++              .removeRunningOperationChild(topicId, remoteOperationId)
++              .catch(() => {});
 +          }
-@@ -292,2 +309,2 @@ export const agentNotifyRouter = router({
--        const placeholderMessageId = (topic.metadata as any)?.runningOperation
--          ?.assistantMessageId as string | undefined;
-+        const { activeOperation } = await resolveActiveOperation();
-+        const placeholderMessageId = activeOperation?.assistantMessageId as string | undefined;
+         } else {
+           // Lightweight invalidation — frontend calls fetchAndReplaceMessages.
+           await stream.publishStreamEvent(remoteOperationId, {
+diff --git a/apps/server/src/services/aiAgent/__tests__/execAgent.heteroFiles.test.ts b/apps/server/src/services/aiAgent/__tests__/execAgent.heteroFiles.test.ts
+index d4fcdc2867..f5536d93f0 100644
+--- a/apps/server/src/services/aiAgent/__tests__/execAgent.heteroFiles.test.ts
++++ b/apps/server/src/services/aiAgent/__tests__/execAgent.heteroFiles.test.ts
+@@ -119,6 +119,7 @@ vi.mock('@/database/models/plugin', () => ({
+ }));
+ 
+ const topicMock = {
++  appendRunningOperationChild: vi.fn().mockResolvedValue(true),
+   create: vi.fn().mockResolvedValue({ id: 'topic-1', metadata: undefined }),
+   findById: vi.fn().mockResolvedValue(undefined),
+   updateMetadata: vi.fn().mockResolvedValue(undefined),
+@@ -208,6 +209,7 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () =>
+ 
+   beforeEach(() => {
+     vi.clearAllMocks();
++    topicMock.appendRunningOperationChild.mockResolvedValue(true);
+     topicMock.create.mockResolvedValue({ id: 'topic-1', metadata: undefined });
+     topicMock.findById.mockResolvedValue(undefined);
+     topicMock.updateMetadata.mockResolvedValue(undefined);
+@@ -763,12 +765,40 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () =>
+       },
+     };
+ 
+-    // Pick out the updateMetadata call that persists the running operation.
+     const findRunningOpSeed = () =>
+       topicMock.updateMetadata.mock.calls
+         .map((call) => call[1])
+         .find((patch: any) => patch?.runningOperation?.operationId);
+ 
++    it('keeps the supervisor marker when an in-group hetero child is dispatched', async () => {
++      topicMock.findById.mockResolvedValue({
++        metadata: {
++          runningOperation: {
++            assistantMessageId: 'supervisor-assistant',
++            operationId: 'parent-operation',
++          },
++        },
++      });
++
++      await service.execAgent({
++        agentId: 'agent-1',
++        appContext: {
++          isolationThread: false,
++          orchestrationRole: 'member',
++          topicId: 'topic-1',
++        },
++        parentOperationId: 'parent-operation',
++        prompt: 'speak as member',
++        topicStartOwnerOperationId: 'parent-operation',
++      } as any);
++
++      expect(topicMock.appendRunningOperationChild).toHaveBeenCalledWith(
++        'topic-1',
++        'parent-operation',
++        expect.objectContaining({ operationId: expect.stringContaining('op_') }),
++      );
++    });
++
+     it('serializes the onComplete webhook hook onto runningOperation (sandbox dispatch)', async () => {
+       await service.execAgent({
+         agentId: 'agent-1',
+diff --git a/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts b/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
+index a964ccd847..91b4c8cbd6 100644
+--- a/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
++++ b/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
+@@ -251,6 +251,16 @@ describe('AiAgentService.execAgent - threadId handling', () => {
+       });
+     });
+ 
++    it('does not trust a public member role to suppress the marker', async () => {
++      await service.execAgent({
++        agentId: 'agent-1',
++        appContext: { orchestrationRole: 'member', topicId: 'topic-1' },
++        prompt: 'Test prompt',
++      });
++
++      expect(runningMarkCalls()).toHaveLength(1);
++    });
++
+     it('does not claim the mark for an isolation-thread run', async () => {
+       // A callAgent / callSubAgent / group-member child executes on the PARENT's
+       // topic. Claiming the mark pointed every client reconnect at the child's
 diff --git a/apps/server/src/services/aiAgent/index.ts b/apps/server/src/services/aiAgent/index.ts
-index db9f88df..ca578221 100644
+index db9f88df76..56ff32b793 100644
 --- a/apps/server/src/services/aiAgent/index.ts
 +++ b/apps/server/src/services/aiAgent/index.ts
-@@ -511,0 +512,2 @@ interface InternalExecAgentParams extends ExecAgentParams {
-+  /** Running operation that still owns the topic for an internally spawned child run. */
+@@ -509,6 +509,8 @@ interface InternalExecAgentParams extends ExecAgentParams {
+    * chatConfig AND workspace member-mode overrides.
+    */
+   toolModeOverride?: 'agent' | 'chat';
++  /** Running operation that owns the topic for an internally spawned child run. */
 +  topicStartOwnerOperationId?: string;
-@@ -796 +798,6 @@ export class AiAgentService {
+   /**
+    * Re-enter a topic-start reservation already acquired by an upstream caller,
+    * such as TaskResultBridgeService.
+@@ -793,7 +795,12 @@ export class AiAgentService {
+     // 3. The operation never started — drop the running marker so reconnect /
+     //    heteroIngest validation and the next turn don't see a stale operation.
+     try {
 -      await this.topicModel.updateMetadata(topicId, { runningOperation: null });
-+      const marker = (await this.topicModel.findById(topicId))?.metadata?.runningOperation as any;
++      const marker = (await this.topicModel.findById(topicId))?.metadata?.runningOperation;
 +      if (marker?.operationId === operationId) {
 +        await this.topicModel.updateMetadata(topicId, { runningOperation: null });
 +      } else if (marker?.childOperations) {
 +        await this.topicModel.removeRunningOperationChild(topicId, operationId);
 +      }
-@@ -1254 +1261,3 @@ export class AiAgentService {
+     } catch (err) {
+       log('finalizeHeteroDispatchError: clear runningOperation failed (non-fatal): %O', err);
+     }
+@@ -1251,11 +1258,14 @@ export class AiAgentService {
+     // advance the topic's main spine. They may start while their parent
+     // operation owns `runningOperation` (for example callAgent/callSubAgent),
+     // so making them wait for the topic-start claim deadlocks the child start.
 -    if (!topicId || params.appContext?.threadId) return this.execAgentWithReservation(params);
 +    if (!topicId || params.appContext?.threadId || params.topicStartOwnerOperationId) {
 +      return this.execAgentWithReservation(params);
 +    }
-@@ -2439,18 +2448,25 @@ export class AiAgentService {
+ 
+     const reservationId = params.topicStartReservationId ?? `agent-start-${nanoid()}`;
+     const reserved = await acquireTopicStartReservation({
+       replacesOperationId: params.replacesOperationId,
++      allowRunningOperationId: params.topicStartOwnerOperationId,
+       reservationId,
+       topicId,
+       topicModel: this.topicModel,
+@@ -2436,24 +2446,38 @@ export class AiAgentService {
+       // operation, and so every terminal site (heteroFinish, agentNotify done,
+       // dispatch failure) can re-fire the serialized hooks across a process
+       // boundary in queue mode.
 -      await this.topicModel.updateMetadata(topicId, {
 -        runningOperation: {
 -          assistantMessageId: assistantMessageRecord.id,
@@ -77,10 +205,9 @@ index db9f88df..ca578221 100644
 -          threadId: appContext?.threadId ?? undefined,
 -        },
 -      });
-+      const runningOperation = {
++      const childOperation = {
 +        assistantMessageId: assistantMessageRecord.id,
 +        hooks: serializedHooks,
-+        // Store deviceId + heteroType so interruptTask can cancel remote processes
 +        ...(isRemoteHetero && remoteDeviceId
 +          ? {
 +              deviceId: remoteDeviceId,
@@ -88,7 +215,15 @@ index db9f88df..ca578221 100644
 +              deviceWorkspaceId: remoteDeviceWorkspaceId,
 +              heteroType,
 +            }
-+          : undefined),
++          : {}),
++        ...(isRemoteHetero && remoteDeviceId
++          ? {
++              deviceId: remoteDeviceId,
++              deviceUserId: remoteDeviceUserId,
++              deviceWorkspaceId: remoteDeviceWorkspaceId,
++              heteroType,
++            }
++          : {}),
 +        operationId,
 +        scope: appContext?.scope ?? undefined,
 +        threadId: appContext?.threadId ?? undefined,
@@ -97,79 +232,174 @@ index db9f88df..ca578221 100644
 +        await this.topicModel.appendRunningOperationChild(
 +          topicId,
 +          params.topicStartOwnerOperationId,
-+          runningOperation,
++          childOperation,
 +        );
 +      } else {
-+        await this.topicModel.updateMetadata(topicId, { runningOperation });
++        await this.topicModel.updateMetadata(topicId, { runningOperation: childOperation });
 +      }
-@@ -4621 +4637 @@ export class AiAgentService {
+ 
+       // Notify-based platform agents (openclaw / hermes) communicate back via
+       // agentNotify.notify. A local run uses the requesting desktop's device ID;
+@@ -4618,7 +4642,9 @@ export class AiAgentService {
+       // WebSocket for the rest of the run. The parent's mark stays authoritative;
+       // a child's live progress already rides down the parent channel via
+       // `appContext.subAgentProgress`.
 -      if (!appContext?.isolationThread) {
++      // `orchestrationRole` is public rendering metadata. Only the internally
++      // propagated parent operation id proves child ownership of this topic.
 +      if (!appContext?.isolationThread && !params.topicStartOwnerOperationId) {
-@@ -4980,0 +4997 @@ export class AiAgentService {
+         await this.topicModel.updateMetadata(topicId, {
+           runningOperation: {
+             assistantMessageId: assistantMessageRecord.id,
+@@ -4978,6 +5004,7 @@ export class AiAgentService {
+       parentOperationId,
+       prompt: speakerInstruction,
+       suppressUserMessage: true,
 +      topicStartOwnerOperationId: parentOperationId,
-@@ -5655 +5672 @@ export class AiAgentService {
--      const runningOp = (topic?.metadata as any)?.runningOperation as
-+      const marker = (topic?.metadata as any)?.runningOperation as
-@@ -5656,0 +5674,7 @@ export class AiAgentService {
-+            childOperations?: Array<{
-+              deviceId?: string;
-+              deviceUserId?: string;
-+              deviceWorkspaceId?: string;
-+              heteroType?: string;
-+              operationId?: string;
-+            }>;
-@@ -5663,0 +5688,4 @@ export class AiAgentService {
-+      const runningOp =
-+        marker?.operationId === resolvedOperationId
-+          ? marker
-+          : marker?.childOperations?.find((child) => child.operationId === resolvedOperationId);
+       trigger: inheritedTrigger,
+       userInterventionConfig: { approvalMode: 'headless' },
+     });
+@@ -4999,6 +5026,7 @@ export class AiAgentService {
+     params: ExecSubAgentParams | ExecVirtualSubAgentParams,
+     options: {
+       /**
++      topicStartOwnerOperationId: parentOperationId,
+        * Override the default sub-agent completion bridge with a custom hook
+        * (e.g. the group-action member bridge for isolated executeAgentTask(s)).
+        * Receives the freshly-created isolation thread id. Only used when
+diff --git a/apps/server/src/services/aiAgent/topicStartReservation.test.ts b/apps/server/src/services/aiAgent/topicStartReservation.test.ts
+index f4fa4c2e73..3702aff2aa 100644
+--- a/apps/server/src/services/aiAgent/topicStartReservation.test.ts
++++ b/apps/server/src/services/aiAgent/topicStartReservation.test.ts
+@@ -53,6 +53,32 @@ describe('acquireTopicStartReservation', () => {
+       topicModel,
+     });
+ 
+-    expect(tryReserveTaskCallback).toHaveBeenCalledWith('topic-1', 'new-start', 'old-operation');
++    expect(tryReserveTaskCallback).toHaveBeenCalledWith(
++      'topic-1',
++      'new-start',
++      undefined,
++      'old-operation',
++    );
++  });
++
++  it('passes the parent operation ownership through for in-group children', async () => {
++    const tryReserveTaskCallback = vi.fn().mockResolvedValue(true);
++    const topicModel = { tryReserveTaskCallback } as unknown as TopicModel;
++
++    await expect(
++      acquireTopicStartReservation({
++        allowRunningOperationId: 'parent-operation',
++        reservationId: 'child-operation',
++        topicId: 'topic-1',
++        topicModel,
++      }),
++    ).resolves.toBe(true);
++
++    expect(tryReserveTaskCallback).toHaveBeenCalledWith(
++      'topic-1',
++      'child-operation',
++      'parent-operation',
++      undefined,
++    );
+   });
+ });
+diff --git a/apps/server/src/services/aiAgent/topicStartReservation.ts b/apps/server/src/services/aiAgent/topicStartReservation.ts
+index f0ce652ee9..f537d80b52 100644
+--- a/apps/server/src/services/aiAgent/topicStartReservation.ts
++++ b/apps/server/src/services/aiAgent/topicStartReservation.ts
+@@ -18,11 +18,13 @@ const delay = (milliseconds: number): Promise<void> =>
+  * 500 response, while interactive callers receive a finite busy failure.
+  */
+ export const acquireTopicStartReservation = async ({
++  allowRunningOperationId,
+   replacesOperationId,
+   reservationId,
+   topicId,
+   topicModel,
+ }: {
++  allowRunningOperationId?: string;
+   replacesOperationId?: string;
+   reservationId: string;
+   topicId: string;
+@@ -32,6 +34,7 @@ export const acquireTopicStartReservation = async ({
+     const reservation = await topicModel.tryReserveTaskCallback(
+       topicId,
+       reservationId,
++      allowRunningOperationId,
+       replacesOperationId,
+     );
+ 
 diff --git a/apps/server/src/services/heterogeneousAgent/HeterogeneousPersistenceHandler.ts b/apps/server/src/services/heterogeneousAgent/HeterogeneousPersistenceHandler.ts
-index 90ac39c2..5d8d2a93 100644
+index 90ac39c2c0..f17696db6c 100644
 --- a/apps/server/src/services/heterogeneousAgent/HeterogeneousPersistenceHandler.ts
 +++ b/apps/server/src/services/heterogeneousAgent/HeterogeneousPersistenceHandler.ts
-@@ -417 +417,5 @@ export class HeterogeneousPersistenceHandler {
+@@ -414,7 +414,11 @@ export class HeterogeneousPersistenceHandler {
+     }
+ 
+     const topic = await this.deps.topicModel.findById(topicId);
 -    const running = topic?.metadata?.runningOperation;
-+    const marker = topic?.metadata?.runningOperation as any;
++    const marker = topic?.metadata?.runningOperation;
 +    const running =
 +      marker?.operationId === operationId
 +        ? marker
-+        : marker?.childOperations?.find((child: any) => child.operationId === operationId);
-@@ -425 +429 @@ export class HeterogeneousPersistenceHandler {
++        : marker?.childOperations?.find((child) => child.operationId === operationId);
+ 
+     if (!running && !(allowMissingRunningOperation && seedAssistantMessageId)) {
+       throw new StaleHeteroOperationError(
+@@ -422,9 +426,9 @@ export class HeterogeneousPersistenceHandler {
+       );
+     }
+ 
 -    if (running && running.operationId !== operationId) {
 +    if (!running && !(allowMissingRunningOperation && seedAssistantMessageId)) {
-@@ -427 +431 @@ export class HeterogeneousPersistenceHandler {
+       throw new StaleHeteroOperationError(
 -        `Stale hetero operation ${operationId} on topic ${topicId}; current operation is ${running.operationId}`,
 +        `Stale hetero operation ${operationId} on topic ${topicId}; current operation is ${marker?.operationId ?? 'unknown'}`,
-@@ -800 +804,5 @@ export class HeterogeneousPersistenceHandler {
+       );
+     }
+ 
+@@ -797,9 +801,13 @@ export class HeterogeneousPersistenceHandler {
+ 
+   private async syncAssistantPointerForAdvancedStep(state: OperationState): Promise<void> {
+     const topic = await this.deps.topicModel.findById(state.topicId);
 -    const running = topic?.metadata?.runningOperation;
-+    const marker = topic?.metadata?.runningOperation as any;
++    const marker = topic?.metadata?.runningOperation;
 +    const running =
 +      marker?.operationId === state.operationId
 +        ? marker
-+        : marker?.childOperations?.find((child: any) => child.operationId === state.operationId);
-@@ -802 +810 @@ export class HeterogeneousPersistenceHandler {
++        : marker?.childOperations?.find((child) => child.operationId === state.operationId);
+ 
 -    if (running && running.operationId !== state.operationId) {
 +    if (!running) {
-@@ -804 +812 @@ export class HeterogeneousPersistenceHandler {
--        `Stale hetero operation ${state.operationId} on topic ${state.topicId}; current operation is ${running.operationId}`,
-+        `Stale hetero operation ${state.operationId} on topic ${state.topicId}; current operation is ${marker?.operationId ?? 'unknown'}`,
+       throw new StaleHeteroOperationError(
+         `Stale hetero operation ${state.operationId} on topic ${state.topicId}; current operation is ${running.operationId}`,
+       );
 diff --git a/apps/server/src/services/heterogeneousAgent/index.ts b/apps/server/src/services/heterogeneousAgent/index.ts
-index 9c66a863..d19b50f8 100644
+index 9c66a86326..5caad7b668 100644
 --- a/apps/server/src/services/heterogeneousAgent/index.ts
 +++ b/apps/server/src/services/heterogeneousAgent/index.ts
-@@ -322,2 +322,7 @@ export class HeterogeneousAgentService {
+@@ -319,8 +319,13 @@ export class HeterogeneousAgentService {
+     let isolationThreadId: string | undefined;
+     try {
+       const topic = await this.topicModel.findById(topicId);
 -      serializedHooks = topic?.metadata?.runningOperation?.hooks as SerializedHook[] | undefined;
 -      isolationThreadId = topic?.metadata?.runningOperation?.threadId ?? undefined;
-+      const marker = topic?.metadata?.runningOperation as any;
++      const marker = topic?.metadata?.runningOperation;
 +      const running =
 +        marker?.operationId === operationId
 +          ? marker
-+          : marker?.childOperations?.find((child: any) => child.operationId === operationId);
++          : marker?.childOperations?.find((child) => child.operationId === operationId);
 +      serializedHooks = running?.hooks as SerializedHook[] | undefined;
 +      isolationThreadId = running?.threadId ?? undefined;
-@@ -331,9 +336,11 @@ export class HeterogeneousAgentService {
--        currentMsgRef?.operationId === operationId
--          ? currentMsgRef.msgId
+       // Prefer heteroCurrentMsgId — the persistence handler updates this pointer
+       // on every step boundary, so it refers to the LAST assistant message with
+       // the complete final content.  Fall back to the initial placeholder id
+@@ -330,13 +335,19 @@ export class HeterogeneousAgentService {
+       assistantMessageId =
+         currentMsgRef?.operationId === operationId
+           ? currentMsgRef.msgId
 -          : topic?.metadata?.runningOperation?.assistantMessageId;
 -      await this.topicModel.updateMetadata(topicId, { runningOperation: null });
 -      // Settle `status: 'running'` for runs with no renderer attached (e.g. a
@@ -177,26 +407,120 @@ index 9c66a863..d19b50f8 100644
 -      // topic off `running`. Guarded in the model: an attached client's own
 -      // terminal write ('active'/'unread') is never clobbered.
 -      await this.topicModel.settleRunningStatus(topicId);
-+        currentMsgRef?.operationId === operationId ? currentMsgRef.msgId : running?.assistantMessageId;
++          : running?.assistantMessageId;
 +      if (marker?.operationId === operationId) {
 +        await this.topicModel.updateMetadata(topicId, { runningOperation: null });
++      } else if (marker?.childOperations) {
++        await this.topicModel.removeRunningOperationChild(topicId, operationId);
++      }
++      if (marker?.operationId === operationId) {
 +        // Settle `status: 'running'` for runs with no renderer attached (e.g. a
 +        // cron-dispatched scheduled resume) — otherwise nothing ever moves the
 +        // topic off `running`. Guarded in the model: an attached client's own
 +        // terminal write ('active'/'unread') is never clobbered.
 +        await this.topicModel.settleRunningStatus(topicId);
-+      } else if (marker?.childOperations) {
-+        await this.topicModel.removeRunningOperationChild(topicId, operationId);
 +      }
+     } catch (err) {
+       log('heteroFinish: failed to clear runningOperation (non-fatal): %O', err);
+     }
+diff --git a/packages/database/src/models/__tests__/topics/topic.update.test.ts b/packages/database/src/models/__tests__/topics/topic.update.test.ts
+index b09cd2474a..1688139e43 100644
+--- a/packages/database/src/models/__tests__/topics/topic.update.test.ts
++++ b/packages/database/src/models/__tests__/topics/topic.update.test.ts
+@@ -185,10 +185,10 @@ describe('TopicModel - Update', () => {
+       });
+ 
+       await expect(
+-        topicModel.tryReserveTaskCallback(topicId, 'new-start', 'different-operation'),
++        topicModel.tryReserveTaskCallback(topicId, 'new-start', undefined, 'different-operation'),
+       ).resolves.toBe(false);
+       await expect(
+-        topicModel.tryReserveTaskCallback(topicId, 'new-start', 'old-operation'),
++        topicModel.tryReserveTaskCallback(topicId, 'new-start', undefined, 'old-operation'),
+       ).resolves.toBe(true);
+ 
+       const topic = await serverDB.query.topics.findFirst({ where: eq(topics.id, topicId) });
+@@ -196,6 +196,68 @@ describe('TopicModel - Update', () => {
+       expect(topic?.metadata?.taskCallbackReservation?.messageId).toBe('new-start');
+     });
+ 
++    it('allows a child operation to re-enter its parent running operation', async () => {
++      const topicId = 'task-callback-parent-operation';
++      await serverDB.insert(topics).values({
++        userId,
++        id: topicId,
++        title: 'Test',
++        metadata: {
++          runningOperation: {
++            assistantMessageId: 'assistant-parent',
++            operationId: 'operation-parent',
++          },
++        },
++      });
++
++      await expect(
++        topicModel.tryReserveTaskCallback(topicId, 'child-operation-1', 'operation-parent'),
++      ).resolves.toBe(true);
++      await expect(
++        topicModel.tryReserveTaskCallback(topicId, 'child-operation-2', 'operation-parent'),
++      ).resolves.toBe(true);
++      await expect(
++        topicModel.tryReserveTaskCallback(topicId, 'unrelated-operation', 'operation-other'),
++      ).resolves.toBe(false);
++
++      const topic = await topicModel.findById(topicId);
++      expect(topic?.metadata?.taskCallbackReservation).toBeUndefined();
++      expect(topic?.metadata?.runningOperation?.operationId).toBe('operation-parent');
++    });
++
++    it('atomically appends children to the parent running operation', async () => {
++      const topicId = 'task-callback-parent-operation-children';
++      await serverDB.insert(topics).values({
++        userId,
++        id: topicId,
++        title: 'Test',
++        metadata: {
++          runningOperation: {
++            assistantMessageId: 'assistant-parent',
++            operationId: 'parent-operation',
++          },
++        },
++      });
++
++      await Promise.all([
++        topicModel.appendRunningOperationChild(topicId, 'parent-operation', {
++          assistantMessageId: 'assistant-child-1',
++          operationId: 'child-operation-1',
++        }),
++        topicModel.appendRunningOperationChild(topicId, 'parent-operation', {
++          assistantMessageId: 'assistant-child-2',
++          operationId: 'child-operation-2',
++        }),
++      ]);
++
++      const topic = await topicModel.findById(topicId);
++      expect(topic?.metadata?.runningOperation?.childOperations).toEqual(
++        expect.arrayContaining([
++          expect.objectContaining({ operationId: 'child-operation-1' }),
++          expect.objectContaining({ operationId: 'child-operation-2' }),
++        ]),
++      );
++    });
+     it('recovers a stale reservation left by a crashed delivery worker', async () => {
+       const topicId = 'task-callback-stale-reservation';
+       await serverDB.insert(topics).values({
 diff --git a/packages/database/src/models/topic.ts b/packages/database/src/models/topic.ts
-index 06a2e503..450fe0fc 100644
+index 06a2e50321..2beb5210ba 100644
 --- a/packages/database/src/models/topic.ts
 +++ b/packages/database/src/models/topic.ts
-@@ -1419,0 +1420,65 @@ export class TopicModel {
+@@ -1417,6 +1417,66 @@ export class TopicModel {
+     });
+   };
+ 
 +  appendRunningOperationChild = async (
 +    id: string,
 +    parentOperationId: string,
-+    child: Record<string, any>,
++    child: NonNullable<ChatTopicMetadata['runningOperation']>,
 +  ): Promise<boolean> =>
 +    this.db.transaction(async (tx) => {
 +      const [existing] = await tx
@@ -204,8 +528,7 @@ index 06a2e503..450fe0fc 100644
 +        .from(topics)
 +        .where(and(eq(topics.id, id), this.ownership()))
 +        .for('update');
-+
-+      const runningOperation = existing?.metadata?.runningOperation as any;
++      const runningOperation = existing?.metadata?.runningOperation;
 +      if (!existing || runningOperation?.operationId !== parentOperationId) return false;
 +
 +      await tx
@@ -217,15 +540,14 @@ index 06a2e503..450fe0fc 100644
 +              ...runningOperation,
 +              childOperations: [
 +                ...(runningOperation.childOperations ?? []).filter(
-+                  (operation: any) => operation.operationId !== child.operationId,
++                  (operation) => operation.operationId !== child.operationId,
 +                ),
 +                child,
 +              ],
 +            },
-+          } as ChatTopicMetadata,
++          },
 +        })
 +        .where(and(eq(topics.id, id), this.ownership()));
-+
 +      return true;
 +    });
 +
@@ -236,10 +558,8 @@ index 06a2e503..450fe0fc 100644
 +        .from(topics)
 +        .where(and(eq(topics.id, id), this.ownership()))
 +        .for('update');
-+
-+      const runningOperation = existing?.metadata?.runningOperation as any;
++      const runningOperation = existing?.metadata?.runningOperation;
 +      if (!existing || !runningOperation?.childOperations) return false;
-+
 +      await tx
 +        .update(topics)
 +        .set({
@@ -248,13 +568,77 @@ index 06a2e503..450fe0fc 100644
 +            runningOperation: {
 +              ...runningOperation,
 +              childOperations: runningOperation.childOperations.filter(
-+                (child: any) => child.operationId !== operationId,
++                (child) => child.operationId !== operationId,
 +              ),
 +            },
-+          } as ChatTopicMetadata,
++          },
 +        })
 +        .where(and(eq(topics.id, id), this.ownership()));
-+
 +      return true;
 +    });
 +
+   /**
+    * Atomically reserve an idle topic for one task-callback delivery.
+    *
+@@ -1429,6 +1489,7 @@ export class TopicModel {
+   tryReserveTaskCallback = async (
+     id: string,
+     messageId: string,
++    allowRunningOperationId?: string,
+     replacesOperationId?: string,
+   ): Promise<boolean | null> =>
+     this.db.transaction(async (tx) => {
+@@ -1449,6 +1510,9 @@ export class TopicModel {
+ 
+       if (reservation?.messageId === messageId && hasLiveReservation) return true;
+       const runningOperation = existing.metadata?.runningOperation;
++      const ownedRunningOperation =
++        allowRunningOperationId && runningOperation?.operationId === allowRunningOperationId;
++      if (allowRunningOperationId) return ownedRunningOperation;
+       const canReplaceRunningOperation =
+         !!replacesOperationId && runningOperation?.operationId === replacesOperationId;
+       if ((runningOperation && !canReplaceRunningOperation) || hasLiveReservation) return false;
+diff --git a/packages/types/src/topic/topic.ts b/packages/types/src/topic/topic.ts
+index 2587ba392e..fe61bbc16b 100644
+--- a/packages/types/src/topic/topic.ts
++++ b/packages/types/src/topic/topic.ts
+@@ -214,6 +214,17 @@ export interface ChatTopicMetadata {
+    */
+   runningOperation?: {
+     assistantMessageId: string;
++    childOperations?: Array<{
++      assistantMessageId: string;
++      deviceId?: string;
++      deviceUserId?: string;
++      deviceWorkspaceId?: string;
++      heteroType?: string;
++      hooks?: SerializedAgentHook[];
++      operationId: string;
++      scope?: string;
++      threadId?: string | null;
++    }>;
+     /** Device selected for a notify-based platform task. */
+     deviceId?: string;
+     /** Personal-device owner used to route dispatch and cancellation through the same principal. */
+@@ -476,6 +487,21 @@ export const chatTopicMetadataUpdateSchema = z.object({
+   runningOperation: z
+     .object({
+       assistantMessageId: z.string(),
++      childOperations: z
++        .array(
++          z.object({
++            assistantMessageId: z.string(),
++            deviceId: z.string().optional(),
++            deviceUserId: z.string().optional(),
++            deviceWorkspaceId: z.string().optional(),
++            heteroType: z.string().optional(),
++            hooks: z.array(serializedAgentHookSchema).optional(),
++            operationId: z.string(),
++            scope: z.string().optional(),
++            threadId: z.string().nullish(),
++          }),
++        )
++        .optional(),
+       deviceId: z.string().optional(),
+       deviceUserId: z.string().optional(),
+       deviceWorkspaceId: z.string().optional(),
