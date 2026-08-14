@@ -786,6 +786,9 @@ export default class GatewayConnectionCtr extends ControllerModule {
           const text = signal
             ? `Task cancelled (signal: ${signal})`
             : `Task failed (exit code: ${code})`;
+          const terminalError = signal
+            ? undefined
+            : { message: text, type: 'HeteroProcessError' };
           void this.sendNotify({
             agentId,
             content: text,
@@ -798,6 +801,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
               agentId,
               content: '',
               done: true,
+              error: terminalError,
               operationId,
               role: 'assistant',
               topicId,
@@ -893,6 +897,9 @@ export default class GatewayConnectionCtr extends ControllerModule {
           const text = signal
             ? `Task cancelled (signal: ${signal})`
             : `Task failed (exit code: ${code})`;
+          const terminalError = signal
+            ? undefined
+            : { message: text, type: 'HeteroProcessError' };
           void this.sendNotify({
             agentId,
             content: text,
@@ -905,6 +912,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
               agentId,
               content: '',
               done: true,
+              error: terminalError,
               operationId,
               role: 'assistant',
               topicId,
@@ -1044,6 +1052,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
     agentId?: string;
     content: string;
     done?: boolean;
+    error?: { message: string; type?: string };
     operationId?: string;
     role: string;
     topicId: string;

@@ -142,6 +142,12 @@ export const agentNotifyRouter = router({
     // Used to publish notify_update / agent_runtime_end events to the gateway WS.
     const marker = (topic.metadata as any)?.runningOperation;
     const remoteOperationId = input.operationId ?? marker?.operationId;
+    const activeOperation =
+      remoteOperationId && marker
+        ? marker.operationId === remoteOperationId
+          ? marker
+          : marker.childOperations?.find((child: any) => child.operationId === remoteOperationId)
+        : marker;
 
     const agentId = inputAgentId ?? topic.agentId;
     if (!agentId) {
@@ -305,8 +311,7 @@ export const agentNotifyRouter = router({
         // 1. Caller-supplied messageId (subsequent notify calls with --message-id)
         // 2. Placeholder assistantMessageId seeded by execAgent (first notify call for remote hetero)
         // Using the placeholder avoids creating a second empty bubble in the UI.
-        const placeholderMessageId = (topic.metadata as any)?.runningOperation
-          ?.assistantMessageId as string | undefined;
+        const placeholderMessageId = activeOperation?.assistantMessageId as string | undefined;
         const resolvedMessageId = messageId ?? placeholderMessageId;
 
         // Update existing message if we have a resolved target
