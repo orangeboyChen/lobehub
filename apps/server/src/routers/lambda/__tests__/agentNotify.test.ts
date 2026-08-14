@@ -17,6 +17,7 @@ vi.mock('@/business/server/trpc-middlewares/rbacPermission', () => ({
 
 const mockTopicFindById = vi.fn();
 const mockTopicUpdateMetadata = vi.fn();
+const mockTopicRemoveRunningOperationChild = vi.fn();
 const mockMessageFindById = vi.fn();
 const mockMessageUpdate = vi.fn();
 const mockMessageCreate = vi.fn();
@@ -37,6 +38,7 @@ vi.mock('@/server/services/verify', async (orig) => ({
 vi.mock('@/database/models/topic', () => ({
   TopicModel: vi.fn(() => ({
     findById: mockTopicFindById,
+    removeRunningOperationChild: mockTopicRemoveRunningOperationChild,
     updateMetadata: mockTopicUpdateMetadata,
   })),
 }));
@@ -101,6 +103,7 @@ describe('agentNotifyRouter.notify — remote hetero terminal signal', () => {
     // by earlier `lh notify` calls).
     mockMessageFindById.mockResolvedValue({ content: 'the final reply', topicId: TOPIC });
     mockTopicUpdateMetadata.mockResolvedValue(undefined);
+    mockTopicRemoveRunningOperationChild.mockResolvedValue(undefined);
     // Default: a non-task op so the plan-instantiation guard no-ops unless a
     // test opts into a task-bound op.
     mockOpFindById.mockResolvedValue({ parentOperationId: null, taskId: null });
@@ -199,5 +202,34 @@ describe('agentNotifyRouter.notify — remote hetero terminal signal', () => {
       reason: 'error',
     });
     expect(onComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it('finalizes a child operation without clearing the supervisor marker', async () => {
+    const childOperationId = 'op-child-1';
+    mockTopicFindById.mockResolvedValue({
+      agentId: 'agent-1',
+      metadata: {
+        runningOperation: {
+          childOperations: [{ operationId: childOperationId }],
+          operationId: OP,
+        },
+      },
+    });
+
+    await createCaller().notify({
+      content: '',
+      done: true,
+      operationId: childOperationId,
+      role: 'assistant',
+      topicId: TOPIC,
+    });
+
+    expect(mockPublishAgentRuntimeEnd).toHaveBeenCalledWith(
+      expect.objectContaining({ operationId: childOperationId, reason: 'success' }),
+    );
+    await vi.waitFor(() =>
+      expect(mockTopicRemoveRunningOperationChild).toHaveBeenCalledWith(TOPIC, childOperationId),
+    );
+    expect(mockTopicUpdateMetadata).not.toHaveBeenCalledWith(TOPIC, { runningOperation: null });
   });
 });

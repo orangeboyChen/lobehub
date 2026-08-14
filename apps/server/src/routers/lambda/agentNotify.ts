@@ -141,8 +141,7 @@ export const agentNotifyRouter = router({
     // Extract the operationId seeded by execAgent for remote hetero agents.
     // Used to publish notify_update / agent_runtime_end events to the gateway WS.
     const marker = (topic.metadata as any)?.runningOperation;
-    const remoteOperationId =
-      input.operationId ?? marker?.operationId ?? marker?.childOperations?.[0]?.operationId;
+    const remoteOperationId = input.operationId ?? marker?.operationId;
 
     const agentId = inputAgentId ?? topic.agentId;
     if (!agentId) {

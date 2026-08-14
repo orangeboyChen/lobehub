@@ -11,6 +11,7 @@ export function registerNotifyCommand(program: Command) {
     .requiredOption('--topic <topicId>', 'Target topic ID')
     .requiredOption('-c, --content <content>', 'Message content')
     .option('--agent-id <agentId>', 'Agent ID (overrides topic default)')
+    .option('--operation-id <operationId>', 'Operation ID for a dispatched agent run')
     .option('--thread-id <threadId>', 'Thread ID for threaded conversations')
     .option(
       '--role <role>',
@@ -33,6 +34,7 @@ export function registerNotifyCommand(program: Command) {
         continue?: boolean;
         json?: boolean;
         messageId?: string;
+        operationId?: string;
         role?: 'assistant' | 'user';
         threadId?: string;
         topic: string;
@@ -53,6 +55,7 @@ export function registerNotifyCommand(program: Command) {
             content: options.content,
             continue: options.continue,
             messageId: options.messageId,
+            operationId: options.operationId || process.env.LOBEHUB_OPERATION_ID,
             role: options.role,
             threadId: options.threadId,
             topicId: options.topic,

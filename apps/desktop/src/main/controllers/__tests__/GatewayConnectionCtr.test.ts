@@ -1073,6 +1073,7 @@ describe('GatewayConnectionCtr', () => {
       ];
       expect(spawnCommand).toBe('/resolved/bin/openclaw');
       expect(spawnOptions.env.PATH).toBe('/resolved/bin:/usr/bin');
+      expect(spawnOptions.env.LOBEHUB_OPERATION_ID).toBe('op-1');
       const messageArg = spawnArgs[spawnArgs.indexOf('--message') + 1];
       expect(messageArg).toContain('hello');
       expect(messageArg).toContain('lh notify');
@@ -1383,6 +1384,7 @@ describe('GatewayConnectionCtr', () => {
         expect(notifySpy).toHaveBeenCalledWith(
           expect.objectContaining({
             content: 'session_id: part of the final answer\nHello from Hermes',
+            operationId: 'op-hermes-1',
             topicId: 'topic-hermes',
           }),
         );

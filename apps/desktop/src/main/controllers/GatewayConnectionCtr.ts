@@ -707,6 +707,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
     const childEnv: NodeJS.ProcessEnv = {
       ...process.env,
       ...(accessToken && { LOBEHUB_JWT: accessToken }),
+      LOBEHUB_OPERATION_ID: operationId,
       ...(serverUrl && { LOBEHUB_SERVER: serverUrl }),
       ...(workspaceId && { LOBEHUB_WORKSPACE_ID: workspaceId }),
     };
@@ -788,6 +789,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
           void this.sendNotify({
             agentId,
             content: text,
+            operationId,
             role: 'assistant',
             topicId,
             workspaceId,
@@ -796,6 +798,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
               agentId,
               content: '',
               done: true,
+              operationId,
               role: 'assistant',
               topicId,
               workspaceId,
@@ -806,6 +809,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
             agentId,
             content: '',
             done: true,
+            operationId,
             role: 'assistant',
             topicId,
             workspaceId,
@@ -892,6 +896,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
           void this.sendNotify({
             agentId,
             content: text,
+            operationId,
             role: 'assistant',
             topicId,
             workspaceId,
@@ -900,6 +905,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
               agentId,
               content: '',
               done: true,
+              operationId,
               role: 'assistant',
               topicId,
               workspaceId,
@@ -919,6 +925,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
           void this.sendNotify({
             agentId,
             content: response,
+            operationId,
             role: 'assistant',
             topicId,
             workspaceId,
@@ -927,6 +934,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
               agentId,
               content: '',
               done: true,
+              operationId,
               role: 'assistant',
               topicId,
               workspaceId,
@@ -937,6 +945,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
             agentId,
             content: '',
             done: true,
+            operationId,
             role: 'assistant',
             topicId,
             workspaceId,
@@ -1035,6 +1044,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
     agentId?: string;
     content: string;
     done?: boolean;
+    operationId?: string;
     role: string;
     topicId: string;
     /**
