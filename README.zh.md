@@ -10,7 +10,7 @@
 
 ## 当前 patch 清单
 
-- 本地修复：`ios-viewport`、`lobehub-skill`、`docker-canvas-native-packages`、`docker-swc-helpers-runtime`
+- 本地修复：`ios-viewport`、`lobehub-skill`、`docker-canvas-native-packages`
 - 上游 PR：
   - [#16609](https://github.com/lobehub/lobehub/pull/16609)：让 connector 详情页头部支持响应式布局
   - [#16616](https://github.com/lobehub/lobehub/pull/16616)：本地化 API Keys 空状态
