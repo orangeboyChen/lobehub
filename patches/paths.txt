@@ -5,7 +5,6 @@ patches/pr-18242/pr-18242.patch
 patches/pr-18266/pr-18266.patch
 patches/bug/lobehub-skill.patch
 patches/bug/docker-canvas-native-packages.patch
-patches/bug/docker-swc-helpers-runtime.patch
 patches/bug/react-pdf-types-override.patch
 patches/pr-16609/pr-16609.patch
 patches/pr-16616/pr-16616.patch
