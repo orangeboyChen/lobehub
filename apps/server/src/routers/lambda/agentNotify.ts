@@ -167,6 +167,14 @@ export const agentNotifyRouter = router({
       workspaceId: ctx.workspaceId,
     });
 
+    // A platform child can retry its terminal callback after the first delivery
+    // has removed its running-operation marker. Do not recreate lifecycle side
+    // effects from a stale, caller-supplied operation id.
+    if (isTerminal && input.operationId && !activeOperation) {
+      log('notify: ignoring stale terminal callback for operationId=%s', input.operationId);
+      return { messageId: undefined, operationId: undefined, topicId };
+    }
+
     /**
      * Publish a stream event for remote hetero agents (openclaw / hermes).
      * Fire-and-forget — stream publish failures must not break the notify response.

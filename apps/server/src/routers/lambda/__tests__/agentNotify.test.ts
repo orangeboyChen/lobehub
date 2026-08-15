@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { hookDispatcher } from '@/server/services/agentRuntime/hooks';
 import type { AgentHook } from '@/server/services/agentRuntime/hooks/types';
-import { CompletionLifecycle } from '@/server/services/agentRuntime/CompletionLifecycle';
 
 // serverDatabase middleware calls getServerDB(); stub it (our model mocks
 // ignore the db handle anyway).
@@ -65,6 +64,7 @@ vi.mock('@/server/modules/AgentRuntime/factory', async (orig) => ({
 }));
 
 // Imported after the mocks above are registered.
+const { CompletionLifecycle } = await import('@/server/services/agentRuntime/CompletionLifecycle');
 const { agentNotifyRouter } = await import('../agentNotify');
 
 const OP = 'op-remote-1';
@@ -240,6 +240,50 @@ describe('agentNotifyRouter.notify — remote hetero terminal signal', () => {
       expect.anything(),
     );
     expect(mockTopicUpdateMetadata).not.toHaveBeenCalledWith(TOPIC, { runningOperation: null });
+    completeOperationSpy.mockRestore();
+  });
+
+  it('ignores a repeated child terminal callback after its marker was removed', async () => {
+    const childOperationId = 'op-child-1';
+    const activeTopic = {
+      agentId: 'agent-1',
+      metadata: {
+        runningOperation: {
+          childOperations: [{ operationId: childOperationId, orchestrationRole: 'member' }],
+          operationId: OP,
+        },
+      },
+    };
+    const completeOperationSpy = vi
+      .spyOn(CompletionLifecycle.prototype, 'completeOperation')
+      .mockResolvedValue(undefined);
+    mockTopicFindById
+      .mockResolvedValueOnce(activeTopic)
+      .mockResolvedValueOnce(activeTopic)
+      .mockResolvedValueOnce({
+        agentId: 'agent-1',
+        metadata: { runningOperation: { operationId: OP } },
+      });
+
+    await createCaller().notify({
+      content: '',
+      done: true,
+      operationId: childOperationId,
+      role: 'assistant',
+      topicId: TOPIC,
+    });
+    await vi.waitFor(() => expect(completeOperationSpy).toHaveBeenCalledTimes(1));
+
+    const duplicate = await createCaller().notify({
+      content: '',
+      done: true,
+      operationId: childOperationId,
+      role: 'assistant',
+      topicId: TOPIC,
+    });
+
+    expect(duplicate).toEqual({ messageId: undefined, operationId: undefined, topicId: TOPIC });
+    expect(completeOperationSpy).toHaveBeenCalledTimes(1);
     completeOperationSpy.mockRestore();
   });
 
