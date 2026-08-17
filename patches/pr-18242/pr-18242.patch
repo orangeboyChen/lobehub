@@ -1780,38 +1780,18 @@ index e2616bbfbe9c5b7b05551f44676de40f451d6468..a869499c33889478b2b1d21faba6c4da
    createStreamEventManager: () => ({
      publishAgentRuntimeEnd: mockPublishAgentRuntimeEnd,
      publishAgentRuntimeInit: mockPublishAgentRuntimeInit,
-@@ -119,8 +123,11 @@ vi.mock('@/database/models/plugin', () => ({
- }));
- 
- const topicMock = {
+@@ -123,0 +124 @@ const topicMock = {
 +  appendRunningOperationChild: vi.fn().mockResolvedValue(true),
-   create: vi.fn().mockResolvedValue({ id: 'topic-1', metadata: undefined }),
-   findById: vi.fn().mockResolvedValue(undefined),
+@@ -125,0 +127,2 @@ const topicMock = {
 +  releaseTaskCallbackReservation: vi.fn().mockResolvedValue(undefined),
 +  tryReserveTaskCallback: vi.fn().mockResolvedValue(true),
-   updateMetadata: vi.fn().mockResolvedValue(undefined),
- };
- vi.mock('@/database/models/topic', () => ({
-@@ -208,8 +215,11 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () =>
- 
-   beforeEach(() => {
-     vi.clearAllMocks();
+@@ -212,0 +216 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () =>
 +    topicMock.appendRunningOperationChild.mockResolvedValue(true);
-     topicMock.create.mockResolvedValue({ id: 'topic-1', metadata: undefined });
-     topicMock.findById.mockResolvedValue(undefined);
+@@ -214,0 +219,2 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () =>
 +    topicMock.releaseTaskCallbackReservation.mockResolvedValue(undefined);
 +    topicMock.tryReserveTaskCallback.mockResolvedValue(true);
-     topicMock.updateMetadata.mockResolvedValue(undefined);
-     mockMessageCreate.mockResolvedValue({ id: 'msg-1' });
-     mockResolveAttachmentsByFileIds.mockResolvedValue({ ...emptyResolvedAttachments });
-@@ -219,6 +229,7 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () =>
-     mockGetHeterogeneousResumeSessionId.mockResolvedValue(undefined);
-     mockDeviceFindByDeviceId.mockResolvedValue({ defaultCwd: '/Users/alice/repo' });
-     mockDeviceFindWorkspaceDeviceById.mockResolvedValue(undefined);
+@@ -228,0 +235 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () =>
 +    mockCreateOperationMetadata.mockResolvedValue(undefined);
-     mockIngestAttachment.mockReset();
-     heteroAgentConfig.agencyConfig = { heterogeneousProvider: { type: 'claude-code' } } as any;
-     heteroAgentConfig.model = 'claude-code';
 @@ -858,12 +869,117 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () =>
        },
      };
