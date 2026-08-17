@@ -3084,32 +3084,6 @@ index b09cd2474a9f5e3685c573bf930be0ece9941267..3c0f29ada537ea53f7cef27e03466224
      it('recovers a stale reservation left by a crashed delivery worker', async () => {
        const topicId = 'task-callback-stale-reservation';
        await serverDB.insert(topics).values({
-diff --git a/packages/database/src/models/session.ts b/packages/database/src/models/session.ts
-index 0d912bfb0bd0f9c9ee96d019c1280e56d3b92413..3f51efdbda362dc9778816650a444a5184bc5216 100644
---- a/packages/database/src/models/session.ts
-+++ b/packages/database/src/models/session.ts
-@@ -621,13 +621,14 @@ export class SessionModel {
-       });
- 
-       // Filter and map results, ensuring valid session associations
--      return (
--        results
--          .filter((item) => item.agentsToSessions && item.agentsToSessions.length > 0)
--          // @ts-expect-error
--          .map((item) => item.agentsToSessions[0].session)
--          .filter((session) => session !== null && session !== undefined)
--      );
-+      return results
-+        .filter((item) => item.agentsToSessions && item.agentsToSessions.length > 0)
-+        .map(
-+          (item) =>
-+            (item.agentsToSessions as Array<{ session: SessionItem | null | undefined }>)[0]
-+              ?.session,
-+        )
-+        .filter((session) => session !== null && session !== undefined);
-     } catch (e) {
-       console.error('findSessionsByKeywords error:', e, { keyword });
-       return [];
 diff --git a/packages/database/src/models/topic.ts b/packages/database/src/models/topic.ts
 index 06a2e50321334e0a860752a5029fbe6abc347488..d7153995d51e37a445e65792c987d5debf3ce0ae 100644
 --- a/packages/database/src/models/topic.ts
