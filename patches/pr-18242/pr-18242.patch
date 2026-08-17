@@ -23,7 +23,7 @@ index 9dcd98d8cffa5b7fbbf40d0011fb15fd54ea7bbc..9e1e537189d19e25af2924e8e3c8e8f6
    startedAt: string;
    taskId: string;
 diff --git a/apps/cli/src/tools/__tests__/heteroTask.test.ts b/apps/cli/src/tools/__tests__/heteroTask.test.ts
-index 6da743e5550debf46000f254d0c4f16e7b040ab6..47a8f3551005b017ca2c6a73fe01dcb9a424275c 100644
+index 6da743e5550debf46000f254d0c4f16e7b040ab6..4ec23ec435cdf81e3cfe5aa537145641e9829f7e 100644
 --- a/apps/cli/src/tools/__tests__/heteroTask.test.ts
 +++ b/apps/cli/src/tools/__tests__/heteroTask.test.ts
 @@ -227,6 +227,37 @@ describe('runHeteroTask (openclaw)', () => {
@@ -72,10 +72,38 @@ index 6da743e5550debf46000f254d0c4f16e7b040ab6..47a8f3551005b017ca2c6a73fe01dcb9
      expect(spawnOpts.env.LOBEHUB_WORKSPACE_ID).toBe('ws-42');
    });
  
-@@ -380,6 +412,55 @@ describe('runHeteroTask (openclaw)', () => {
+@@ -378,6 +410,81 @@ describe('runHeteroTask (openclaw)', () => {
+       expect(call[0]).toBe('ws-99');
+     }
    });
- });
- 
++
++  it('reports a signal exit as a cancelled terminal signal', async () => {
++    const child = makeMockChild(7788);
++    spawnMock.mockReturnValue(child);
++
++    await runHeteroTask({
++      agentType: 'openclaw',
++      operationId: 'op-cancelled',
++      prompt: 'cancel me',
++      taskId: 'task-cancelled',
++      topicId: 'topic-cancelled',
++    });
++
++    child._emit('close', null, 'SIGINT');
++    await new Promise((resolve) => setImmediate(resolve));
++
++    expect(notifyMutateMock).toHaveBeenCalledWith(
++      expect.objectContaining({
++        cancelled: true,
++        done: true,
++        operationId: 'op-cancelled',
++        role: 'assistant',
++        topicId: 'topic-cancelled',
++      }),
++    );
++  });
++});
++
 +describe('runHeteroTask retry ownership', () => {
 +  beforeEach(() => {
 +    vi.clearAllMocks();
@@ -123,13 +151,11 @@ index 6da743e5550debf46000f254d0c4f16e7b040ab6..47a8f3551005b017ca2c6a73fe01dcb9
 +      expect(notifyMutateMock).not.toHaveBeenCalled();
 +    },
 +  );
-+});
-+
+ });
+ 
  describe('runHeteroTask (hermes)', () => {
-   beforeEach(() => {
-     vi.clearAllMocks();
 diff --git a/apps/cli/src/tools/heteroTask.ts b/apps/cli/src/tools/heteroTask.ts
-index 007b13ff69f500afd3981334f95fc58ad372608d..d9bf7dbe0fdf0ae7d02b87c98f1e7ab0ca4ba66a 100644
+index 007b13ff69f500afd3981334f95fc58ad372608d..d2d21a4993aeaf03b5b14c899ae8aae28d2a8454 100644
 --- a/apps/cli/src/tools/heteroTask.ts
 +++ b/apps/cli/src/tools/heteroTask.ts
 @@ -63,6 +63,7 @@ export interface RunHeteroTaskParams {
@@ -156,23 +182,37 @@ index 007b13ff69f500afd3981334f95fc58ad372608d..d9bf7dbe0fdf0ae7d02b87c98f1e7ab0
        role: 'assistant',
        topicId,
      });
-@@ -113,6 +116,7 @@ async function sendAutoNotify(
+@@ -106,15 +109,17 @@ async function sendAutoNotify(
+  * `agent_runtime_end`, close the frontend subscription, and fire the run's
+  * lifecycle hooks (task lifecycle + IM bot callback).
+  *
+- * Pass `error` to finalize the run as FAILED (non-zero process exit) — the
+- * server marks the owning task failed and renders the error. Omit it for a
+- * clean completion (the agent already sent its final message via `lh notify`).
++ * Pass `error` to finalize the run as FAILED (non-zero process exit), or
++ * `cancelled` to finalize it as INTERRUPTED (signal exit). Omit both for a clean
++ * completion (the agent already sent its final message via `lh notify`).
+  */
  async function sendTerminalSignal(
    topicId: string,
    agentId?: string,
 +  operationId?: string,
    workspaceId?: string,
    error?: { message: string; type?: string },
++  cancelled = false,
  ): Promise<void> {
-@@ -122,6 +126,7 @@ async function sendTerminalSignal(
+   try {
+     const client = await getTrpcClient(workspaceId);
+@@ -122,6 +127,8 @@ async function sendTerminalSignal(
        agentId,
        content: '',
        done: true,
 +      operationId,
++      ...(cancelled ? { cancelled: true } : {}),
        ...(error ? { error } : {}),
        role: 'assistant',
        topicId,
-@@ -169,6 +174,7 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
+@@ -169,6 +176,7 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
      agentType,
      cwd,
      operationId,
@@ -180,7 +220,7 @@ index 007b13ff69f500afd3981334f95fc58ad372608d..d9bf7dbe0fdf0ae7d02b87c98f1e7ab0
      platformAgentId,
      prompt,
      taskId,
-@@ -180,9 +186,12 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
+@@ -180,9 +188,12 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
    // Propagate workspace scope into the spawned child so its own `lh notify`
    // invocations (and any grandchildren it shells out) inherit the same scope
    // via getTrpcClient → resolveWorkspaceId.
@@ -196,7 +236,7 @@ index 007b13ff69f500afd3981334f95fc58ad372608d..d9bf7dbe0fdf0ae7d02b87c98f1e7ab0
  
    if (agentType === 'openclaw') {
      // openclaw agent --local is one-shot: each invocation processes one message and exits.
-@@ -195,11 +204,16 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
+@@ -195,11 +206,16 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
      // history was not cleanly committed.
      const enrichedPrompt = `${prompt}\n\n${buildNotifyProtocol(lhPath, topicId)}`;
  
@@ -215,7 +255,7 @@ index 007b13ff69f500afd3981334f95fc58ad372608d..d9bf7dbe0fdf0ae7d02b87c98f1e7ab0
          try {
            process.kill(existing.pid, 'SIGTERM');
          } catch {
-@@ -216,7 +230,7 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
+@@ -216,7 +232,7 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
          '--agent',
          openclawAgent,
          '--session-id',
@@ -224,7 +264,7 @@ index 007b13ff69f500afd3981334f95fc58ad372608d..d9bf7dbe0fdf0ae7d02b87c98f1e7ab0
          '--message',
          enrichedPrompt,
          '--local',
-@@ -239,6 +253,7 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
+@@ -239,6 +255,7 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
        agentId,
        agentType,
        operationId,
@@ -232,7 +272,7 @@ index 007b13ff69f500afd3981334f95fc58ad372608d..d9bf7dbe0fdf0ae7d02b87c98f1e7ab0
        pid,
        startedAt: new Date().toISOString(),
        taskId,
-@@ -255,6 +270,7 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
+@@ -255,6 +272,7 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
      // - Clean exit (code=0, no signal): openclaw already sent its final message via
      //   `lh notify`; just send a terminal signal to publish `agent_runtime_end`.
      child.on('close', (code, signal) => {
@@ -240,7 +280,7 @@ index 007b13ff69f500afd3981334f95fc58ad372608d..d9bf7dbe0fdf0ae7d02b87c98f1e7ab0
        removeTask(taskId);
        if (code !== 0 || signal !== null) {
          const cancelled = signal !== null;
-@@ -263,17 +279,18 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
+@@ -263,17 +281,19 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
            : `Task failed (exit code: ${code})`;
          // Write the notice bubble first, THEN signal terminal (sequential).
          // Fire-and-forget both, but ensure the terminal signal is always sent.
@@ -252,6 +292,7 @@ index 007b13ff69f500afd3981334f95fc58ad372608d..d9bf7dbe0fdf0ae7d02b87c98f1e7ab0
 +            operationId,
              workspaceId,
              cancelled ? undefined : { message: text, type: 'HeteroProcessError' },
++            cancelled,
            ),
          );
        } else {
@@ -261,7 +302,7 @@ index 007b13ff69f500afd3981334f95fc58ad372608d..d9bf7dbe0fdf0ae7d02b87c98f1e7ab0
        }
      });
  
-@@ -281,9 +298,14 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
+@@ -281,9 +301,14 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
    }
  
    if (agentType === 'hermes') {
@@ -278,7 +319,7 @@ index 007b13ff69f500afd3981334f95fc58ad372608d..d9bf7dbe0fdf0ae7d02b87c98f1e7ab0
          try {
            process.kill(existing.pid, 'SIGTERM');
          } catch {
-@@ -294,7 +316,7 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
+@@ -294,7 +319,7 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
      }
  
      // Resume the previous session for this topic if one exists.
@@ -287,7 +328,7 @@ index 007b13ff69f500afd3981334f95fc58ad372608d..d9bf7dbe0fdf0ae7d02b87c98f1e7ab0
      const hermesArgs: string[] = ['chat', '--query', prompt, '--quiet', '--accept-hooks'];
      if (existingSessionId) {
        hermesArgs.push('--resume', existingSessionId);
-@@ -317,6 +339,7 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
+@@ -317,6 +342,7 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
        agentId,
        agentType,
        operationId,
@@ -295,7 +336,7 @@ index 007b13ff69f500afd3981334f95fc58ad372608d..d9bf7dbe0fdf0ae7d02b87c98f1e7ab0
        pid,
        startedAt: new Date().toISOString(),
        taskId,
-@@ -335,6 +358,7 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
+@@ -335,6 +361,7 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
      });
  
      child.on('close', (code, signal) => {
@@ -303,7 +344,7 @@ index 007b13ff69f500afd3981334f95fc58ad372608d..d9bf7dbe0fdf0ae7d02b87c98f1e7ab0
        removeTask(taskId);
  
        if (code !== 0 || signal !== null) {
-@@ -342,10 +366,11 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
+@@ -342,12 +369,14 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
          const text = cancelled
            ? `Task cancelled (signal: ${signal})`
            : `Task failed (exit code: ${code})`;
@@ -315,8 +356,11 @@ index 007b13ff69f500afd3981334f95fc58ad372608d..d9bf7dbe0fdf0ae7d02b87c98f1e7ab0
 +            operationId,
              workspaceId,
              cancelled ? undefined : { message: text, type: 'HeteroProcessError' },
++            cancelled,
            ),
-@@ -358,14 +383,14 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
+         );
+         return;
+@@ -358,14 +387,14 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
        const sessionId = parseHermesSessionId(stderr);
        const response = stdout.trim();
  
@@ -335,7 +379,7 @@ index 007b13ff69f500afd3981334f95fc58ad372608d..d9bf7dbe0fdf0ae7d02b87c98f1e7ab0
        }
      });
  
-@@ -397,6 +422,7 @@ export async function cancelHeteroTask(params: CancelHeteroTaskParams): Promise<
+@@ -397,6 +426,7 @@ export async function cancelHeteroTask(params: CancelHeteroTaskParams): Promise<
        taskId,
        'Task already completed or cancelled',
        entry.agentId,
@@ -344,7 +388,7 @@ index 007b13ff69f500afd3981334f95fc58ad372608d..d9bf7dbe0fdf0ae7d02b87c98f1e7ab0
      );
    }
 diff --git a/apps/desktop/src/main/controllers/GatewayConnectionCtr.ts b/apps/desktop/src/main/controllers/GatewayConnectionCtr.ts
-index b9e4e48660cd2b147114fb1025a2defa8b68406e..fe61fde15d24a6e04a369ea44f432acdc4292872 100644
+index b9e4e48660cd2b147114fb1025a2defa8b68406e..bb15ab794101d8263e8f2492f7c8565cc2807964 100644
 --- a/apps/desktop/src/main/controllers/GatewayConnectionCtr.ts
 +++ b/apps/desktop/src/main/controllers/GatewayConnectionCtr.ts
 @@ -75,6 +75,7 @@ interface PlatformTaskEntry {
@@ -421,7 +465,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..fe61fde15d24a6e04a369ea44f432acd
          pid,
          topicId,
          workspaceId,
-@@ -785,9 +796,11 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -785,17 +796,22 @@ export default class GatewayConnectionCtr extends ControllerModule {
            const text = signal
              ? `Task cancelled (signal: ${signal})`
              : `Task failed (exit code: ${code})`;
@@ -433,8 +477,10 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..fe61fde15d24a6e04a369ea44f432acd
              role: 'assistant',
              topicId,
              workspaceId,
-@@ -796,6 +809,8 @@ export default class GatewayConnectionCtr extends ControllerModule {
+           }).finally(() =>
+             this.sendNotify({
                agentId,
++              cancelled: !!signal,
                content: '',
                done: true,
 +              error: terminalError,
@@ -442,7 +488,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..fe61fde15d24a6e04a369ea44f432acd
                role: 'assistant',
                topicId,
                workspaceId,
-@@ -806,6 +821,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -806,6 +822,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
              agentId,
              content: '',
              done: true,
@@ -450,7 +496,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..fe61fde15d24a6e04a369ea44f432acd
              role: 'assistant',
              topicId,
              workspaceId,
-@@ -824,14 +840,18 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -824,14 +841,18 @@ export default class GatewayConnectionCtr extends ControllerModule {
        if (commandStatus.resolvedPathEnv) childEnv.PATH = commandStatus.resolvedPathEnv;
        // Kill any existing hermes process for this topicId before spawning a new one.
        for (const [existingTaskId, entry] of this.platformTasks) {
@@ -471,7 +517,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..fe61fde15d24a6e04a369ea44f432acd
        const hermesArgs: string[] = ['chat', '--query', prompt, '--quiet', '--accept-hooks'];
        if (existingSessionId) {
          hermesArgs.push('--resume', existingSessionId);
-@@ -865,6 +885,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -865,6 +886,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
          agentId,
          agentType,
          operationId,
@@ -479,7 +525,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..fe61fde15d24a6e04a369ea44f432acd
          pid,
          topicId,
          workspaceId,
-@@ -889,9 +910,11 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -889,17 +911,22 @@ export default class GatewayConnectionCtr extends ControllerModule {
            const text = signal
              ? `Task cancelled (signal: ${signal})`
              : `Task failed (exit code: ${code})`;
@@ -491,8 +537,10 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..fe61fde15d24a6e04a369ea44f432acd
              role: 'assistant',
              topicId,
              workspaceId,
-@@ -900,6 +923,8 @@ export default class GatewayConnectionCtr extends ControllerModule {
+           }).finally(() =>
+             this.sendNotify({
                agentId,
++              cancelled: !!signal,
                content: '',
                done: true,
 +              error: terminalError,
@@ -500,7 +548,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..fe61fde15d24a6e04a369ea44f432acd
                role: 'assistant',
                topicId,
                workspaceId,
-@@ -913,12 +938,13 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -913,12 +940,13 @@ export default class GatewayConnectionCtr extends ControllerModule {
          const sessionId = parseHermesSessionId(stderr);
          const response = stdout.trim();
  
@@ -515,7 +563,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..fe61fde15d24a6e04a369ea44f432acd
              role: 'assistant',
              topicId,
              workspaceId,
-@@ -927,6 +953,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -927,6 +955,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
                agentId,
                content: '',
                done: true,
@@ -523,7 +571,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..fe61fde15d24a6e04a369ea44f432acd
                role: 'assistant',
                topicId,
                workspaceId,
-@@ -937,6 +964,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -937,6 +966,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
              agentId,
              content: '',
              done: true,
@@ -531,8 +579,11 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..fe61fde15d24a6e04a369ea44f432acd
              role: 'assistant',
              topicId,
              workspaceId,
-@@ -1035,6 +1063,8 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -1033,8 +1063,11 @@ export default class GatewayConnectionCtr extends ControllerModule {
+    */
+   private async sendNotify(params: {
      agentId?: string;
++    cancelled?: boolean;
      content: string;
      done?: boolean;
 +    error?: { message: string; type?: string };
@@ -541,10 +592,10 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..fe61fde15d24a6e04a369ea44f432acd
      topicId: string;
      /**
 diff --git a/apps/desktop/src/main/controllers/__tests__/GatewayConnectionCtr.test.ts b/apps/desktop/src/main/controllers/__tests__/GatewayConnectionCtr.test.ts
-index e954fd1cb43460b8fc67f994a12212801891f4b7..0e04f31f2002780003dea0e6a03aeec4cc235ddd 100644
+index e954fd1cb43460b8fc67f994a12212801891f4b7..bedc3d21a7331a3cd3c23c6480feef47bd228f65 100644
 --- a/apps/desktop/src/main/controllers/__tests__/GatewayConnectionCtr.test.ts
 +++ b/apps/desktop/src/main/controllers/__tests__/GatewayConnectionCtr.test.ts
-@@ -1073,11 +1073,36 @@ describe('GatewayConnectionCtr', () => {
+@@ -1073,11 +1073,61 @@ describe('GatewayConnectionCtr', () => {
        ];
        expect(spawnCommand).toBe('/resolved/bin/openclaw');
        expect(spawnOptions.env.PATH).toBe('/resolved/bin:/usr/bin');
@@ -578,10 +629,35 @@ index e954fd1cb43460b8fc67f994a12212801891f4b7..0e04f31f2002780003dea0e6a03aeec4
 +      );
 +    });
 +
++    it('reports a signal exit as a cancelled terminal signal', async () => {
++      const child = makeMockChild();
++      const notifySpy = vi.spyOn(ctr as any, 'sendNotify').mockResolvedValue(undefined);
++      spawnMock.mockReturnValue(child);
++
++      await (ctr as any).runHeteroTask({
++        agentType: 'openclaw',
++        operationId: 'op-cancelled-child',
++        prompt: 'hello',
++        taskId: 'task-cancelled-child',
++        topicId: 'topic-cancelled-child',
++      });
++      child._emit('close', null, 'SIGINT');
++      await vi.advanceTimersByTimeAsync(0);
++
++      expect(notifySpy).toHaveBeenCalledWith(
++        expect.objectContaining({
++          cancelled: true,
++          done: true,
++          error: undefined,
++          operationId: 'op-cancelled-child',
++        }),
++      );
++    });
++
      it.each([
        {
          environmentAgentId: 'ops-default',
-@@ -1177,6 +1202,39 @@ describe('GatewayConnectionCtr', () => {
+@@ -1177,6 +1227,39 @@ describe('GatewayConnectionCtr', () => {
        killSpy.mockRestore();
      });
  
@@ -621,7 +697,7 @@ index e954fd1cb43460b8fc67f994a12212801891f4b7..0e04f31f2002780003dea0e6a03aeec4
      it('kills the complete detached process group when cancelling a task', async () => {
        const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
        const child = makeMockChild(5555);
-@@ -1383,6 +1441,7 @@ describe('GatewayConnectionCtr', () => {
+@@ -1383,6 +1466,7 @@ describe('GatewayConnectionCtr', () => {
          expect(notifySpy).toHaveBeenCalledWith(
            expect.objectContaining({
              content: 'session_id: part of the final answer\nHello from Hermes',
@@ -733,7 +809,7 @@ index b614681b51528466a0ae993bfcabf887cf9b91e4..e76b9d3cbc5017f3942046220f8731c9
        // best-effort — swallow
      }
 diff --git a/apps/server/src/routers/lambda/__tests__/agentNotify.test.ts b/apps/server/src/routers/lambda/__tests__/agentNotify.test.ts
-index d2f9172c1b6d340f66c231e49ec6baf63f78ca1b..0775be3de45e5adb3e8fcb05a795def21797c73c 100644
+index d2f9172c1b6d340f66c231e49ec6baf63f78ca1b..424037d6f3a7aeef26fb8720f1ce8266d32bf1bd 100644
 --- a/apps/server/src/routers/lambda/__tests__/agentNotify.test.ts
 +++ b/apps/server/src/routers/lambda/__tests__/agentNotify.test.ts
 @@ -16,7 +16,9 @@ vi.mock('@/business/server/trpc-middlewares/rbacPermission', () => ({
@@ -783,13 +859,42 @@ index d2f9172c1b6d340f66c231e49ec6baf63f78ca1b..0775be3de45e5adb3e8fcb05a795def2
      // Default: a non-task op so the plan-instantiation guard no-ops unless a
      // test opts into a task-bound op.
      mockOpFindById.mockResolvedValue({ parentOperationId: null, taskId: null });
-@@ -133,10 +147,100 @@ describe('agentNotifyRouter.notify — remote hetero terminal signal', () => {
+@@ -133,10 +147,129 @@ describe('agentNotifyRouter.notify — remote hetero terminal signal', () => {
      });
      expect(onError).not.toHaveBeenCalled();
  
 -    // Running marker dropped so a duplicate done can't re-fire.
 -    await vi.waitFor(() =>
 -      expect(mockTopicUpdateMetadata).toHaveBeenCalledWith(TOPIC, { runningOperation: null }),
++    expect(mockTopicTakeRunningOperation).toHaveBeenCalledWith(TOPIC, OP);
++  });
++
++  it('cancelled terminal signal finalizes the run as interrupted', async () => {
++    const { onComplete, onError } = registerHooks();
++
++    await createCaller().notify({
++      cancelled: true,
++      content: '',
++      done: true,
++      operationId: OP,
++      role: 'assistant',
++      topicId: TOPIC,
++    });
++
++    expect(mockPublishAgentRuntimeEnd).toHaveBeenCalledWith(
++      expect.objectContaining({
++        finalState: { reason: 'interrupted' },
++        operationId: OP,
++        reason: 'interrupted',
++      }),
+     );
++    await vi.waitFor(() => expect(onComplete).toHaveBeenCalledTimes(1));
++    expect(onComplete.mock.calls[0][0]).toMatchObject({
++      operationId: OP,
++      reason: 'interrupted',
++    });
++    expect(onError).not.toHaveBeenCalled();
++    expect(mockInstantiateVerifyPlan).not.toHaveBeenCalled();
 +    expect(mockTopicTakeRunningOperation).toHaveBeenCalledWith(TOPIC, OP);
 +  });
 +
@@ -810,7 +915,7 @@ index d2f9172c1b6d340f66c231e49ec6baf63f78ca1b..0775be3de45e5adb3e8fcb05a795def2
 +      }),
 +      'done',
 +      expect.anything(),
-     );
++    );
 +    // The lifecycle must not issue a second topic lookup for its hooks.
 +    expect(mockTopicFindById).toHaveBeenCalledTimes(1);
 +    completeOperationSpy.mockRestore();
@@ -887,7 +992,7 @@ index d2f9172c1b6d340f66c231e49ec6baf63f78ca1b..0775be3de45e5adb3e8fcb05a795def2
    });
  
    it('durably ensures the verify plan for a task-bound run before the gate', async () => {
-@@ -172,9 +276,7 @@ describe('agentNotifyRouter.notify — remote hetero terminal signal', () => {
+@@ -172,9 +305,7 @@ describe('agentNotifyRouter.notify — remote hetero terminal signal', () => {
  
      await createCaller().notify({ content: '', done: true, role: 'assistant', topicId: TOPIC });
  
@@ -898,7 +1003,7 @@ index d2f9172c1b6d340f66c231e49ec6baf63f78ca1b..0775be3de45e5adb3e8fcb05a795def2
      expect(mockInstantiateVerifyPlan).not.toHaveBeenCalled();
    });
  
-@@ -200,4 +302,180 @@ describe('agentNotifyRouter.notify — remote hetero terminal signal', () => {
+@@ -200,4 +331,180 @@ describe('agentNotifyRouter.notify — remote hetero terminal signal', () => {
      });
      expect(onComplete).toHaveBeenCalledTimes(1);
    });
@@ -1080,7 +1185,7 @@ index d2f9172c1b6d340f66c231e49ec6baf63f78ca1b..0775be3de45e5adb3e8fcb05a795def2
 +  });
  });
 diff --git a/apps/server/src/routers/lambda/agentNotify.ts b/apps/server/src/routers/lambda/agentNotify.ts
-index 52dfe8a358c566fe6ee03df9105967c8ce1da867..3923adc242be3faa2cad824438c787ffb0feadf3 100644
+index 52dfe8a358c566fe6ee03df9105967c8ce1da867..10c2b8b9d684e6abb97157720450223ec84965c7 100644
 --- a/apps/server/src/routers/lambda/agentNotify.ts
 +++ b/apps/server/src/routers/lambda/agentNotify.ts
 @@ -1,4 +1,5 @@
@@ -1089,7 +1194,16 @@ index 52dfe8a358c566fe6ee03df9105967c8ce1da867..3923adc242be3faa2cad824438c787ff
  import { RequestTrigger } from '@lobechat/types';
  import { TRPCError } from '@trpc/server';
  import debug from 'debug';
-@@ -79,6 +80,12 @@ const NotifySchema = z.object({
+@@ -48,6 +49,8 @@ const agentNotifyWriteProcedure = agentNotifyProcedure.use(withScopedPermission(
+ const NotifySchema = z.object({
+   /** Agent ID to trigger (overrides the topic's default agent) */
+   agentId: z.string().optional(),
++  /** Signal that the remote hetero run was cancelled by a process signal. */
++  cancelled: z.boolean().optional(),
+   /** Message content from the external agent */
+   content: z.string(),
+   /**
+@@ -79,6 +82,12 @@ const NotifySchema = z.object({
     * in-place, keeping a single bubble in the UI.
     */
    messageId: z.string().optional(),
@@ -1102,7 +1216,25 @@ index 52dfe8a358c566fe6ee03df9105967c8ce1da867..3923adc242be3faa2cad824438c787ff
    /**
     * Role of the message to write:
     * - 'user' (default): write as user message and trigger the agent to reply
-@@ -139,8 +146,35 @@ export const agentNotifyRouter = router({
+@@ -108,6 +117,7 @@ export const agentNotifyRouter = router({
+       threadId,
+       role = 'user',
+       continue: shouldContinue = false,
++      cancelled = false,
+       done = false,
+       error: terminalError,
+       messageId,
+@@ -115,7 +125,8 @@ export const agentNotifyRouter = router({
+ 
+     // An error is itself a terminal signal — finalize the run even if the
+     // remote agent didn't also set `done`.
+-    const isTerminal = done || !!terminalError;
++    const isTerminal = done || !!terminalError || cancelled;
++    const completionReason = terminalError ? 'error' : cancelled ? 'interrupted' : 'done';
+ 
+     log(
+       'notify: topicId=%s, agentId=%s, role=%s, continue=%s, done=%s, messageId=%s, content=%s',
+@@ -139,8 +150,35 @@ export const agentNotifyRouter = router({
  
      // Extract the operationId seeded by execAgent for remote hetero agents.
      // Used to publish notify_update / agent_runtime_end events to the gateway WS.
@@ -1140,7 +1272,7 @@ index 52dfe8a358c566fe6ee03df9105967c8ce1da867..3923adc242be3faa2cad824438c787ff
  
      const agentId = inputAgentId ?? topic.agentId;
      if (!agentId) {
-@@ -160,6 +194,25 @@ export const agentNotifyRouter = router({
+@@ -160,6 +198,25 @@ export const agentNotifyRouter = router({
        workspaceId: ctx.workspaceId,
      });
  
@@ -1166,7 +1298,7 @@ index 52dfe8a358c566fe6ee03df9105967c8ce1da867..3923adc242be3faa2cad824438c787ff
      /**
       * Publish a stream event for remote hetero agents (openclaw / hermes).
       * Fire-and-forget — stream publish failures must not break the notify response.
-@@ -169,18 +222,6 @@ export const agentNotifyRouter = router({
+@@ -169,18 +226,6 @@ export const agentNotifyRouter = router({
        try {
          const stream = getStreamManager();
          if (isTerminal) {
@@ -1185,7 +1317,7 @@ index 52dfe8a358c566fe6ee03df9105967c8ce1da867..3923adc242be3faa2cad824438c787ff
            // Remote hetero (openclaw / hermes) has no `heteroFinish` callback, so
            // this is its terminal funnel. Route it through CompletionLifecycle's
            // single entry — the SAME owner the CLI / in-process paths use — so
-@@ -189,9 +230,9 @@ export const agentNotifyRouter = router({
+@@ -189,20 +234,20 @@ export const agentNotifyRouter = router({
            // success the delivery-checker verify gate runs against the task's plan.
            // (Previously this fired the stripped-down dispatchTerminalHooks, which
            // skipped persist + verify — so openclaw/hermes tasks never auto-verified.)
@@ -1198,7 +1330,21 @@ index 52dfe8a358c566fe6ee03df9105967c8ce1da867..3923adc242be3faa2cad824438c787ff
            let lastAssistantContent: string | undefined = content || undefined;
            if (!lastAssistantContent && writtenMessageId) {
              const msg = await ctx.messageModel.findById(writtenMessageId).catch(() => undefined);
-@@ -239,32 +280,49 @@ export const agentNotifyRouter = router({
+             lastAssistantContent = (msg?.content as string | undefined) ?? undefined;
+           }
+           // Mirror heteroFinish's done-path prep (this is the openclaw/hermes
+-          // equivalent terminal funnel). Skipped on the error path (verify is
+-          // done-only). Each step is self-guarded so a failure degrades instead
++          // equivalent terminal funnel). Only needed for successful completion
++          // (verify is done-only). Each step is self-guarded so a failure degrades instead
+           // of aborting the terminal funnel.
+           let goal: unknown = '';
+-          if (!terminalError) {
++          if (completionReason === 'done') {
+             // Guarantee the task's verify plan is DURABLY persisted before the gate
+             // (completeOperation → runVerifyOnCompletion) reads it. The start-side
+             // instantiation in execAgent is fire-and-forget on a SEPARATE
+@@ -239,32 +284,54 @@ export const agentNotifyRouter = router({
                log('notify: failed to resolve verify goal (non-fatal): %O', err);
              }
            }
@@ -1246,7 +1392,7 @@ index 52dfe8a358c566fe6ee03df9105967c8ce1da867..3923adc242be3faa2cad824438c787ff
 +                topicId,
 +                userId: ctx.userId,
 +              },
-+              terminalError ? 'error' : 'done',
++              completionReason,
 +              // openclaw/hermes surface their failure via the runtime-end stream event
 +              // + their own message write, not the lifecycle's assistant-row error
 +              // write — keep that prior behavior on the error path.
@@ -1262,19 +1408,24 @@ index 52dfe8a358c566fe6ee03df9105967c8ce1da867..3923adc242be3faa2cad824438c787ff
 +            if (!claimed) return;
 +          }
 +
++          const streamReason = completionReason === 'done' ? 'success' : completionReason;
 +          await stream.publishAgentRuntimeEnd({
 +            finalState: terminalError
 +              ? { error: terminalError.message, reason: 'error' }
-+              : { reason: 'success' },
++              : { reason: streamReason },
 +            operationId: remoteOperationId,
-+            reason: terminalError ? 'error' : 'success',
-+            reasonDetail: terminalError?.message ?? 'Remote hetero agent task completed',
++            reason: streamReason,
++            reasonDetail:
++              terminalError?.message ??
++              (cancelled
++                ? 'Remote hetero agent task cancelled'
++                : 'Remote hetero agent task completed'),
 +            stepIndex: 0,
 +          });
          } else {
            // Lightweight invalidation — frontend calls fetchAndReplaceMessages.
            await stream.publishStreamEvent(remoteOperationId, {
-@@ -279,6 +337,7 @@ export const agentNotifyRouter = router({
+@@ -279,6 +346,7 @@ export const agentNotifyRouter = router({
            remoteOperationId,
            err,
          );
@@ -1282,7 +1433,7 @@ index 52dfe8a358c566fe6ee03df9105967c8ce1da867..3923adc242be3faa2cad824438c787ff
        }
      };
  
-@@ -289,8 +348,7 @@ export const agentNotifyRouter = router({
+@@ -289,8 +357,7 @@ export const agentNotifyRouter = router({
          // 1. Caller-supplied messageId (subsequent notify calls with --message-id)
          // 2. Placeholder assistantMessageId seeded by execAgent (first notify call for remote hetero)
          // Using the placeholder avoids creating a second empty bubble in the UI.
@@ -1292,7 +1443,7 @@ index 52dfe8a358c566fe6ee03df9105967c8ce1da867..3923adc242be3faa2cad824438c787ff
          const resolvedMessageId = messageId ?? placeholderMessageId;
  
          // Update existing message if we have a resolved target
-@@ -313,11 +371,12 @@ export const agentNotifyRouter = router({
+@@ -313,11 +380,12 @@ export const agentNotifyRouter = router({
            // `lastAssistantContent` — bot completion callbacks and the task
            // lifecycle follow-ups (handoff / auto-review / brief) depend on it.
            if (isTerminal && !content) {
@@ -1307,7 +1458,7 @@ index 52dfe8a358c566fe6ee03df9105967c8ce1da867..3923adc242be3faa2cad824438c787ff
            if (shouldContinue) {
              const result = await ctx.aiAgentService.execAgent({
                agentId,
-@@ -335,7 +394,7 @@ export const agentNotifyRouter = router({
+@@ -335,7 +403,7 @@ export const agentNotifyRouter = router({
          // Terminal signal (done or error) with no messageId and empty content →
          // just finalize the run, no DB write.
          if (isTerminal && !content) {
@@ -1316,7 +1467,7 @@ index 52dfe8a358c566fe6ee03df9105967c8ce1da867..3923adc242be3faa2cad824438c787ff
            return { messageId: undefined, operationId: undefined, topicId };
          }
  
-@@ -347,7 +406,8 @@ export const agentNotifyRouter = router({
+@@ -347,7 +415,8 @@ export const agentNotifyRouter = router({
            topicId,
          });
  
@@ -1416,7 +1567,7 @@ index 857c7ff595af95dee1e644d0031ff98aa45b53d6..15d371befb52c696e6eead0206e05e79
          log('[%s] no-state abandon: topic lookup failed (non-fatal): %O', operationId, e);
        }
 diff --git a/apps/server/src/services/agentRuntime/CompletionLifecycle.ts b/apps/server/src/services/agentRuntime/CompletionLifecycle.ts
-index c8334a57268e12d89df449c6dccd277ad2addca6..2057a31de9391e800f868429099bdd3b1b62e640 100644
+index c8334a57268e12d89df449c6dccd277ad2addca6..02e5cd3cc6ddd4c6edf880c3ac06b087d005b155 100644
 --- a/apps/server/src/services/agentRuntime/CompletionLifecycle.ts
 +++ b/apps/server/src/services/agentRuntime/CompletionLifecycle.ts
 @@ -73,6 +73,8 @@ export interface OperationCompletionInput {
@@ -1436,6 +1587,15 @@ index c8334a57268e12d89df449c6dccd277ad2addca6..2057a31de9391e800f868429099bdd3b
          topicId: input.topicId,
          userId: input.userId ?? this.userId,
        },
+@@ -597,7 +600,7 @@ export class CompletionLifecycle {
+    */
+   async completeOperation(
+     input: OperationCompletionInput,
+-    reason: 'done' | 'error',
++    reason: 'done' | 'error' | 'interrupted',
+     options?: CompleteOperationOptions,
+   ): Promise<void> {
+     await this.dispatchHooks(input.operationId, this.buildStateFromInput(input), reason, options);
 diff --git a/apps/server/src/services/agentRuntime/__tests__/AbandonOperationService.test.ts b/apps/server/src/services/agentRuntime/__tests__/AbandonOperationService.test.ts
 index 3a4addf8272af7838c170df06a4986eff20071ee..94da9032923e0486a61880a3bed32e953bb68c7d 100644
 --- a/apps/server/src/services/agentRuntime/__tests__/AbandonOperationService.test.ts
@@ -1814,6 +1974,18 @@ index e2616bbfbe9c5b7b05551f44676de40f451d6468..a869499c33889478b2b1d21faba6c4da
      it('recovers the topic from the operation when the cancellation caller omits it', async () => {
        (service as any).agentOperationModel.findById = vi
          .fn()
+diff --git a/apps/server/src/services/aiAgent/__tests__/execAgent.spineAnchor.test.ts b/apps/server/src/services/aiAgent/__tests__/execAgent.spineAnchor.test.ts
+index e5a3583c77741b19dd82ee586ce26b489beaa159..9db08e26cd78e167057dd4cd4c6103744961aa43 100644
+--- a/apps/server/src/services/aiAgent/__tests__/execAgent.spineAnchor.test.ts
++++ b/apps/server/src/services/aiAgent/__tests__/execAgent.spineAnchor.test.ts
+@@ -205,6 +205,7 @@ describe('AiAgentService.execAgent - user turn spine anchoring', () => {
+       'topic-1',
+       expect.stringMatching(/^agent-start-/),
+       undefined,
++      undefined,
+     );
+     expect(mockReleaseReservation).toHaveBeenCalledWith(
+       'topic-1',
 diff --git a/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts b/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
 index a964ccd847a5787e3a9d5847d550e4f87d27c1bf..8e9f6dbfad2cb4d05cfc81a2ed20697234a8eec4 100644
 --- a/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
@@ -2558,6 +2730,107 @@ index f62e9afd5c5de50212c8dfb0a96e1dcb9e9f0111..ddd05d27f3a8d90e9c6df86273667819
          updateMetadata: vi.fn(async (_id: string, patch: Record<string, any>, mergeBase?: any) => {
            meta = { ...(mergeBase ?? meta), ...patch };
          }),
+diff --git a/apps/server/src/services/heterogeneousAgent/__tests__/sessionResume.test.ts b/apps/server/src/services/heterogeneousAgent/__tests__/sessionResume.test.ts
+index f1912c8b0e3b5e503c9cb45a1307ac1ffb086835..f60ce96c9b25cc20743b09717bd7bd719499dd83 100644
+--- a/apps/server/src/services/heterogeneousAgent/__tests__/sessionResume.test.ts
++++ b/apps/server/src/services/heterogeneousAgent/__tests__/sessionResume.test.ts
+@@ -2,6 +2,7 @@
+ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+ 
+ import { type IStreamEventManager } from '@/server/modules/AgentRuntime/types';
++import { CompletionLifecycle } from '@/server/services/agentRuntime/CompletionLifecycle';
+ 
+ import { HeterogeneousAgentService, HeterogeneousPersistenceHandler } from '..';
+ import { __resetOperationStatesForTesting } from '../HeterogeneousPersistenceHandler';
+@@ -12,8 +13,14 @@ const createSilentStreamManager = (): IStreamEventManager =>
+   }) as unknown as IStreamEventManager;
+ 
+ describe('HeterogeneousAgentService — phase 2c session id persistence + resume', () => {
+-  beforeEach(() => __resetOperationStatesForTesting());
+-  afterEach(() => __resetOperationStatesForTesting());
++  beforeEach(() => {
++    __resetOperationStatesForTesting();
++    vi.spyOn(CompletionLifecycle.prototype, 'completeOperation').mockResolvedValue(undefined);
++  });
++  afterEach(() => {
++    __resetOperationStatesForTesting();
++    vi.restoreAllMocks();
++  });
+ 
+   describe('heteroFinish persists sessionId via TopicModel.updateMetadata', () => {
+     it('writes the CLI session id to topic.metadata.heteroSessionId', async () => {
+@@ -59,6 +66,11 @@ describe('HeterogeneousAgentService — phase 2c session id persistence + resume
+       const service = new HeterogeneousAgentService({} as any, 'user-1', {
+         persistenceHandler: handler,
+         streamEventManager: createSilentStreamManager(),
++        topicModel: {
++          findById,
++          settleRunningStatus: vi.fn(async () => undefined),
++          takeRunningOperation: vi.fn(async () => ({ isRoot: true, operation: {} })),
++        } as any,
+       });
+ 
+       await service.heteroFinish({
+@@ -114,6 +126,11 @@ describe('HeterogeneousAgentService — phase 2c session id persistence + resume
+       const service = new HeterogeneousAgentService({} as any, 'user-1', {
+         persistenceHandler: handler,
+         streamEventManager: createSilentStreamManager(),
++        topicModel: {
++          findById,
++          settleRunningStatus: vi.fn(async () => undefined),
++          takeRunningOperation: vi.fn(async () => ({ isRoot: true, operation: {} })),
++        } as any,
+       });
+ 
+       await service.heteroFinish({
+@@ -166,6 +183,11 @@ describe('HeterogeneousAgentService — phase 2c session id persistence + resume
+       const service = new HeterogeneousAgentService({} as any, 'user-1', {
+         persistenceHandler: handler,
+         streamEventManager: createSilentStreamManager(),
++        topicModel: {
++          findById,
++          settleRunningStatus: vi.fn(async () => undefined),
++          takeRunningOperation: vi.fn(async () => ({ isRoot: true, operation: {} })),
++        } as any,
+       });
+ 
+       // Simulate: sandbox was recycled, CC exited before emitting system.init
+@@ -222,6 +244,11 @@ describe('HeterogeneousAgentService — phase 2c session id persistence + resume
+       const service = new HeterogeneousAgentService({} as any, 'user-1', {
+         persistenceHandler: handler,
+         streamEventManager: createSilentStreamManager(),
++        topicModel: {
++          findById,
++          settleRunningStatus: vi.fn(async () => undefined),
++          takeRunningOperation: vi.fn(async () => ({ isRoot: true, operation: {} })),
++        } as any,
+       });
+ 
+       await service.heteroFinish({
+@@ -282,6 +309,11 @@ describe('HeterogeneousAgentService — phase 2c session id persistence + resume
+       const service = new HeterogeneousAgentService({} as any, 'user-1', {
+         persistenceHandler: handler,
+         streamEventManager: createSilentStreamManager(),
++        topicModel: {
++          findById,
++          settleRunningStatus: vi.fn(async () => undefined),
++          takeRunningOperation: vi.fn(async () => ({ isRoot: true, operation: {} })),
++        } as any,
+       });
+ 
+       await service.heteroFinish({
+@@ -346,6 +378,11 @@ describe('HeterogeneousAgentService — phase 2c session id persistence + resume
+       const service = new HeterogeneousAgentService({} as any, 'user-1', {
+         persistenceHandler: handler,
+         streamEventManager: stream,
++        topicModel: {
++          findById,
++          settleRunningStatus: vi.fn(async () => undefined),
++          takeRunningOperation: vi.fn(async () => ({ isRoot: true, operation: {} })),
++        } as any,
+       });
+ 
+       // Should not throw — sessionId persistence is best-effort
 diff --git a/apps/server/src/services/heterogeneousAgent/index.ts b/apps/server/src/services/heterogeneousAgent/index.ts
 index 1c161063453f93c7ecddcc81e3165b43e831c355..f369f7dda50193a53236b08a92acecdef03667f8 100644
 --- a/apps/server/src/services/heterogeneousAgent/index.ts
