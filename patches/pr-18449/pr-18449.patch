@@ -1,84 +1,163 @@
+diff --git a/apps/server/src/routers/lambda/recent.ts b/apps/server/src/routers/lambda/recent.ts
+index 7042af85c5..aa7da30d80 100644
+--- a/apps/server/src/routers/lambda/recent.ts
++++ b/apps/server/src/routers/lambda/recent.ts
+@@ -13,0 +14 @@ export interface RecentItem {
++  groupId?: string | null;
+@@ -88,0 +90 @@ export const recentRouter = router({
++          groupId: item.groupId,
+diff --git a/packages/database/src/models/__tests__/recent.test.ts b/packages/database/src/models/__tests__/recent.test.ts
+index c5274ca041..a149e4c404 100644
+--- a/packages/database/src/models/__tests__/recent.test.ts
++++ b/packages/database/src/models/__tests__/recent.test.ts
+@@ -103,0 +104 @@ describe('RecentModel', () => {
++          groupId: 'group-1',
+diff --git a/packages/database/src/models/recent.ts b/packages/database/src/models/recent.ts
+index 6823c1db1d..b8e05ff566 100644
+--- a/packages/database/src/models/recent.ts
++++ b/packages/database/src/models/recent.ts
+@@ -11,0 +12 @@ export interface RecentDbItem {
++  groupId: string | null;
+@@ -86,0 +88 @@ export class RecentModel {
++        groupId: sql<string | null>`${topics.groupId}`.as('group_id'),
+@@ -117,0 +120 @@ export class RecentModel {
++        groupId: sql<string | null>`NULL`.as('group_id'),
+@@ -146,0 +150 @@ export class RecentModel {
++        groupId: sql<string | null>`NULL`.as('group_id'),
+@@ -182,0 +187 @@ export class RecentModel {
++        groupId: row.groupId,
 diff --git a/src/features/AgentTasks/shared/useAgentDisplayMeta.ts b/src/features/AgentTasks/shared/useAgentDisplayMeta.ts
-index 918829beec..d2c776cb98 100644
+index 918829beec..5f1d02a96a 100644
 --- a/src/features/AgentTasks/shared/useAgentDisplayMeta.ts
 +++ b/src/features/AgentTasks/shared/useAgentDisplayMeta.ts
-@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
- import { DEFAULT_INBOX_AVATAR } from '@/const/meta';
- import { useAgentStore } from '@/store/agent';
- import { agentSelectors, builtinAgentSelectors } from '@/store/agent/selectors';
+@@ -8,0 +9 @@ import { agentSelectors, builtinAgentSelectors } from '@/store/agent/selectors';
 +import { useAgentGroupStore } from '@/store/agentGroup';
- import { useHomeStore } from '@/store/home';
- import { homeAgentListSelectors } from '@/store/home/selectors';
- 
-@@ -35,6 +36,13 @@ export const useAgentDisplayMeta = (
-   const meta = useAgentStore((s) =>
-     agentId ? agentSelectors.getAgentMetaById(agentId)(s) : undefined,
-   );
-+  const groupSupervisor = useAgentGroupStore((s) =>
+@@ -37,0 +39,7 @@ export const useAgentDisplayMeta = (
++  const groupBySupervisorId = useAgentGroupStore((s) =>
 +    agentId
 +      ? Object.values(s.groupMap).find(
 +          (group) => group.supervisorAgentId === agentId && !!group.avatar,
 +        )
 +      : undefined,
 +  );
-   const sidebarAgent = useHomeStore(homeAgentListSelectors.getAgentById(agentId ?? ''));
- 
-   if (!agentId) return undefined;
-@@ -43,6 +51,7 @@ export const useAgentDisplayMeta = (
-   const sidebarAvatar = typeof sidebarAgent?.avatar === 'string' ? sidebarAgent.avatar : undefined;
-   const hasResolvedMeta =
-     isInbox ||
-+    !!groupSupervisor?.avatar ||
-     !!meta?.avatar ||
-     !!meta?.backgroundColor ||
-     !!agentDisplayName(meta) ||
-@@ -51,10 +60,18 @@ export const useAgentDisplayMeta = (
-   if (!fallbackToDefault && !hasResolvedMeta) return undefined;
- 
-   return {
+@@ -45,0 +54 @@ export const useAgentDisplayMeta = (
++    !!groupBySupervisorId?.avatar ||
+@@ -54 +63,5 @@ export const useAgentDisplayMeta = (
 -    avatar: meta?.avatar || sidebarAvatar || (isInbox ? DEFAULT_INBOX_AVATAR : DEFAULT_AVATAR),
 +    avatar:
-+      groupSupervisor?.avatar ||
++      groupBySupervisorId?.avatar ||
 +      meta?.avatar ||
 +      sidebarAvatar ||
 +      (isInbox ? DEFAULT_INBOX_AVATAR : DEFAULT_AVATAR),
-     backgroundColor:
+@@ -56 +69,4 @@ export const useAgentDisplayMeta = (
 -      meta?.backgroundColor || sidebarAgent?.backgroundColor || cssVar.colorBgContainer,
-+      groupSupervisor?.backgroundColor ||
++      groupBySupervisorId?.backgroundColor ||
 +      meta?.backgroundColor ||
 +      sidebarAgent?.backgroundColor ||
 +      cssVar.colorBgContainer,
-     title:
-+      groupSupervisor?.title ||
-       agentDisplayName(meta) ||
-       agentDisplayName(sidebarAgent) ||
-       (isInbox ? t('inbox.title', { ns: 'chat' }) : t('defaultSession', { ns: 'common' })),
+@@ -57,0 +74 @@ export const useAgentDisplayMeta = (
++      groupBySupervisorId?.title ||
+diff --git a/src/features/Home/HomeModeContent.tsx b/src/features/Home/HomeModeContent.tsx
+index 0ab7d986bf..0439002d42 100644
+--- a/src/features/Home/HomeModeContent.tsx
++++ b/src/features/Home/HomeModeContent.tsx
+@@ -13,0 +14,2 @@ import AsyncError from '@/components/AsyncError';
++import { type SidebarAgentItem } from '@/database/repositories/home';
++import AgentGroupAvatar from '@/features/AgentGroupAvatar';
+@@ -25,0 +28 @@ import WorkspaceLink from '@/features/Workspace/WorkspaceLink';
++import { useFetchAgentList } from '@/hooks/useFetchAgentList';
+@@ -34,0 +38,2 @@ import { systemStatusSelectors } from '@/store/global/selectors';
++import { useHomeStore } from '@/store/home';
++import { homeAgentListSelectors } from '@/store/home/slices/agentList/selectors';
+@@ -142,0 +148,11 @@ export const resolveRecentsBadgeCount = (fetched: number, shown: number): number
++export const resolveRecentGroupAvatar = (avatar: SidebarAgentItem['avatar']) => {
++  const customAvatar = typeof avatar === 'string' ? avatar : undefined;
++  const memberAvatars = Array.isArray(avatar) ? avatar : [];
++
++  return {
++    customAvatar,
++    hasAvatar: Boolean(customAvatar || memberAvatars.length > 0),
++    memberAvatars,
++  };
++};
++
+@@ -202,0 +219,8 @@ const RecentTopicRow = memo<{ showAuthor?: boolean; topic: RecentItem }>(
++    const group = useHomeStore(homeAgentListSelectors.getAgentById(topic.groupId ?? ''));
++    const {
++      customAvatar: groupAvatar,
++      hasAvatar: hasGroupAvatar,
++      memberAvatars: groupMemberAvatars,
++    } = resolveRecentGroupAvatar(group?.avatar);
++    const avatar = agent?.avatar;
++    const backgroundColor = agent?.backgroundColor;
+@@ -217 +241,8 @@ const RecentTopicRow = memo<{ showAuthor?: boolean; topic: RecentItem }>(
+-          agent ? (
++          hasGroupAvatar ? (
++            <AgentGroupAvatar
++              avatar={groupAvatar}
++              backgroundColor={group?.backgroundColor || undefined}
++              memberAvatars={groupMemberAvatars}
++              size={22}
++            />
++          ) : avatar ? (
+@@ -219,2 +250,2 @@ const RecentTopicRow = memo<{ showAuthor?: boolean; topic: RecentItem }>(
+-              avatar={agent.avatar}
+-              background={agent.backgroundColor}
++              avatar={avatar}
++              background={backgroundColor}
+@@ -478,0 +510 @@ const HomeModeContent = memo<HomeModeContentProps>(({ inlineRail, mode, onSugges
++  useFetchAgentList();
+diff --git a/src/features/Home/__tests__/recentGroupAvatar.test.ts b/src/features/Home/__tests__/recentGroupAvatar.test.ts
+new file mode 100644
+index 0000000000..9971d9123c
+--- /dev/null
++++ b/src/features/Home/__tests__/recentGroupAvatar.test.ts
+@@ -0,0 +1,31 @@
++import { describe, expect, it } from 'vitest';
++
++import { resolveRecentGroupAvatar } from '../HomeModeContent';
++
++describe('resolveRecentGroupAvatar', () => {
++  it('uses a custom group avatar', () => {
++    expect(resolveRecentGroupAvatar('group-avatar')).toEqual({
++      customAvatar: 'group-avatar',
++      hasAvatar: true,
++      memberAvatars: [],
++    });
++  });
++
++  it('uses member avatars when the group has no custom avatar', () => {
++    const memberAvatars = [{ avatar: 'member-avatar', background: '#123456' }];
++
++    expect(resolveRecentGroupAvatar(memberAvatars)).toEqual({
++      customAvatar: undefined,
++      hasAvatar: true,
++      memberAvatars,
++    });
++  });
++
++  it('reports no group avatar when neither source exists', () => {
++    expect(resolveRecentGroupAvatar(null)).toEqual({
++      customAvatar: undefined,
++      hasAvatar: false,
++      memberAvatars: [],
++    });
++  });
++});
 diff --git a/src/features/Portal/GroupThread/Header/index.tsx b/src/features/Portal/GroupThread/Header/index.tsx
 index 2bfefbb0f7..c4f8c368fb 100644
 --- a/src/features/Portal/GroupThread/Header/index.tsx
 +++ b/src/features/Portal/GroupThread/Header/index.tsx
-@@ -19,9 +19,13 @@ const Header = memo(() => {
-     clearPortalStack();
-   };
-   const activeThreadAgentId = useAgentGroupStore((s) => s.activeThreadAgentId);
+@@ -21,0 +22,3 @@ const Header = memo(() => {
 +  const groupMeta = useAgentGroupStore((s) =>
 +    s.activeGroupId ? s.groupMap[s.activeGroupId] : undefined,
 +  );
- 
-   const agents = useSessionStore(sessionSelectors.currentGroupAgents);
-   const currentAgent = agents?.find((agent) => agent.id === activeThreadAgentId);
+@@ -24,0 +28 @@ const Header = memo(() => {
 +  const isSupervisor = groupMeta?.supervisorAgentId === currentAgent?.id;
- 
-   return (
-     <NavHeader
-@@ -31,10 +35,18 @@ const Header = memo(() => {
-       left={
-         <Flexbox horizontal align={'center'} gap={8}>
-           <Avatar
+@@ -34,2 +37,0 @@ const Header = memo(() => {
 -            avatar={currentAgent?.avatar || DEFAULT_AVATAR}
 -            background={currentAgent?.backgroundColor ?? undefined}
-             shape={'square'}
-             size={20}
+@@ -37,0 +40,10 @@ const Header = memo(() => {
 +            avatar={
 +              isSupervisor
 +                ? groupMeta?.avatar || DEFAULT_AVATAR
@@ -89,38 +168,26 @@ index 2bfefbb0f7..c4f8c368fb 100644
 +                ? (groupMeta?.backgroundColor ?? undefined)
 +                : (currentAgent?.backgroundColor ?? undefined)
 +            }
-           />
-           <div style={{ fontWeight: 600 }}>
-             {agentDisplayName(currentAgent, t('defaultSession', { ns: 'common' }))}
 diff --git a/src/routes/(main)/group/profile/features/Header/index.tsx b/src/routes/(main)/group/profile/features/Header/index.tsx
 index 98238da485..1be873456a 100644
 --- a/src/routes/(main)/group/profile/features/Header/index.tsx
 +++ b/src/routes/(main)/group/profile/features/Header/index.tsx
-@@ -56,6 +56,7 @@ const Header = memo(() => {
- 
-   const { gid } = useParams<{ gid: string }>();
-   const members = useAgentGroupStore((s) => agentGroupSelectors.getGroupAgents(gid ?? '')(s));
+@@ -58,0 +59 @@ const Header = memo(() => {
 +  const groupMeta = useAgentGroupStore((s) => agentGroupSelectors.getGroupMeta(gid ?? '')(s));
-   const activeGroupId = useAgentGroupStore(agentGroupSelectors.activeGroupId);
-   const addAgentsToGroup = useAgentGroupStore((s) => s.addAgentsToGroup);
-   const createAgentInGroup = useAgentGroupStore((s) => s.createAgentInGroup);
-@@ -81,8 +82,8 @@ const Header = memo(() => {
-     // Add agent tabs
-     for (const agent of members) {
-       items.push({
+@@ -84,2 +85,2 @@ const Header = memo(() => {
 -        avatar: agent.isSupervisor ? undefined : agent.avatar || undefined,
 -        icon: agent.isSupervisor ? <Crown size={16} /> : undefined,
 +        avatar: agent.isSupervisor ? groupMeta.avatar : agent.avatar || undefined,
 +        icon: agent.isSupervisor && !groupMeta.avatar ? <Crown size={16} /> : undefined,
-         id: agent.id,
-         isExternal: !agent.isSupervisor && !agent.virtual,
-         title: agent.isSupervisor ? t('group.profile.supervisor') : agent.title || 'Untitled Agent',
-@@ -90,7 +91,7 @@ const Header = memo(() => {
-     }
- 
-     return items;
+@@ -93 +94 @@ const Header = memo(() => {
 -  }, [members, t]);
 +  }, [groupMeta.avatar, members, t]);
- 
-   const handleAddMembers = async (agentIds: string[]) => {
-     if (!activeGroupId) return;
+diff --git a/src/store/session/slices/session/action.ts b/src/store/session/slices/session/action.ts
+index f899867db8..76ff21c920 100644
+--- a/src/store/session/slices/session/action.ts
++++ b/src/store/session/slices/session/action.ts
+@@ -231,2 +231,2 @@ export class SessionActionImpl {
+-              avatar: null,
+-              backgroundColor: null,
++              avatar: session.meta?.avatar ?? null,
++              backgroundColor: session.meta?.backgroundColor ?? null,
