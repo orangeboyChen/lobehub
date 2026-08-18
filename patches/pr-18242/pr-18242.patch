@@ -1,5 +1,5 @@
 diff --git a/apps/cli/src/commands/notify.ts b/apps/cli/src/commands/notify.ts
-index a16b51fa88ca81701966b2f5c8c397c997ade160..3a0060caa0968ee15db77ea6f2f4f51424dd23cc 100644
+index a16b51fa88..3a0060caa0 100644
 --- a/apps/cli/src/commands/notify.ts
 +++ b/apps/cli/src/commands/notify.ts
 @@ -53,6 +53,7 @@ export function registerNotifyCommand(program: Command) {
@@ -11,7 +11,7 @@ index a16b51fa88ca81701966b2f5c8c397c997ade160..3a0060caa0968ee15db77ea6f2f4f514
              threadId: options.threadId,
              topicId: options.topic,
 diff --git a/apps/cli/src/daemon/taskRegistry.ts b/apps/cli/src/daemon/taskRegistry.ts
-index 9dcd98d8cffa5b7fbbf40d0011fb15fd54ea7bbc..9e1e537189d19e25af2924e8e3c8e8f639f00fd9 100644
+index 9dcd98d8cf..9e1e537189 100644
 --- a/apps/cli/src/daemon/taskRegistry.ts
 +++ b/apps/cli/src/daemon/taskRegistry.ts
 @@ -6,6 +6,7 @@ export interface TaskEntry {
@@ -23,7 +23,7 @@ index 9dcd98d8cffa5b7fbbf40d0011fb15fd54ea7bbc..9e1e537189d19e25af2924e8e3c8e8f6
    startedAt: string;
    taskId: string;
 diff --git a/apps/cli/src/tools/__tests__/heteroTask.test.ts b/apps/cli/src/tools/__tests__/heteroTask.test.ts
-index 6da743e5550debf46000f254d0c4f16e7b040ab6..4ec23ec435cdf81e3cfe5aa537145641e9829f7e 100644
+index 6da743e555..4ec23ec435 100644
 --- a/apps/cli/src/tools/__tests__/heteroTask.test.ts
 +++ b/apps/cli/src/tools/__tests__/heteroTask.test.ts
 @@ -227,6 +227,37 @@ describe('runHeteroTask (openclaw)', () => {
@@ -155,7 +155,7 @@ index 6da743e5550debf46000f254d0c4f16e7b040ab6..4ec23ec435cdf81e3cfe5aa537145641
  
  describe('runHeteroTask (hermes)', () => {
 diff --git a/apps/cli/src/tools/heteroTask.ts b/apps/cli/src/tools/heteroTask.ts
-index 007b13ff69f500afd3981334f95fc58ad372608d..d2d21a4993aeaf03b5b14c899ae8aae28d2a8454 100644
+index 007b13ff69..d2d21a4993 100644
 --- a/apps/cli/src/tools/heteroTask.ts
 +++ b/apps/cli/src/tools/heteroTask.ts
 @@ -63,6 +63,7 @@ export interface RunHeteroTaskParams {
@@ -388,7 +388,7 @@ index 007b13ff69f500afd3981334f95fc58ad372608d..d2d21a4993aeaf03b5b14c899ae8aae2
      );
    }
 diff --git a/apps/desktop/src/main/controllers/GatewayConnectionCtr.ts b/apps/desktop/src/main/controllers/GatewayConnectionCtr.ts
-index b9e4e48660cd2b147114fb1025a2defa8b68406e..bb15ab794101d8263e8f2492f7c8565cc2807964 100644
+index eedd6b5bed..8f7268178f 100644
 --- a/apps/desktop/src/main/controllers/GatewayConnectionCtr.ts
 +++ b/apps/desktop/src/main/controllers/GatewayConnectionCtr.ts
 @@ -75,6 +75,7 @@ interface PlatformTaskEntry {
@@ -399,7 +399,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..bb15ab794101d8263e8f2492f7c8565c
    pid: number;
    topicId: string;
    /**
-@@ -435,6 +436,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -437,6 +438,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
              agentType: string;
              cwd?: string;
              operationId: string;
@@ -407,7 +407,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..bb15ab794101d8263e8f2492f7c8565c
              platformAgentId?: string;
              prompt: string;
              taskId: string;
-@@ -676,6 +678,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -678,6 +680,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
      agentType: string;
      cwd?: string;
      operationId: string;
@@ -415,7 +415,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..bb15ab794101d8263e8f2492f7c8565c
      platformAgentId?: string;
      prompt: string;
      taskId: string;
-@@ -687,6 +690,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -689,6 +692,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
        agentType,
        cwd,
        operationId,
@@ -423,7 +423,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..bb15ab794101d8263e8f2492f7c8565c
        platformAgentId,
        prompt,
        taskId,
-@@ -707,9 +711,11 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -709,9 +713,11 @@ export default class GatewayConnectionCtr extends ControllerModule {
      const childEnv: NodeJS.ProcessEnv = {
        ...process.env,
        ...(accessToken && { LOBEHUB_JWT: accessToken }),
@@ -435,7 +435,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..bb15ab794101d8263e8f2492f7c8565c
  
      if (agentType === 'openclaw') {
        const commandStatus = await resolveRemotePlatformCommand('openclaw');
-@@ -729,7 +735,11 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -731,7 +737,11 @@ export default class GatewayConnectionCtr extends ControllerModule {
        // openclaw serialises session writes; a concurrent process holding the session
        // lock will cause the new one to exit with code 1.
        for (const [existingTaskId, entry] of this.platformTasks) {
@@ -448,7 +448,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..bb15ab794101d8263e8f2492f7c8565c
            this.killPlatformProcessTree(entry.pid, 'SIGTERM');
            this.platformTasks.delete(existingTaskId);
          }
-@@ -740,7 +750,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -742,7 +752,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
          '--agent',
          openclawAgent,
          '--session-id',
@@ -457,7 +457,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..bb15ab794101d8263e8f2492f7c8565c
          '--message',
          enrichedPrompt,
          '--local',
-@@ -769,6 +779,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -771,6 +781,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
          agentId,
          agentType,
          operationId,
@@ -465,7 +465,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..bb15ab794101d8263e8f2492f7c8565c
          pid,
          topicId,
          workspaceId,
-@@ -785,17 +796,22 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -787,17 +798,22 @@ export default class GatewayConnectionCtr extends ControllerModule {
            const text = signal
              ? `Task cancelled (signal: ${signal})`
              : `Task failed (exit code: ${code})`;
@@ -488,7 +488,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..bb15ab794101d8263e8f2492f7c8565c
                role: 'assistant',
                topicId,
                workspaceId,
-@@ -806,6 +822,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -808,6 +824,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
              agentId,
              content: '',
              done: true,
@@ -496,7 +496,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..bb15ab794101d8263e8f2492f7c8565c
              role: 'assistant',
              topicId,
              workspaceId,
-@@ -824,14 +841,18 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -826,14 +843,18 @@ export default class GatewayConnectionCtr extends ControllerModule {
        if (commandStatus.resolvedPathEnv) childEnv.PATH = commandStatus.resolvedPathEnv;
        // Kill any existing hermes process for this topicId before spawning a new one.
        for (const [existingTaskId, entry] of this.platformTasks) {
@@ -517,7 +517,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..bb15ab794101d8263e8f2492f7c8565c
        const hermesArgs: string[] = ['chat', '--query', prompt, '--quiet', '--accept-hooks'];
        if (existingSessionId) {
          hermesArgs.push('--resume', existingSessionId);
-@@ -865,6 +886,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -867,6 +888,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
          agentId,
          agentType,
          operationId,
@@ -525,7 +525,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..bb15ab794101d8263e8f2492f7c8565c
          pid,
          topicId,
          workspaceId,
-@@ -889,17 +911,22 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -891,17 +913,22 @@ export default class GatewayConnectionCtr extends ControllerModule {
            const text = signal
              ? `Task cancelled (signal: ${signal})`
              : `Task failed (exit code: ${code})`;
@@ -548,7 +548,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..bb15ab794101d8263e8f2492f7c8565c
                role: 'assistant',
                topicId,
                workspaceId,
-@@ -913,12 +940,13 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -915,12 +942,13 @@ export default class GatewayConnectionCtr extends ControllerModule {
          const sessionId = parseHermesSessionId(stderr);
          const response = stdout.trim();
  
@@ -563,7 +563,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..bb15ab794101d8263e8f2492f7c8565c
              role: 'assistant',
              topicId,
              workspaceId,
-@@ -927,6 +955,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -929,6 +957,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
                agentId,
                content: '',
                done: true,
@@ -571,7 +571,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..bb15ab794101d8263e8f2492f7c8565c
                role: 'assistant',
                topicId,
                workspaceId,
-@@ -937,6 +966,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -939,6 +968,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
              agentId,
              content: '',
              done: true,
@@ -579,7 +579,7 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..bb15ab794101d8263e8f2492f7c8565c
              role: 'assistant',
              topicId,
              workspaceId,
-@@ -1033,8 +1063,11 @@ export default class GatewayConnectionCtr extends ControllerModule {
+@@ -1035,8 +1065,11 @@ export default class GatewayConnectionCtr extends ControllerModule {
     */
    private async sendNotify(params: {
      agentId?: string;
@@ -592,10 +592,10 @@ index b9e4e48660cd2b147114fb1025a2defa8b68406e..bb15ab794101d8263e8f2492f7c8565c
      topicId: string;
      /**
 diff --git a/apps/desktop/src/main/controllers/__tests__/GatewayConnectionCtr.test.ts b/apps/desktop/src/main/controllers/__tests__/GatewayConnectionCtr.test.ts
-index e954fd1cb43460b8fc67f994a12212801891f4b7..bedc3d21a7331a3cd3c23c6480feef47bd228f65 100644
+index a5c666d99a..4fe10c9a97 100644
 --- a/apps/desktop/src/main/controllers/__tests__/GatewayConnectionCtr.test.ts
 +++ b/apps/desktop/src/main/controllers/__tests__/GatewayConnectionCtr.test.ts
-@@ -1073,11 +1073,61 @@ describe('GatewayConnectionCtr', () => {
+@@ -1087,11 +1087,61 @@ describe('GatewayConnectionCtr', () => {
        ];
        expect(spawnCommand).toBe('/resolved/bin/openclaw');
        expect(spawnOptions.env.PATH).toBe('/resolved/bin:/usr/bin');
@@ -657,7 +657,7 @@ index e954fd1cb43460b8fc67f994a12212801891f4b7..bedc3d21a7331a3cd3c23c6480feef47
      it.each([
        {
          environmentAgentId: 'ops-default',
-@@ -1177,6 +1227,39 @@ describe('GatewayConnectionCtr', () => {
+@@ -1191,6 +1241,39 @@ describe('GatewayConnectionCtr', () => {
        killSpy.mockRestore();
      });
  
@@ -697,7 +697,7 @@ index e954fd1cb43460b8fc67f994a12212801891f4b7..bedc3d21a7331a3cd3c23c6480feef47
      it('kills the complete detached process group when cancelling a task', async () => {
        const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
        const child = makeMockChild(5555);
-@@ -1383,6 +1466,7 @@ describe('GatewayConnectionCtr', () => {
+@@ -1397,6 +1480,7 @@ describe('GatewayConnectionCtr', () => {
          expect(notifySpy).toHaveBeenCalledWith(
            expect.objectContaining({
              content: 'session_id: part of the final answer\nHello from Hermes',
@@ -706,7 +706,7 @@ index e954fd1cb43460b8fc67f994a12212801891f4b7..bedc3d21a7331a3cd3c23c6480feef47
            }),
          );
 diff --git a/apps/server/src/modules/AgentRuntime/adapters/ServerOperationStore.test.ts b/apps/server/src/modules/AgentRuntime/adapters/ServerOperationStore.test.ts
-index cf33e9d8e130103faaeee49e377080f0e89cd3ef..677732dcbc95ea9b44f3c957a235961b8a2e57d6 100644
+index cf33e9d8e1..677732dcbc 100644
 --- a/apps/server/src/modules/AgentRuntime/adapters/ServerOperationStore.test.ts
 +++ b/apps/server/src/modules/AgentRuntime/adapters/ServerOperationStore.test.ts
 @@ -6,7 +6,7 @@ import { ServerOperationStore } from './ServerOperationStore';
@@ -786,7 +786,7 @@ index cf33e9d8e130103faaeee49e377080f0e89cd3ef..677732dcbc95ea9b44f3c957a235961b
    });
  });
 diff --git a/apps/server/src/modules/AgentRuntime/adapters/ServerOperationStore.ts b/apps/server/src/modules/AgentRuntime/adapters/ServerOperationStore.ts
-index b614681b51528466a0ae993bfcabf887cf9b91e4..e76b9d3cbc5017f3942046220f8731c935859439 100644
+index b614681b51..e76b9d3cbc 100644
 --- a/apps/server/src/modules/AgentRuntime/adapters/ServerOperationStore.ts
 +++ b/apps/server/src/modules/AgentRuntime/adapters/ServerOperationStore.ts
 @@ -37,11 +37,15 @@ export class ServerOperationStore implements OperationStore {
@@ -809,7 +809,7 @@ index b614681b51528466a0ae993bfcabf887cf9b91e4..e76b9d3cbc5017f3942046220f8731c9
        // best-effort — swallow
      }
 diff --git a/apps/server/src/routers/lambda/__tests__/agentNotify.test.ts b/apps/server/src/routers/lambda/__tests__/agentNotify.test.ts
-index d2f9172c1b6d340f66c231e49ec6baf63f78ca1b..424037d6f3a7aeef26fb8720f1ce8266d32bf1bd 100644
+index d2f9172c1b..424037d6f3 100644
 --- a/apps/server/src/routers/lambda/__tests__/agentNotify.test.ts
 +++ b/apps/server/src/routers/lambda/__tests__/agentNotify.test.ts
 @@ -16,7 +16,9 @@ vi.mock('@/business/server/trpc-middlewares/rbacPermission', () => ({
@@ -1185,7 +1185,7 @@ index d2f9172c1b6d340f66c231e49ec6baf63f78ca1b..424037d6f3a7aeef26fb8720f1ce8266
 +  });
  });
 diff --git a/apps/server/src/routers/lambda/agentNotify.ts b/apps/server/src/routers/lambda/agentNotify.ts
-index 52dfe8a358c566fe6ee03df9105967c8ce1da867..10c2b8b9d684e6abb97157720450223ec84965c7 100644
+index 52dfe8a358..10c2b8b9d6 100644
 --- a/apps/server/src/routers/lambda/agentNotify.ts
 +++ b/apps/server/src/routers/lambda/agentNotify.ts
 @@ -1,4 +1,5 @@
@@ -1478,10 +1478,10 @@ index 52dfe8a358c566fe6ee03df9105967c8ce1da867..10c2b8b9d684e6abb97157720450223e
          // Optionally trigger a follow-up agent turn.
          // Use resume=true + parentMessageId so execAgent skips creating an
 diff --git a/apps/server/src/services/agentRuntime/AbandonOperationService.ts b/apps/server/src/services/agentRuntime/AbandonOperationService.ts
-index 857c7ff595af95dee1e644d0031ff98aa45b53d6..15d371befb52c696e6eead0206e05e79a57799db 100644
+index ed8505b14c..c7d9cfd8a0 100644
 --- a/apps/server/src/services/agentRuntime/AbandonOperationService.ts
 +++ b/apps/server/src/services/agentRuntime/AbandonOperationService.ts
-@@ -160,33 +160,33 @@ export class AbandonOperationService {
+@@ -160,28 +160,27 @@ export class AbandonOperationService {
        }
      }
  
@@ -1489,25 +1489,14 @@ index 857c7ff595af95dee1e644d0031ff98aa45b53d6..15d371befb52c696e6eead0206e05e79
 -      if (metadata.topicId) {
 -        try {
 -          const topicModel = new TopicModel(this.db, metadata.userId, metadata.workspaceId);
--          const topic = await topicModel.findById(metadata.topicId);
--          const running = topic?.metadata?.runningOperation as
--            { assistantMessageId?: string; operationId?: string } | undefined;
--          if (running?.operationId === operationId) {
--            await topicModel.updateMetadata(metadata.topicId, { runningOperation: null });
--          }
+-          await topicModel.settleRunningOperation(metadata.topicId, operationId);
 -        } catch (e) {
 -          log('[%s] abandoned op runningOperation cleanup failed (non-fatal): %O', operationId, e);
 -        }
 +    if (metadata.topicId && metadata.userId) {
 +      try {
 +        const topicModel = new TopicModel(this.db, metadata.userId, metadata.workspaceId);
-+        const topic = await topicModel.findById(metadata.topicId);
-+        const marker = topic?.metadata?.runningOperation;
-+        const running =
-+          marker?.operationId === operationId
-+            ? marker
-+            : marker?.childOperations?.find((child) => child.operationId === operationId);
-+        if (running) await topicModel.takeRunningOperation(metadata.topicId, operationId);
++        await topicModel.settleRunningOperation(metadata.topicId, operationId);
 +      } catch (e) {
 +        log('[%s] abandoned op runningOperation cleanup failed (non-fatal): %O', operationId, e);
        }
@@ -1539,35 +1528,8 @@ index 857c7ff595af95dee1e644d0031ff98aa45b53d6..15d371befb52c696e6eead0206e05e79
        }
      }
  
-@@ -328,15 +328,18 @@ export class AbandonOperationService {
-       try {
-         topicModel = new TopicModel(this.db, op.userId, op.workspaceId ?? undefined);
-         const topic = await topicModel.findById(op.topicId);
--        const running = topic?.metadata?.runningOperation as
--          { assistantMessageId?: string; operationId?: string } | undefined;
--
--        if (running?.operationId && running.operationId !== operationId) return undefined;
--
--        if (running?.operationId === operationId) {
--          await topicModel.updateMetadata(op.topicId, { runningOperation: null }).catch(() => {});
--          if (running.assistantMessageId) return running.assistantMessageId;
-+        const marker = topic?.metadata?.runningOperation;
-+        const running =
-+          marker?.operationId === operationId
-+            ? marker
-+            : marker?.childOperations?.find((child) => child.operationId === operationId);
-+
-+        if (running) {
-+          await topicModel.takeRunningOperation(op.topicId, operationId).catch(() => undefined);
-+          return running.assistantMessageId;
-         }
-+
-+        if (marker) return undefined;
-       } catch (e) {
-         log('[%s] no-state abandon: topic lookup failed (non-fatal): %O', operationId, e);
-       }
 diff --git a/apps/server/src/services/agentRuntime/CompletionLifecycle.ts b/apps/server/src/services/agentRuntime/CompletionLifecycle.ts
-index c8334a57268e12d89df449c6dccd277ad2addca6..02e5cd3cc6ddd4c6edf880c3ac06b087d005b155 100644
+index c8334a5726..02e5cd3cc6 100644
 --- a/apps/server/src/services/agentRuntime/CompletionLifecycle.ts
 +++ b/apps/server/src/services/agentRuntime/CompletionLifecycle.ts
 @@ -73,6 +73,8 @@ export interface OperationCompletionInput {
@@ -1597,47 +1559,10 @@ index c8334a57268e12d89df449c6dccd277ad2addca6..02e5cd3cc6ddd4c6edf880c3ac06b087
    ): Promise<void> {
      await this.dispatchHooks(input.operationId, this.buildStateFromInput(input), reason, options);
 diff --git a/apps/server/src/services/agentRuntime/__tests__/AbandonOperationService.test.ts b/apps/server/src/services/agentRuntime/__tests__/AbandonOperationService.test.ts
-index 3a4addf8272af7838c170df06a4986eff20071ee..94da9032923e0486a61880a3bed32e953bb68c7d 100644
+index b4c0177285..763e1a0e43 100644
 --- a/apps/server/src/services/agentRuntime/__tests__/AbandonOperationService.test.ts
 +++ b/apps/server/src/services/agentRuntime/__tests__/AbandonOperationService.test.ts
-@@ -52,11 +52,11 @@ vi.mock('@/database/models/thread', () => ({
- }));
- 
- const topicFindByIdMock = vi.fn().mockResolvedValue(null);
--const topicUpdateMetadataMock = vi.fn().mockResolvedValue(undefined);
-+const topicTakeRunningOperationMock = vi.fn().mockResolvedValue(undefined);
- vi.mock('@/database/models/topic', () => ({
-   TopicModel: vi.fn().mockImplementation(() => ({
-     findById: topicFindByIdMock,
--    updateMetadata: topicUpdateMetadataMock,
-+    takeRunningOperation: topicTakeRunningOperationMock,
-   })),
- }));
- 
-@@ -94,7 +94,7 @@ describe('AbandonOperationService', () => {
-     recordCompletionMock.mockClear();
-     findThreadMock.mockReset().mockResolvedValue(null);
-     topicFindByIdMock.mockReset().mockResolvedValue(null);
--    topicUpdateMetadataMock.mockReset().mockResolvedValue(undefined);
-+    topicTakeRunningOperationMock.mockReset().mockResolvedValue(undefined);
-   });
- 
-   it('returns found:false when coordinator has no state', async () => {
-@@ -162,7 +162,7 @@ describe('AbandonOperationService', () => {
-         toolCalls: 0,
-       }),
-     );
--    expect(topicUpdateMetadataMock).toHaveBeenCalledWith('tpc_x', { runningOperation: null });
-+    expect(topicTakeRunningOperationMock).toHaveBeenCalledWith('tpc_x', 'op_x');
-     expect(messageUpdateMock).toHaveBeenCalledWith('msg_assist_1', {
-       content: '',
-       error: expect.objectContaining({
-@@ -228,10 +228,44 @@ describe('AbandonOperationService', () => {
- 
-     expect(result.abandoned).toBe(true);
-     expect(recordCompletionMock).toHaveBeenCalled();
--    expect(topicUpdateMetadataMock).not.toHaveBeenCalled();
-+    expect(topicTakeRunningOperationMock).not.toHaveBeenCalled();
+@@ -247,6 +247,36 @@ describe('AbandonOperationService', () => {
      expect(messageUpdateMock).not.toHaveBeenCalled();
    });
  
@@ -1652,14 +1577,10 @@ index 3a4addf8272af7838c170df06a4986eff20071ee..94da9032923e0486a61880a3bed32e95
 +        userId: 'user_x',
 +      },
 +    });
-+    topicFindByIdMock.mockResolvedValue({
-+      metadata: {
-+        runningOperation: {
-+          assistantMessageId: 'msg_parent',
-+          childOperations: [{ assistantMessageId: 'msg_child', operationId: 'op_child' }],
-+          operationId: 'op_parent',
-+        },
-+      },
++    topicSettleRunningOperationMock.mockResolvedValue({
++      assistantMessageId: 'msg_child',
++      orchestrationRole: 'member',
++      status: 'settled',
 +    });
 +
 +    const result = await new AbandonOperationService(db, {
@@ -1668,7 +1589,7 @@ index 3a4addf8272af7838c170df06a4986eff20071ee..94da9032923e0486a61880a3bed32e95
 +    }).finalizeAbandoned('op_child', 'inactivity_watchdog');
 +
 +    expect(result.assistantMessageUpdated).toBe(true);
-+    expect(topicTakeRunningOperationMock).toHaveBeenCalledWith('tpc_x', 'op_child');
++    expect(topicSettleRunningOperationMock).toHaveBeenCalledWith('tpc_x', 'op_child');
 +    expect(messageUpdateMock).toHaveBeenCalledWith(
 +      'msg_child',
 +      expect.objectContaining({ error: expect.anything() }),
@@ -1678,25 +1599,7 @@ index 3a4addf8272af7838c170df06a4986eff20071ee..94da9032923e0486a61880a3bed32e95
    it('finalizes snapshot and marks assistant message errored when state + partial exist', async () => {
      const coord = buildCoordinator({
        loadAgentState: vi.fn().mockResolvedValue(stateWith()),
-@@ -289,7 +323,7 @@ describe('AbandonOperationService', () => {
-         type: 'AgentRuntimeError',
-       }),
-     });
--    expect(topicUpdateMetadataMock).toHaveBeenCalledWith('tpc_x', { runningOperation: null });
-+    expect(topicTakeRunningOperationMock).toHaveBeenCalledWith('tpc_x', 'op_x');
-     expect(dispatchHooksMock).toHaveBeenCalledWith(
-       'op_x',
-       expect.objectContaining({
-@@ -332,7 +366,7 @@ describe('AbandonOperationService', () => {
-       const result = await svc.finalizeAbandoned('op_x', 'inactivity_5m');
- 
-       expect(result.found).toBe(true);
--      expect(topicUpdateMetadataMock).toHaveBeenCalledWith('tpc_x', { runningOperation: null });
-+      expect(topicTakeRunningOperationMock).toHaveBeenCalledWith('tpc_x', 'op_x');
-       expect(dispatchHooksMock).not.toHaveBeenCalled();
-     },
-   );
-@@ -477,6 +511,7 @@ describe('AbandonOperationService', () => {
+@@ -474,6 +504,7 @@ describe('AbandonOperationService', () => {
              isSubAgent: true,
              orchestrationRole: 'member',
              threadId: 'thread_g',
@@ -1704,31 +1607,16 @@ index 3a4addf8272af7838c170df06a4986eff20071ee..94da9032923e0486a61880a3bed32e95
              userId: 'user_x',
              workspaceId: 'ws_1',
            },
-@@ -485,6 +520,14 @@ describe('AbandonOperationService', () => {
-     });
-     const store = buildStore();
-     store.loadPartial.mockResolvedValue(null);
-+    topicFindByIdMock.mockResolvedValue({
-+      metadata: {
-+        runningOperation: {
-+          childOperations: [{ operationId: 'op_member' }],
-+          operationId: 'op_supervisor',
-+        },
-+      },
-+    });
- 
-     const svc = new AbandonOperationService({} as any, {
-       coordinator: coord as any,
-@@ -498,6 +541,7 @@ describe('AbandonOperationService', () => {
+@@ -495,6 +526,7 @@ describe('AbandonOperationService', () => {
      // coordinator state is cleaned up normally.
      expect(result.subAgentResume).toBeUndefined();
      expect(findOperationMock).not.toHaveBeenCalled();
-+    expect(topicTakeRunningOperationMock).toHaveBeenCalledWith('tpc_x', 'op_member');
++    expect(topicSettleRunningOperationMock).toHaveBeenCalledWith('tpc_x', 'op_member');
      expect(coord.deleteAgentOperation).toHaveBeenCalledWith('op_member');
    });
  
 diff --git a/apps/server/src/services/agentRuntime/__tests__/CompletionLifecycle.test.ts b/apps/server/src/services/agentRuntime/__tests__/CompletionLifecycle.test.ts
-index 48944b1ffe748c82de335baad628aad0936ddbf7..ee3fea2e9359a1a03c00970808f66f2787550065 100644
+index 48944b1ffe..ee3fea2e93 100644
 --- a/apps/server/src/services/agentRuntime/__tests__/CompletionLifecycle.test.ts
 +++ b/apps/server/src/services/agentRuntime/__tests__/CompletionLifecycle.test.ts
 @@ -732,6 +732,17 @@ describe('CompletionLifecycle.dispatchHooks — completion notification', () =>
@@ -1750,7 +1638,7 @@ index 48944b1ffe748c82de335baad628aad0936ddbf7..ee3fea2e9359a1a03c00970808f66f27
      'notifies on the success-like capped terminal %s (still produced a deliverable)',
      async (reason) => {
 diff --git a/apps/server/src/services/aiAgent/__tests__/execAgent.heteroFiles.test.ts b/apps/server/src/services/aiAgent/__tests__/execAgent.heteroFiles.test.ts
-index e2616bbfbe9c5b7b05551f44676de40f451d6468..a869499c33889478b2b1d21faba6c4da4ad11f27 100644
+index 5633808e4c..061e970350 100644
 --- a/apps/server/src/services/aiAgent/__tests__/execAgent.heteroFiles.test.ts
 +++ b/apps/server/src/services/aiAgent/__tests__/execAgent.heteroFiles.test.ts
 @@ -6,6 +6,7 @@ const {
@@ -1761,7 +1649,7 @@ index e2616bbfbe9c5b7b05551f44676de40f451d6468..a869499c33889478b2b1d21faba6c4da
    mockDispatchAgentRun,
    mockExecuteToolCall,
    mockGetHeterogeneousResumeSessionId,
-@@ -17,6 +18,7 @@ const {
+@@ -18,6 +19,7 @@ const {
    mockPublishAgentRuntimeEnd,
  } = vi.hoisted(() => ({
    mockBuildRemoteDeviceHeteroContext: vi.fn().mockReturnValue('device context'),
@@ -1769,7 +1657,7 @@ index e2616bbfbe9c5b7b05551f44676de40f451d6468..a869499c33889478b2b1d21faba6c4da
    mockDeviceFindByDeviceId: vi.fn(),
    mockDeviceFindWorkspaceDeviceById: vi.fn(),
    mockDispatchAgentRun: vi.fn().mockResolvedValue({ success: true }),
-@@ -35,7 +37,9 @@ const {
+@@ -37,7 +39,9 @@ const {
  // the assertion below can verify the init, and so the real one (which probes
  // Redis synchronously) doesn't throw a server-env error in the test env.
  vi.mock('@/server/modules/AgentRuntime/factory', () => ({
@@ -1780,19 +1668,39 @@ index e2616bbfbe9c5b7b05551f44676de40f451d6468..a869499c33889478b2b1d21faba6c4da
    createStreamEventManager: () => ({
      publishAgentRuntimeEnd: mockPublishAgentRuntimeEnd,
      publishAgentRuntimeInit: mockPublishAgentRuntimeInit,
-@@ -123,0 +124 @@ const topicMock = {
+@@ -121,8 +125,11 @@ vi.mock('@/database/models/plugin', () => ({
+ }));
+ 
+ const topicMock = {
 +  appendRunningOperationChild: vi.fn().mockResolvedValue(true),
-@@ -125,0 +127,2 @@ const topicMock = {
+   create: vi.fn().mockResolvedValue({ id: 'topic-1', metadata: undefined }),
+   findById: vi.fn().mockResolvedValue(undefined),
 +  releaseTaskCallbackReservation: vi.fn().mockResolvedValue(undefined),
 +  tryReserveTaskCallback: vi.fn().mockResolvedValue(true),
-@@ -212,0 +216 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () =>
+   updateMetadata: vi.fn().mockResolvedValue(undefined),
+ };
+ vi.mock('@/database/models/topic', () => ({
+@@ -210,8 +217,11 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () =>
+ 
+   beforeEach(() => {
+     vi.clearAllMocks();
 +    topicMock.appendRunningOperationChild.mockResolvedValue(true);
-@@ -214,0 +219,2 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () =>
+     topicMock.create.mockResolvedValue({ id: 'topic-1', metadata: undefined });
+     topicMock.findById.mockResolvedValue(undefined);
 +    topicMock.releaseTaskCallbackReservation.mockResolvedValue(undefined);
 +    topicMock.tryReserveTaskCallback.mockResolvedValue(true);
-@@ -228,0 +235 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () =>
+     topicMock.updateMetadata.mockResolvedValue(undefined);
+     mockMessageCreate.mockResolvedValue({ id: 'msg-1' });
+     mockMessageQuery.mockResolvedValue([]);
+@@ -226,6 +236,7 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () =>
+     );
+     mockDeviceFindByDeviceId.mockResolvedValue({ defaultCwd: '/Users/alice/repo' });
+     mockDeviceFindWorkspaceDeviceById.mockResolvedValue(undefined);
 +    mockCreateOperationMetadata.mockResolvedValue(undefined);
-@@ -858,12 +869,117 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () =>
+     mockIngestAttachment.mockReset();
+     heteroAgentConfig.agencyConfig = { heterogeneousProvider: { type: 'claude-code' } } as any;
+     heteroAgentConfig.model = 'claude-code';
+@@ -936,12 +947,117 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () =>
        },
      };
  
@@ -1911,7 +1819,7 @@ index e2616bbfbe9c5b7b05551f44676de40f451d6468..a869499c33889478b2b1d21faba6c4da
      it('serializes the onComplete webhook hook onto runningOperation (sandbox dispatch)', async () => {
        await service.execAgent({
          agentId: 'agent-1',
-@@ -1064,6 +1180,42 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () =>
+@@ -1176,6 +1292,42 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () =>
        );
      });
  
@@ -1955,7 +1863,7 @@ index e2616bbfbe9c5b7b05551f44676de40f451d6468..a869499c33889478b2b1d21faba6c4da
        (service as any).agentOperationModel.findById = vi
          .fn()
 diff --git a/apps/server/src/services/aiAgent/__tests__/execAgent.spineAnchor.test.ts b/apps/server/src/services/aiAgent/__tests__/execAgent.spineAnchor.test.ts
-index e5a3583c77741b19dd82ee586ce26b489beaa159..9db08e26cd78e167057dd4cd4c6103744961aa43 100644
+index e5a3583c77..9db08e26cd 100644
 --- a/apps/server/src/services/aiAgent/__tests__/execAgent.spineAnchor.test.ts
 +++ b/apps/server/src/services/aiAgent/__tests__/execAgent.spineAnchor.test.ts
 @@ -205,6 +205,7 @@ describe('AiAgentService.execAgent - user turn spine anchoring', () => {
@@ -1967,7 +1875,7 @@ index e5a3583c77741b19dd82ee586ce26b489beaa159..9db08e26cd78e167057dd4cd4c610374
      expect(mockReleaseReservation).toHaveBeenCalledWith(
        'topic-1',
 diff --git a/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts b/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
-index a964ccd847a5787e3a9d5847d550e4f87d27c1bf..8e9f6dbfad2cb4d05cfc81a2ed20697234a8eec4 100644
+index a964ccd847..8e9f6dbfad 100644
 --- a/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
 +++ b/apps/server/src/services/aiAgent/__tests__/execAgent.threadId.test.ts
 @@ -4,10 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -2055,7 +1963,7 @@ index a964ccd847a5787e3a9d5847d550e4f87d27c1bf..8e9f6dbfad2cb4d05cfc81a2ed206972
  
    describe('when threadId is not provided in appContext', () => {
 diff --git a/apps/server/src/services/aiAgent/index.ts b/apps/server/src/services/aiAgent/index.ts
-index 04bde7a7ac665bfd4d51681424703757d28c191d..f248bffbd33d5ac5ce702048119ac906dd8613a2 100644
+index 80b9784274..5e920c4aa8 100644
 --- a/apps/server/src/services/aiAgent/index.ts
 +++ b/apps/server/src/services/aiAgent/index.ts
 @@ -128,7 +128,10 @@ import { shouldEnableBuiltinSkill } from '@/helpers/skillFilters';
@@ -2104,7 +2012,7 @@ index 04bde7a7ac665bfd4d51681424703757d28c191d..f248bffbd33d5ac5ce702048119ac906
        reservationId,
        topicId,
        topicModel: this.topicModel,
-@@ -2457,24 +2465,74 @@ export class AiAgentService {
+@@ -2467,24 +2475,74 @@ export class AiAgentService {
        // operation, and so every terminal site (heteroFinish, agentNotify done,
        // dispatch failure) can re-fire the serialized hooks across a process
        // boundary in queue mode.
@@ -2197,7 +2105,7 @@ index 04bde7a7ac665bfd4d51681424703757d28c191d..f248bffbd33d5ac5ce702048119ac906
  
        // Notify-based platform agents (openclaw / hermes) communicate back via
        // agentNotify.notify. A local run uses the requesting desktop's device ID;
-@@ -2541,12 +2599,14 @@ export class AiAgentService {
+@@ -2551,12 +2609,14 @@ export class AiAgentService {
  
          // Open the stream channel so the gateway WS subscription can receive
          // notify_update events published by agentNotify.notify.
@@ -2212,7 +2120,7 @@ index 04bde7a7ac665bfd4d51681424703757d28c191d..f248bffbd33d5ac5ce702048119ac906
              topicId,
              userId: this.userId,
            })
-@@ -2567,6 +2627,7 @@ export class AiAgentService {
+@@ -2577,6 +2637,7 @@ export class AiAgentService {
                agentType: heteroType,
                cwd: undefined,
                operationId,
@@ -2220,7 +2128,7 @@ index 04bde7a7ac665bfd4d51681424703757d28c191d..f248bffbd33d5ac5ce702048119ac906
                platformAgentId: agentConfig.agencyConfig?.heterogeneousProvider?.platformAgentId,
                prompt,
                taskId: operationId,
-@@ -2641,10 +2702,12 @@ export class AiAgentService {
+@@ -2651,10 +2712,12 @@ export class AiAgentService {
          // the init only powers reconnect, not the run. `createStreamEventManager`
          // probes Redis synchronously, so guard construction too, not just publish.
          try {
@@ -2233,7 +2141,7 @@ index 04bde7a7ac665bfd4d51681424703757d28c191d..f248bffbd33d5ac5ce702048119ac906
              topicId,
              userId: this.userId,
            });
-@@ -4136,6 +4199,38 @@ export class AiAgentService {
+@@ -4157,6 +4220,38 @@ export class AiAgentService {
      const timestamp = Date.now();
      const operationId = `op_${timestamp}_${resolvedAgentId}_${topicId}_${nanoid(8)}`;
  
@@ -2272,7 +2180,7 @@ index 04bde7a7ac665bfd4d51681424703757d28c191d..f248bffbd33d5ac5ce702048119ac906
      // 16. Create initial context
      let initialContext: AgentRuntimeContext = {
        payload: {
-@@ -4648,7 +4743,9 @@ export class AiAgentService {
+@@ -4669,7 +4764,9 @@ export class AiAgentService {
        // WebSocket for the rest of the run. The parent's mark stays authoritative;
        // a child's live progress already rides down the parent channel via
        // `appContext.subAgentProgress`.
@@ -2283,7 +2191,7 @@ index 04bde7a7ac665bfd4d51681424703757d28c191d..f248bffbd33d5ac5ce702048119ac906
          await this.topicModel.updateMetadata(topicId, {
            runningOperation: {
              assistantMessageId: assistantMessageRecord.id,
-@@ -4685,6 +4782,9 @@ export class AiAgentService {
+@@ -4706,6 +4803,9 @@ export class AiAgentService {
          userMessageId: userMessageRecord?.id ?? parentMessageId ?? '',
        };
      } catch (error) {
@@ -2293,7 +2201,7 @@ index 04bde7a7ac665bfd4d51681424703757d28c191d..f248bffbd33d5ac5ce702048119ac906
        if (isAbortError(error)) {
          await updateAbortedAssistantMessage(error.message);
          log('execAgent: createOperation aborted for %s: %s', operationId, error.message);
-@@ -5008,6 +5108,7 @@ export class AiAgentService {
+@@ -5029,6 +5129,7 @@ export class AiAgentService {
        parentOperationId,
        prompt: speakerInstruction,
        suppressUserMessage: true,
@@ -2301,7 +2209,7 @@ index 04bde7a7ac665bfd4d51681424703757d28c191d..f248bffbd33d5ac5ce702048119ac906
        trigger: inheritedTrigger,
        userInterventionConfig: { approvalMode: 'headless' },
      });
-@@ -5689,29 +5790,40 @@ export class AiAgentService {
+@@ -5710,29 +5811,40 @@ export class AiAgentService {
              deviceWorkspaceId?: string;
              heteroType?: string;
              operationId?: string;
@@ -2353,7 +2261,7 @@ index 04bde7a7ac665bfd4d51681424703757d28c191d..f248bffbd33d5ac5ce702048119ac906
              },
              {
 diff --git a/apps/server/src/services/aiAgent/topicStartReservation.test.ts b/apps/server/src/services/aiAgent/topicStartReservation.test.ts
-index f4fa4c2e7321c725b25c512acb2fac2813c3fa90..3702aff2aa26916b0bad28b3b81be0752053b249 100644
+index f4fa4c2e73..3702aff2aa 100644
 --- a/apps/server/src/services/aiAgent/topicStartReservation.test.ts
 +++ b/apps/server/src/services/aiAgent/topicStartReservation.test.ts
 @@ -53,6 +53,32 @@ describe('acquireTopicStartReservation', () => {
@@ -2391,7 +2299,7 @@ index f4fa4c2e7321c725b25c512acb2fac2813c3fa90..3702aff2aa26916b0bad28b3b81be075
    });
  });
 diff --git a/apps/server/src/services/aiAgent/topicStartReservation.ts b/apps/server/src/services/aiAgent/topicStartReservation.ts
-index f0ce652ee9e97b13f7eab2985a2c86184c5859af..f537d80b528772400f3df0d4fee921f22932b0a3 100644
+index f0ce652ee9..f537d80b52 100644
 --- a/apps/server/src/services/aiAgent/topicStartReservation.ts
 +++ b/apps/server/src/services/aiAgent/topicStartReservation.ts
 @@ -18,11 +18,13 @@ const delay = (milliseconds: number): Promise<void> =>
@@ -2417,7 +2325,7 @@ index f0ce652ee9e97b13f7eab2985a2c86184c5859af..f537d80b528772400f3df0d4fee921f2
      );
  
 diff --git a/apps/server/src/services/heterogeneousAgent/HeterogeneousPersistenceHandler.ts b/apps/server/src/services/heterogeneousAgent/HeterogeneousPersistenceHandler.ts
-index 90ac39c2c0c52abc615558437cbf4c982efd9a9e..57a37985c96673573db3969462c3bda93fd9afec 100644
+index 90ac39c2c0..57a37985c9 100644
 --- a/apps/server/src/services/heterogeneousAgent/HeterogeneousPersistenceHandler.ts
 +++ b/apps/server/src/services/heterogeneousAgent/HeterogeneousPersistenceHandler.ts
 @@ -414,7 +414,11 @@ export class HeterogeneousPersistenceHandler {
@@ -2486,7 +2394,7 @@ index 90ac39c2c0c52abc615558437cbf4c982efd9a9e..57a37985c96673573db3969462c3bda9
        }
  
 diff --git a/apps/server/src/services/heterogeneousAgent/__tests__/HeterogeneousPersistenceHandler.test.ts b/apps/server/src/services/heterogeneousAgent/__tests__/HeterogeneousPersistenceHandler.test.ts
-index 20015c07c0a14b6e4a2cadbdf592e507fd16db8c..a399a6e1db0cdcbd496eeace5a7dc8fe35372a47 100644
+index 20015c07c0..a399a6e1db 100644
 --- a/apps/server/src/services/heterogeneousAgent/__tests__/HeterogeneousPersistenceHandler.test.ts
 +++ b/apps/server/src/services/heterogeneousAgent/__tests__/HeterogeneousPersistenceHandler.test.ts
 @@ -1760,6 +1760,29 @@ describe('HeterogeneousPersistenceHandler', () => {
@@ -2520,10 +2428,10 @@ index 20015c07c0a14b6e4a2cadbdf592e507fd16db8c..a399a6e1db0cdcbd496eeace5a7dc8fe
        const h = createHarness({
          assistantMessageId: 'asst-1',
 diff --git a/apps/server/src/services/heterogeneousAgent/__tests__/index.test.ts b/apps/server/src/services/heterogeneousAgent/__tests__/index.test.ts
-index f62e9afd5c5de50212c8dfb0a96e1dcb9e9f0111..ddd05d27f3a8d90e9c6df86273667819f81e405d 100644
+index 1eb4503468..40cc496b34 100644
 --- a/apps/server/src/services/heterogeneousAgent/__tests__/index.test.ts
 +++ b/apps/server/src/services/heterogeneousAgent/__tests__/index.test.ts
-@@ -76,14 +76,32 @@ const buildEvent = (
+@@ -76,14 +76,24 @@ const buildEvent = (
    type,
  });
  
@@ -2534,18 +2442,10 @@ index f62e9afd5c5de50212c8dfb0a96e1dcb9e9f0111..ddd05d27f3a8d90e9c6df86273667819
    const { manager, published } = createFakeStreamManager();
    const persistenceHandler = createFakePersistenceHandler();
 +  const topicModel = {
-+    findById: vi.fn(async (): Promise<any> => ({
-+      metadata: {
-+        runningOperation: {
-+          assistantMessageId: 'asst-1',
-+          operationId: overrides.operationId ?? 'op-1',
-+        },
-+      },
-+    })),
-+    settleRunningStatus: vi.fn(async () => {}),
-+    takeRunningOperation: vi.fn(async (_topicId: string, operationId: string): Promise<any> => ({
-+      isRoot: true,
-+      operation: { assistantMessageId: 'asst-1', operationId },
++    settleRunningOperation: vi.fn(async (_topicId: string, operationId: string): Promise<any> => ({
++      assistantMessageId: 'asst-1',
++      operationId,
++      status: 'settled',
 +    })),
 +  };
    const service = new HeterogeneousAgentService({} as any, 'user-test', {
@@ -2558,7 +2458,7 @@ index f62e9afd5c5de50212c8dfb0a96e1dcb9e9f0111..ddd05d27f3a8d90e9c6df86273667819
  };
  
  describe('HeterogeneousAgentService', () => {
-@@ -406,7 +424,7 @@ describe('HeterogeneousAgentService', () => {
+@@ -406,7 +416,7 @@ describe('HeterogeneousAgentService', () => {
      });
  
      it('forwards classified error details when the run failed', async () => {
@@ -2567,7 +2467,7 @@ index f62e9afd5c5de50212c8dfb0a96e1dcb9e9f0111..ddd05d27f3a8d90e9c6df86273667819
  
        await service.heteroFinish({
          agentType: 'codex',
-@@ -425,7 +443,7 @@ describe('HeterogeneousAgentService', () => {
+@@ -425,7 +435,7 @@ describe('HeterogeneousAgentService', () => {
      });
  
      it('persists and publishes a structured auth_required error from a flattened finish', async () => {
@@ -2576,7 +2476,7 @@ index f62e9afd5c5de50212c8dfb0a96e1dcb9e9f0111..ddd05d27f3a8d90e9c6df86273667819
  
        await service.heteroFinish({
          agentType: 'claude-code',
-@@ -483,7 +501,7 @@ describe('HeterogeneousAgentService', () => {
+@@ -516,7 +526,7 @@ describe('HeterogeneousAgentService', () => {
      };
  
      it('fires onComplete (reason=done) hooks on a successful run', async () => {
@@ -2585,7 +2485,7 @@ index f62e9afd5c5de50212c8dfb0a96e1dcb9e9f0111..ddd05d27f3a8d90e9c6df86273667819
        const { onComplete, onError } = registerHook('op-hook-success');
  
        await service.heteroFinish({
-@@ -504,7 +522,7 @@ describe('HeterogeneousAgentService', () => {
+@@ -537,7 +547,7 @@ describe('HeterogeneousAgentService', () => {
      });
  
      it('fires both onComplete and onError (reason=error) hooks on a failed run', async () => {
@@ -2594,7 +2494,7 @@ index f62e9afd5c5de50212c8dfb0a96e1dcb9e9f0111..ddd05d27f3a8d90e9c6df86273667819
        const { onComplete, onError } = registerHook('op-hook-error');
  
        await service.heteroFinish({
-@@ -531,7 +549,7 @@ describe('HeterogeneousAgentService', () => {
+@@ -564,7 +574,7 @@ describe('HeterogeneousAgentService', () => {
      // gate on success — and the gate bails unless op.model/provider are set, so the
      // synthetic state MUST carry the model/provider backfilled from the CLI stream.
      it('routes the terminal transition through CompletionLifecycle with backfilled model/provider', async () => {
@@ -2603,33 +2503,16 @@ index f62e9afd5c5de50212c8dfb0a96e1dcb9e9f0111..ddd05d27f3a8d90e9c6df86273667819
  
        const finalizeSpy = vi.spyOn(HeteroTraceRecorder.prototype, 'finalize').mockResolvedValue({
          llmCalls: 3,
-@@ -576,13 +594,55 @@ describe('HeterogeneousAgentService', () => {
+@@ -609,13 +619,38 @@ describe('HeterogeneousAgentService', () => {
        dispatchSpy.mockRestore();
      });
  
 +    it('forwards a group member role to the completion lifecycle', async () => {
 +      const { service, topicModel } = createService({ operationId: 'op-member' });
-+      topicModel.findById.mockResolvedValue({
-+        metadata: {
-+          runningOperation: {
-+            childOperations: [
-+              {
-+                assistantMessageId: 'asst-member',
-+                operationId: 'op-member',
-+                orchestrationRole: 'member',
-+              },
-+            ],
-+            operationId: 'op-supervisor',
-+          },
-+        },
-+      });
-+      topicModel.takeRunningOperation.mockResolvedValue({
-+        isRoot: false,
-+        operation: {
-+          assistantMessageId: 'asst-member',
-+          operationId: 'op-member',
-+          orchestrationRole: 'member',
-+        },
++      topicModel.settleRunningOperation.mockResolvedValue({
++        assistantMessageId: 'asst-member',
++        orchestrationRole: 'member',
++        status: 'settled',
 +      });
 +      const completeOperationSpy = vi
 +        .spyOn(CompletionLifecycle.prototype, 'completeOperation')
@@ -2660,7 +2543,7 @@ index f62e9afd5c5de50212c8dfb0a96e1dcb9e9f0111..ddd05d27f3a8d90e9c6df86273667819
  
        const findByIdSpy = vi
          .spyOn(AgentOperationModel.prototype, 'findById')
-@@ -619,7 +679,7 @@ describe('HeterogeneousAgentService', () => {
+@@ -652,7 +687,7 @@ describe('HeterogeneousAgentService', () => {
      });
  
      it('skips verify-plan instantiation for a non-task hetero run', async () => {
@@ -2669,49 +2552,54 @@ index f62e9afd5c5de50212c8dfb0a96e1dcb9e9f0111..ddd05d27f3a8d90e9c6df86273667819
  
        const findByIdSpy = vi
          .spyOn(AgentOperationModel.prototype, 'findById')
-@@ -699,6 +759,11 @@ describe('HeterogeneousAgentService', () => {
-           id: 'topic-q',
-           metadata: { runningOperation: { hooks, operationId: 'op-q' } },
-         })),
-+        settleRunningStatus: vi.fn(async () => {}),
-+        takeRunningOperation: vi.fn(async () => ({
-+          isRoot: true,
-+          operation: { assistantMessageId: 'asst-q', hooks, operationId: 'op-q' },
-+        })),
-         updateMetadata: vi.fn(async () => {}),
-       } as any;
-       const { manager } = createFakeStreamManager();
-@@ -795,6 +860,28 @@ describe('HeterogeneousAgentService', () => {
-       let meta: Record<string, any> = {};
-       const topicModel = {
-         findById: vi.fn(async () => ({ id: TOPIC, metadata: meta })),
-+        settleRunningStatus: vi.fn(async () => {}),
-+        takeRunningOperation: vi.fn(async (_id: string, operationId: string) => {
-+          const running = meta.runningOperation;
-+          if (running?.operationId === operationId) {
-+            meta = { ...meta, runningOperation: null };
-+            return { isRoot: true, operation: running };
-+          }
-+          const child = running?.childOperations?.find(
-+            (candidate: any) => candidate.operationId === operationId,
-+          );
-+          if (!child) return undefined;
+@@ -838,7 +873,13 @@ describe('HeterogeneousAgentService', () => {
+               status: 'missing' as const,
+             };
+           }
+-          if (runningOperation.operationId !== operationId) {
++          const isRoot = runningOperation.operationId === operationId;
++          const operation = isRoot
++            ? runningOperation
++            : runningOperation.childOperations?.find(
++                (candidate: any) => candidate.operationId === operationId,
++              );
++          if (!operation) {
+             return {
+               activeOperationId: runningOperation.operationId,
+               status: 'conflict' as const,
+@@ -846,15 +887,26 @@ describe('HeterogeneousAgentService', () => {
+           }
+ 
+           const currentMessage = meta.heteroCurrentMsgId;
+-          meta = { ...meta, runningOperation: null };
 +          meta = {
 +            ...meta,
-+            runningOperation: {
-+              ...running,
-+              childOperations: running.childOperations.filter(
-+                (candidate: any) => candidate.operationId !== operationId,
-+              ),
-+            },
++            runningOperation: isRoot
++              ? null
++              : {
++                  ...runningOperation,
++                  childOperations: runningOperation.childOperations.filter(
++                    (candidate: any) => candidate.operationId !== operationId,
++                  ),
++                },
 +          };
-+          return { isRoot: false, operation: child };
-+        }),
-         updateMetadata: vi.fn(async (_id: string, patch: Record<string, any>, mergeBase?: any) => {
-           meta = { ...(mergeBase ?? meta), ...patch };
+           return {
+             assistantMessageId:
+               currentMessage?.operationId === operationId
+                 ? currentMessage.msgId
+-                : runningOperation.assistantMessageId,
+-            hooks: runningOperation.hooks,
++                : operation.assistantMessageId,
++            hooks: operation.hooks,
++            orchestrationRole: operation.orchestrationRole,
+             status: 'settled' as const,
+-            threadId: runningOperation.threadId,
++            threadId: operation.threadId,
+           };
          }),
+         updateMetadata: vi.fn(async (_id: string, patch: Record<string, any>, mergeBase?: any) => {
 diff --git a/apps/server/src/services/heterogeneousAgent/__tests__/sessionResume.test.ts b/apps/server/src/services/heterogeneousAgent/__tests__/sessionResume.test.ts
-index f1912c8b0e3b5e503c9cb45a1307ac1ffb086835..f60ce96c9b25cc20743b09717bd7bd719499dd83 100644
+index f1912c8b0e..f60ce96c9b 100644
 --- a/apps/server/src/services/heterogeneousAgent/__tests__/sessionResume.test.ts
 +++ b/apps/server/src/services/heterogeneousAgent/__tests__/sessionResume.test.ts
 @@ -2,6 +2,7 @@
@@ -2812,83 +2700,79 @@ index f1912c8b0e3b5e503c9cb45a1307ac1ffb086835..f60ce96c9b25cc20743b09717bd7bd71
  
        // Should not throw — sessionId persistence is best-effort
 diff --git a/apps/server/src/services/heterogeneousAgent/index.ts b/apps/server/src/services/heterogeneousAgent/index.ts
-index 1c161063453f93c7ecddcc81e3165b43e831c355..f369f7dda50193a53236b08a92acecdef03667f8 100644
+index e3509b805b..6afed1caa1 100644
 --- a/apps/server/src/services/heterogeneousAgent/index.ts
 +++ b/apps/server/src/services/heterogeneousAgent/index.ts
-@@ -282,6 +282,38 @@ export class HeterogeneousAgentService {
+@@ -282,23 +282,13 @@ export class HeterogeneousAgentService {
        topicId,
      });
  
-+    let serializedHooks: SerializedHook[] | undefined;
-+    let assistantMessageId: string | undefined;
-+    let isolationThreadId: string | undefined;
+-    // Drive the run's lifecycle hooks (onComplete / onError) through the same
+-    // `hookDispatcher` the normal LLM runtime uses, so the task lifecycle
+-    // (onTopicComplete → task done/failed) and any IM bot completion callback
+-    // fire uniformly. The hooks were registered in-memory (local mode) and
+-    // serialized onto runningOperation (queue mode) at dispatch time.
+-    //
+-    // Skip on `cancelled` — heteroFinish may be called twice: first with
+-    // result=cancelled (termination signal) then with result=success/error
+-    // (normal process exit). We must NOT clear runningOperation or fire hooks on
+-    // cancelled so the subsequent success/error call still finds the hooks +
+-    // assistantMessageId and dispatches exactly once. (cancelled→interrupted is a
+-    // no-op for the task lifecycle anyway — onTopicComplete has no interrupted
+-    // branch — and suppresses a spurious bot "stopped" message before the real
+-    // result lands.)
+     let serializedHooks: SerializedHook[] | undefined;
+     let assistantMessageId = seedAssistantMessageId;
+     let isolationThreadId: string | undefined;
 +    let orchestrationRole: 'member' | 'supervisor' | undefined;
 +
 +    // `cancelled` is only an intermediate process signal. Keep the marker for
 +    // the following success/error terminal callback, which owns completion.
-+    if (result !== 'cancelled') {
-+      const topic = await this.topicModel.findById(topicId);
-+      const marker = topic?.metadata?.runningOperation;
-+      const running =
-+        marker?.operationId === operationId
-+          ? marker
-+          : marker?.childOperations?.find((child) => child.operationId === operationId);
-+      if (!running) {
-+        log('heteroFinish: ignoring already-settled terminal callback for op=%s', operationId);
-+        return;
-+      }
-+
-+      serializedHooks = running.hooks as SerializedHook[] | undefined;
-+      isolationThreadId = running.threadId ?? undefined;
-+      orchestrationRole = running.orchestrationRole;
-+
-+      // The per-step pointer is independent from the running marker, so it
-+      // remains available after the atomic claim removes that marker.
-+      const currentMsgRef = topic?.metadata?.heteroCurrentMsgId;
-+      assistantMessageId =
-+        currentMsgRef?.operationId === operationId
-+          ? currentMsgRef.msgId
-+          : running.assistantMessageId;
-+    }
-+
-     // Always emit a terminal `agent_runtime_end` so renderer subscribers shut
-     // down even if the CLI stream missed it (process killed mid-flight,
-     // network drop on last batch). Idempotent on the renderer side: the
-@@ -314,33 +346,6 @@ export class HeterogeneousAgentService {
-     // result lands.)
+     if (result !== 'cancelled') {
+       try {
+         const settled = await this.topicModel.settleRunningOperation(topicId, operationId);
+@@ -316,6 +306,7 @@ export class HeterogeneousAgentService {
+         if (settled.status === 'settled') {
+           serializedHooks = settled.hooks as SerializedHook[] | undefined;
+           isolationThreadId = settled.threadId;
++          orchestrationRole = settled.orchestrationRole;
+         }
+       } catch (err) {
+         log('heteroFinish: failed to settle runningOperation (non-fatal): %O', err);
+@@ -323,9 +314,8 @@ export class HeterogeneousAgentService {
+     }
+ 
+     // Emit a terminal `agent_runtime_end` so renderer subscribers shut down even
+-    // if the CLI stream missed it (process killed mid-flight, network drop on
+-    // last batch). A stale finish that conflicts with a newer operation returns
+-    // above instead of projecting the old terminal state into the active run.
++    // if the CLI stream missed it. A stale callback that belongs to neither the
++    // root operation nor one of its children returns above.
+     await this.streamEventManager.publishStreamEvent(operationId, {
+       data: {
+         agentType,
+@@ -338,6 +328,20 @@ export class HeterogeneousAgentService {
+       type: 'agent_runtime_end',
+     });
+ 
++    // Drive the run's lifecycle hooks (onComplete / onError) through the same
++    // `hookDispatcher` the normal LLM runtime uses, so the task lifecycle
++    // (onTopicComplete → task done/failed) and any IM bot completion callback
++    // fire uniformly. The hooks were registered in-memory (local mode) and
++    // serialized onto runningOperation (queue mode) at dispatch time.
++    //
++    // Skip on `cancelled` — heteroFinish may be called twice: first with
++    // result=cancelled (termination signal) then with result=success/error
++    // (normal process exit). We must NOT clear runningOperation or fire hooks on
++    // cancelled so the subsequent success/error call still finds the hooks +
++    // assistantMessageId and dispatches exactly once. (cancelled→interrupted is a
++    // no-op for the task lifecycle anyway — onTopicComplete has no interrupted
++    // branch — and suppresses a spurious bot "stopped" message before the real
++    // result lands.)
      if (result === 'cancelled') return;
  
--    let serializedHooks: SerializedHook[] | undefined;
--    let assistantMessageId: string | undefined;
--    let isolationThreadId: string | undefined;
--    try {
--      const topic = await this.topicModel.findById(topicId);
--      serializedHooks = topic?.metadata?.runningOperation?.hooks as SerializedHook[] | undefined;
--      isolationThreadId = topic?.metadata?.runningOperation?.threadId ?? undefined;
--      // Prefer heteroCurrentMsgId — the persistence handler updates this pointer
--      // on every step boundary, so it refers to the LAST assistant message with
--      // the complete final content.  Fall back to the initial placeholder id
--      // recorded in runningOperation if the pointer is absent or belongs to a
--      // different operation (shouldn't happen, but defensive).
--      const currentMsgRef = topic?.metadata?.heteroCurrentMsgId;
--      assistantMessageId =
--        currentMsgRef?.operationId === operationId
--          ? currentMsgRef.msgId
--          : topic?.metadata?.runningOperation?.assistantMessageId;
--      await this.topicModel.updateMetadata(topicId, { runningOperation: null });
--      // Settle `status: 'running'` for runs with no renderer attached (e.g. a
--      // cron-dispatched scheduled resume) — otherwise nothing ever moves the
--      // topic off `running`. Guarded in the model: an attached client's own
--      // terminal write ('active'/'unread') is never clobbered.
--      await this.topicModel.settleRunningStatus(topicId);
--    } catch (err) {
--      log('heteroFinish: failed to clear runningOperation (non-fatal): %O', err);
--    }
--
      // The owning agentId is authoritatively encoded in the operationId
-     // (op_<ts>_agt_<id>_tpc_<id>_<suffix>, built at dispatch from the resolved
-     // agent), so derive it from there. Reading it back off the final assistant
-@@ -476,6 +481,7 @@ export class HeterogeneousAgentService {
+@@ -475,6 +479,7 @@ export class HeterogeneousAgentService {
          // Backfilled executed model/provider — the verify gate bails when absent.
          model: totals?.model,
          operationId,
@@ -2896,17 +2780,75 @@ index 1c161063453f93c7ecddcc81e3165b43e831c355..f369f7dda50193a53236b08a92acecde
          provider: totals?.provider,
          serializedHooks,
          stepCount: totals?.stepCount ?? null,
-@@ -495,6 +501,8 @@ export class HeterogeneousAgentService {
-       },
-       completionReason,
-     );
-+    const claimed = await this.topicModel.takeRunningOperation(topicId, operationId);
-+    if (claimed?.isRoot) await this.topicModel.settleRunningStatus(topicId);
-     log('heteroFinish: dispatched completion lifecycle for op=%s result=%s', operationId, result);
-   }
+diff --git a/packages/database/src/models/__tests__/topic.test.ts b/packages/database/src/models/__tests__/topic.test.ts
+index a27f897c3c..b096e8e0cf 100644
+--- a/packages/database/src/models/__tests__/topic.test.ts
++++ b/packages/database/src/models/__tests__/topic.test.ts
+@@ -595,6 +595,7 @@ describe('TopicModel', () => {
+       expect(settled).toEqual({
+         assistantMessageId: 'msg-current',
+         hooks,
++        orchestrationRole: undefined,
+         status: 'settled',
+         threadId: 'thread-old',
+       });
+@@ -603,6 +604,54 @@ describe('TopicModel', () => {
+       expect(row?.status).toBe('unread');
+     });
  
++    it('atomically removes only a matching child operation', async () => {
++      const childHooks = [
++        {
++          id: 'hook-child',
++          type: 'onComplete',
++          webhook: { url: '/child-callback' },
++        },
++      ];
++      const topic = await topicModel.create({
++        metadata: {
++          heteroCurrentMsgId: { msgId: 'msg-child-current', operationId: 'op-child' },
++          runningOperation: {
++            assistantMessageId: 'msg-parent',
++            childOperations: [
++              {
++                assistantMessageId: 'msg-child',
++                hooks: childHooks,
++                operationId: 'op-child',
++                orchestrationRole: 'member',
++                threadId: 'thread-child',
++              },
++            ],
++            operationId: 'op-parent',
++            orchestrationRole: 'supervisor',
++          },
++        },
++        title: 'matching child operation',
++      });
++      await topicModel.update(topic.id, { status: 'running' });
++
++      const settled = await topicModel.settleRunningOperation(topic.id, 'op-child');
++
++      expect(settled).toEqual({
++        assistantMessageId: 'msg-child-current',
++        hooks: childHooks,
++        orchestrationRole: 'member',
++        status: 'settled',
++        threadId: 'thread-child',
++      });
++      const row = await topicModel.findById(topic.id);
++      expect(row?.metadata?.runningOperation).toMatchObject({
++        operationId: 'op-parent',
++        orchestrationRole: 'supervisor',
++      });
++      expect(row?.metadata?.runningOperation?.childOperations).toEqual([]);
++      expect(row?.status).toBe('running');
++    });
++
+     it('does not let an old watchdog settle a newer operation', async () => {
+       const topic = await topicModel.create({
+         metadata: {
 diff --git a/packages/database/src/models/__tests__/topics/topic.update.test.ts b/packages/database/src/models/__tests__/topics/topic.update.test.ts
-index b09cd2474a9f5e3685c573bf930be0ece9941267..3c0f29ada537ea53f7cef27e034662245cf16a02 100644
+index b09cd2474a..3c0f29ada5 100644
 --- a/packages/database/src/models/__tests__/topics/topic.update.test.ts
 +++ b/packages/database/src/models/__tests__/topics/topic.update.test.ts
 @@ -185,10 +185,10 @@ describe('TopicModel - Update', () => {
@@ -3065,10 +3007,60 @@ index b09cd2474a9f5e3685c573bf930be0ece9941267..3c0f29ada537ea53f7cef27e03466224
        const topicId = 'task-callback-stale-reservation';
        await serverDB.insert(topics).values({
 diff --git a/packages/database/src/models/topic.ts b/packages/database/src/models/topic.ts
-index 06a2e50321334e0a860752a5029fbe6abc347488..d7153995d51e37a445e65792c987d5debf3ce0ae 100644
+index a7c43f7167..00d89a00eb 100644
 --- a/packages/database/src/models/topic.ts
 +++ b/packages/database/src/models/topic.ts
-@@ -1417,6 +1417,163 @@ export class TopicModel {
+@@ -1326,20 +1326,31 @@ export class TopicModel {
+           status: 'missing' as const,
+         };
+       }
+-      if (runningOperation.operationId !== operationId) {
++      const isRoot = runningOperation.operationId === operationId;
++      const operation = isRoot
++        ? runningOperation
++        : runningOperation.childOperations?.find((child) => child.operationId === operationId);
++      if (!operation) {
+         return { activeOperationId: runningOperation.operationId, status: 'conflict' as const };
+       }
+ 
+       const metadata = {
+         ...existing.metadata,
+-        runningOperation: null,
++        runningOperation: isRoot
++          ? null
++          : {
++              ...runningOperation,
++              childOperations: runningOperation.childOperations?.filter(
++                (child) => child.operationId !== operationId,
++              ),
++            },
+       } as ChatTopicMetadata;
+ 
+       await tx
+         .update(topics)
+         .set({
+           metadata,
+-          ...(existing.status === 'running' ? { status: 'unread' as const } : {}),
++          ...(isRoot && existing.status === 'running' ? { status: 'unread' as const } : {}),
+           updatedAt: new Date(),
+         })
+         .where(and(eq(topics.id, id), this.ownership()));
+@@ -1349,10 +1360,11 @@ export class TopicModel {
+         assistantMessageId:
+           currentMessage?.operationId === operationId
+             ? currentMessage.msgId
+-            : runningOperation.assistantMessageId,
+-        hooks: runningOperation.hooks,
++            : operation.assistantMessageId,
++        hooks: operation.hooks,
++        orchestrationRole: operation.orchestrationRole,
+         status: 'settled' as const,
+-        threadId: runningOperation.threadId ?? undefined,
++        threadId: operation.threadId ?? undefined,
+       };
+     });
+   };
+@@ -1477,6 +1489,163 @@ export class TopicModel {
      });
    };
  
@@ -3232,7 +3224,7 @@ index 06a2e50321334e0a860752a5029fbe6abc347488..d7153995d51e37a445e65792c987d5de
    /**
     * Atomically reserve an idle topic for one task-callback delivery.
     *
-@@ -1429,6 +1586,7 @@ export class TopicModel {
+@@ -1489,6 +1658,7 @@ export class TopicModel {
    tryReserveTaskCallback = async (
      id: string,
      messageId: string,
@@ -3240,7 +3232,7 @@ index 06a2e50321334e0a860752a5029fbe6abc347488..d7153995d51e37a445e65792c987d5de
      replacesOperationId?: string,
    ): Promise<boolean | null> =>
      this.db.transaction(async (tx) => {
-@@ -1449,6 +1607,9 @@ export class TopicModel {
+@@ -1509,6 +1679,9 @@ export class TopicModel {
  
        if (reservation?.messageId === messageId && hasLiveReservation) return true;
        const runningOperation = existing.metadata?.runningOperation;
@@ -3251,7 +3243,7 @@ index 06a2e50321334e0a860752a5029fbe6abc347488..d7153995d51e37a445e65792c987d5de
          !!replacesOperationId && runningOperation?.operationId === replacesOperationId;
        if ((runningOperation && !canReplaceRunningOperation) || hasLiveReservation) return false;
 diff --git a/packages/types/src/topic/topic.test.ts b/packages/types/src/topic/topic.test.ts
-index 87ba9c9db117ab6053b7f4fb189401f33995c18a..a4659767dfe0af8dcd31a3984bf56e596b6a3867 100644
+index 87ba9c9db1..a4659767df 100644
 --- a/packages/types/src/topic/topic.test.ts
 +++ b/packages/types/src/topic/topic.test.ts
 @@ -38,6 +38,25 @@ describe('chatTopicMetadataUpdateSchema', () => {
@@ -3281,7 +3273,7 @@ index 87ba9c9db117ab6053b7f4fb189401f33995c18a..a4659767dfe0af8dcd31a3984bf56e59
      const result = chatTopicMetadataUpdateSchema.safeParse({
        scheduledRun: {
 diff --git a/packages/types/src/topic/topic.ts b/packages/types/src/topic/topic.ts
-index 2587ba392ead4e95fedebb1c4a81b0d4428b9e69..992086446adaf240aec88b6266101de83f5840c9 100644
+index 2587ba392e..992086446a 100644
 --- a/packages/types/src/topic/topic.ts
 +++ b/packages/types/src/topic/topic.ts
 @@ -214,6 +214,18 @@ export interface ChatTopicMetadata {
