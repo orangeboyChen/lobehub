@@ -1,5 +1,5 @@
 diff --git a/src/features/Conversation/store/slices/generation/action.test.ts b/src/features/Conversation/store/slices/generation/action.test.ts
-index fd1c4ec029..480892e038 100644
+index fd1c4ec029..4b53308b67 100644
 --- a/src/features/Conversation/store/slices/generation/action.test.ts
 +++ b/src/features/Conversation/store/slices/generation/action.test.ts
 @@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -409,8 +409,80 @@ index fd1c4ec029..480892e038 100644
      it('should bail out if the interim op was cancelled during preflight (Stop pressed)', async () => {
        const { useChatStore } = await import('@/store/chat');
        vi.mocked(useChatStore.getState).mockReturnValue({
+@@ -1772,6 +2090,71 @@ describe('Generation Actions', () => {
+       );
+     });
+ 
++    it('keeps heterogeneous member retries in the group transcript', async () => {
++      await setupHeteroChatStore();
++
++      const context: ConversationContext = {
++        agentId: 'supervisor-agent',
++        groupId: 'group-1',
++        orchestrationRole: 'member',
++        scope: 'group',
++        subAgentId: 'member-agent',
++        threadId: null,
++        topicId: 'topic-1',
++      };
++      const store = createStore({ context });
++
++      act(() => {
++        store.setState({
++          dbMessages: [
++            { id: 'user-1', role: 'user', content: 'Hello' },
++            {
++              agentId: 'member-agent',
++              content: 'Member response',
++              id: 'assistant-1',
++              metadata: { orchestrationRole: 'member', subAgentId: 'member-agent' },
++              parentId: 'user-1',
++              role: 'assistant',
++            },
++          ],
++          displayMessages: [
++            { id: 'user-1', role: 'user', content: 'Hello' },
++            {
++              agentId: 'member-agent',
++              content: 'Member response',
++              id: 'assistant-1',
++              metadata: { orchestrationRole: 'member', subAgentId: 'member-agent' },
++              parentId: 'user-1',
++              role: 'assistant',
++            },
++          ],
++        } as any);
++      });
++
++      await act(async () => {
++        await store.getState().regenerateAssistantMessage('assistant-1');
++      });
++
++      expect(createMessageSpy).toHaveBeenCalledWith(
++        expect.objectContaining({
++          agentId: 'member-agent',
++          groupId: 'group-1',
++          metadata: { orchestrationRole: 'member', subAgentId: 'member-agent' },
++        }),
++      );
++      expect(executeHeterogeneousAgentSpy).toHaveBeenCalledWith(
++        expect.any(Function),
++        expect.objectContaining({
++          context: expect.objectContaining({
++            agentId: 'member-agent',
++            groupId: 'group-1',
++            orchestrationRole: 'member',
++            subAgentId: 'member-agent',
++          }),
++        }),
++      );
++    });
++
+     it('creates the child execHeterogeneousAgent op as a child of the parent regenerate op', async () => {
+       const { mockHeteroStartOperation, mockAssociateMessageWithOperation } =
+         await setupHeteroChatStore();
 diff --git a/src/features/Conversation/store/slices/generation/action.ts b/src/features/Conversation/store/slices/generation/action.ts
-index b19d4c856f..beeec1af92 100644
+index b19d4c856f..0b4a2253ce 100644
 --- a/src/features/Conversation/store/slices/generation/action.ts
 +++ b/src/features/Conversation/store/slices/generation/action.ts
 @@ -6,6 +6,7 @@ import type {
@@ -429,7 +501,23 @@ index b19d4c856f..beeec1af92 100644
  import { useChatStore } from '@/store/chat';
  import { topicSelectors } from '@/store/chat/selectors';
  import { selectRuntimeType } from '@/store/chat/slices/agentRun/actions/dispatch/agentDispatcher';
-@@ -253,6 +255,105 @@ interface RegenerateUserMessageSource {
+@@ -200,6 +202,15 @@ const runHeterogeneousFromExistingMessage = async (
+   const assistantMsg = await messageService.createMessage({
+     agentId,
+     content: LOADING_FLAT,
++    groupId: context.groupId ?? undefined,
++    metadata:
++      context.isSupervisor || context.orchestrationRole || context.subAgentId
++        ? {
++            ...(context.isSupervisor && { isSupervisor: true }),
++            ...(context.orchestrationRole && { orchestrationRole: context.orchestrationRole }),
++            ...(context.subAgentId && { subAgentId: context.subAgentId }),
++          }
++        : undefined,
+     parentId: parentMessageId,
+     // External CLIs own model selection; persist only the runtime provider up
+     // front. The adapter backfills the actual model later if the CLI reports it.
+@@ -253,6 +264,114 @@ interface RegenerateUserMessageSource {
    readDbMessages: () => ConversationStore['dbMessages'];
  }
  
@@ -523,6 +611,15 @@ index b19d4c856f..beeec1af92 100644
 +  return { ...context, agentId, subAgentId: undefined };
 +};
 +
++const getRetryHeterogeneousExecutionContext = (
++  context: ConversationContext,
++): ConversationContext => {
++  const agentId = getRetryExecutionAgentId(context);
++  if (agentId === context.agentId) return context;
++
++  return { ...context, agentId };
++};
++
 +const getGroupSupervisorAgentId = (context: ConversationContext) => {
 +  if (!context.groupId) return context.agentId;
 +
@@ -535,7 +632,7 @@ index b19d4c856f..beeec1af92 100644
  const captureRegenerateUserMessageSource = (
    get: () => ConversationStore,
  ): RegenerateUserMessageSource => {
-@@ -275,8 +376,9 @@ const captureRegenerateUserMessageSource = (
+@@ -275,8 +394,9 @@ const captureRegenerateUserMessageSource = (
  const regenerateUserMessageFromSource = async (
    messageId: string,
    source: RegenerateUserMessageSource,
@@ -546,7 +643,7 @@ index b19d4c856f..beeec1af92 100644
    const chatStore = useChatStore.getState();
  
    // Block a genuine double-regenerate, and ONLY that. The guard used to be
-@@ -297,6 +399,20 @@ const regenerateUserMessageFromSource = async (
+@@ -297,6 +417,20 @@ const regenerateUserMessageFromSource = async (
    const currentIndex = displayMessages.findIndex((c) => c.id === messageId);
    const item = displayMessages[currentIndex];
    if (!item) return;
@@ -567,7 +664,7 @@ index b19d4c856f..beeec1af92 100644
    // Start the interim regenerate op BEFORE the async preflight below
    // (document-context resolve + onBeforeRegenerate hook). In page / bound-
    // document contexts those reads are real round trips, so creating the op
-@@ -342,8 +458,36 @@ const regenerateUserMessageFromSource = async (
+@@ -342,8 +476,38 @@ const regenerateUserMessageFromSource = async (
      // Read the database messages from the captured conversation. If the shared
      // ConversationStore has switched context, the source falls back to the old
      // context's ChatStore bucket instead of observing the new topic.
@@ -586,7 +683,9 @@ index b19d4c856f..beeec1af92 100644
 +
 +      await chatStore.switchMessageBranch(messageId, nextBranchIndex, { operationId });
 +
-+      const postSwitchOp = operationSelectors.getOperationById(operationId)(useChatStore.getState());
++      const postSwitchOp = operationSelectors.getOperationById(operationId)(
++        useChatStore.getState(),
++      );
 +      if (postSwitchOp && postSwitchOp.status !== 'running') return;
 +
 +      await chatStore.internal_execGroupOrchestration({
@@ -606,7 +705,7 @@ index b19d4c856f..beeec1af92 100644
      const nextBranchIndex = childrenCount;
  
      // Switch to the new branch so the UI shows the incoming response immediately
-@@ -358,13 +502,14 @@ const regenerateUserMessageFromSource = async (
+@@ -358,13 +522,14 @@ const regenerateUserMessageFromSource = async (
      const postSwitchOp = operationSelectors.getOperationById(operationId)(useChatStore.getState());
      if (postSwitchOp && postSwitchOp.status !== 'running') return;
  
@@ -623,7 +722,7 @@ index b19d4c856f..beeec1af92 100644
        isWorkspaceAgent: workspaceScoped,
      });
  
-@@ -383,8 +528,9 @@ const regenerateUserMessageFromSource = async (
+@@ -383,8 +548,9 @@ const regenerateUserMessageFromSource = async (
        // `onComplete` still fires at session end for the UI hook; re-completing
        // the already-settled wrapper is an idempotent no-op.
        await chatStore.executeGatewayAgent({
@@ -634,7 +733,61 @@ index b19d4c856f..beeec1af92 100644
          onComplete: () =>
            settleGenerationEntry(chatStore, operationId, () =>
              hooks.onRegenerateComplete?.(messageId),
-@@ -1162,7 +1308,7 @@ export const generationSlice: StateCreator<
+@@ -403,7 +569,7 @@ const regenerateUserMessageFromSource = async (
+     // so prior context is preserved.
+     if (runtimeType === 'hetero' && heterogeneousProvider) {
+       await runHeterogeneousFromExistingMessage(chatStore, {
+-        context,
++        context: getRetryHeterogeneousExecutionContext(context),
+         heterogeneousProvider,
+         // Forward the original user message's images so regenerate re-runs
+         // the CLI with the same vision input as the first attempt. Without
+@@ -831,19 +997,22 @@ export const generationSlice: StateCreator<
+     // tool/provider error on a grouped reply is not resumable this way.
+     if (!isHeterogeneousAgentStatusGuideError(erroredStep.error?.body)) return;
+ 
+-    const { agencyConfig, workspaceScoped } = getEffectiveAgencyConfig(context.agentId);
++    const executionContext = getRetryHeterogeneousExecutionContext(
++      getRetryExecutionContext(erroredStep, context),
++    );
++    const { agencyConfig, workspaceScoped } = getEffectiveAgencyConfig(executionContext.agentId);
+     const heterogeneousProvider = agencyConfig?.heterogeneousProvider;
+     const runtimeType = selectRuntimeType({
+       boundDeviceId: agencyConfig?.boundDeviceId,
+       executionTarget: agencyConfig?.executionTarget,
+       heterogeneousProvider,
+-      isGatewayMode: chatStore.isGatewayModeEnabled(context.agentId),
++      isGatewayMode: chatStore.isGatewayModeEnabled(executionContext.agentId),
+       isWorkspaceAgent: workspaceScoped,
+     });
+-    const agentId = context.agentId;
++    const agentId = executionContext.agentId;
+ 
+     const resumeSessionId = agentId
+-      ? resolveHeteroRunContext(chatStore, context, agentId).resumeSessionId
++      ? resolveHeteroRunContext(chatStore, executionContext, agentId).resumeSessionId
+       : undefined;
+ 
+     // Nothing to continue from: the failed step IS the group's head (the run
+@@ -878,7 +1047,7 @@ export const generationSlice: StateCreator<
+     }
+ 
+     const { operationId } = chatStore.startOperation({
+-      context: { ...context, messageId: groupMessageId },
++      context: { ...executionContext, messageId: groupMessageId },
+       type: 'regenerate',
+     });
+ 
+@@ -890,7 +1059,7 @@ export const generationSlice: StateCreator<
+       // steps inside the same assistantGroup, so the bubble grows instead of
+       // being replaced.
+       await runHeterogeneousFromExistingMessage(chatStore, {
+-        context,
++        context: executionContext,
+         heterogeneousProvider,
+         parentMessageId: continueParentId,
+         parentOperationId: operationId,
+@@ -1162,7 +1331,7 @@ export const generationSlice: StateCreator<
    },
  
    regenerateAssistantMessage: async (messageId: string) => {
@@ -643,7 +796,7 @@ index b19d4c856f..beeec1af92 100644
  
      // Find the assistant message
      const currentIndex = displayMessages.findIndex((c) => c.id === messageId);
-@@ -1170,12 +1316,16 @@ export const generationSlice: StateCreator<
+@@ -1170,12 +1339,16 @@ export const generationSlice: StateCreator<
  
      if (!currentMessage) return;
  
@@ -663,6 +816,76 @@ index b19d4c856f..beeec1af92 100644
    },
  
    regenerateUserMessage: async (messageId: string) =>
+diff --git a/src/features/Conversation/store/slices/generation/continueHeteroAfterError.test.ts b/src/features/Conversation/store/slices/generation/continueHeteroAfterError.test.ts
+index 1940fd81e6..5a26e376a2 100644
+--- a/src/features/Conversation/store/slices/generation/continueHeteroAfterError.test.ts
++++ b/src/features/Conversation/store/slices/generation/continueHeteroAfterError.test.ts
+@@ -198,6 +198,65 @@ describe('continueHeteroAfterError', () => {
+     expect(executorParams().message).not.toBe(USER_MESSAGE.content);
+   });
+ 
++  it('continues a heterogeneous group member with its own execution identity', async () => {
++    const store = createStore({
++      context: { ...CONTEXT, agentId: 'supervisor-agent', groupId: 'group-1', scope: 'group' },
++    });
++    act(() => {
++      store.setState({
++        dbMessages: [
++          USER_MESSAGE,
++          { content: '', id: 'step-1', parentId: 'user-1', role: 'assistant' },
++          { content: '', id: 'step-2', parentId: 'step-1', role: 'assistant' },
++        ],
++        displayMessages: [
++          USER_MESSAGE,
++          {
++            children: [
++              {
++                agentId: 'member-agent',
++                content: 'looking',
++                id: 'step-1',
++                metadata: { orchestrationRole: 'member', subAgentId: 'member-agent' },
++                tools: [{ id: 'call-1' }],
++              },
++              {
++                agentId: 'member-agent',
++                content: '',
++                error: HETERO_RATE_LIMIT,
++                id: 'step-2',
++                metadata: { orchestrationRole: 'member', subAgentId: 'member-agent' },
++                tools: [{ id: 'call-2' }],
++              },
++            ],
++            content: '',
++            id: 'step-1',
++            parentId: 'user-1',
++            role: 'assistantGroup',
++          },
++        ],
++      } as any);
++    });
++
++    await act(async () => {
++      await store.getState().continueHeteroAfterError('step-1');
++    });
++
++    expect(mockCreateMessage).toHaveBeenCalledWith(
++      expect.objectContaining({
++        agentId: 'member-agent',
++        groupId: 'group-1',
++        metadata: { orchestrationRole: 'member', subAgentId: 'member-agent' },
++      }),
++    );
++    expect(executorParams().context).toMatchObject({
++      agentId: 'member-agent',
++      groupId: 'group-1',
++      orchestrationRole: 'member',
++      subAgentId: 'member-agent',
++    });
++  });
++
+   it('drops an error-only tail step and chains the continuation onto its parent', async () => {
+     // The terminal-error echo suppressor cleared the step's content, so it has
+     // nothing to render — keeping it would leave an empty block in the bubble.
 diff --git a/src/store/chat/agents/GroupOrchestration/__tests__/call-supervisor.test.ts b/src/store/chat/agents/GroupOrchestration/__tests__/call-supervisor.test.ts
 index c624026afc..7d8a519546 100644
 --- a/src/store/chat/agents/GroupOrchestration/__tests__/call-supervisor.test.ts
@@ -778,6 +1001,156 @@ index 158bf73353..73529856b3 100644
  
        if (!lastMessage) {
          log(`[${sessionLogId}] No messages found, cannot execute supervisor`);
+diff --git a/src/store/chat/slices/agentRun/actions/__tests__/heterogeneousAgentExecutor.test.ts b/src/store/chat/slices/agentRun/actions/__tests__/heterogeneousAgentExecutor.test.ts
+index 8580454a66..54763fabcb 100644
+--- a/src/store/chat/slices/agentRun/actions/__tests__/heterogeneousAgentExecutor.test.ts
++++ b/src/store/chat/slices/agentRun/actions/__tests__/heterogeneousAgentExecutor.test.ts
+@@ -1150,6 +1150,41 @@ describe('heterogeneousAgentExecutor DB persistence', () => {
+       expect(dispatched![0].value.metadata.usage).toBeUndefined();
+     });
+ 
++    it('keeps group member ownership when persisting heterogeneous usage', async () => {
++      await runWithEvents(
++        [
++          ccInit(),
++          ccMessageStart('msg_01', 'claude-opus-4-6'),
++          ccAssistant('msg_01', [{ text: 'Hello', type: 'text' }], { model: 'claude-opus-4-6' }),
++          ccMessageDelta({ input_tokens: 100, output_tokens: 20 }),
++          ccResult(),
++        ],
++        {
++          params: {
++            context: {
++              agentId: 'member-agent',
++              groupId: 'group-1',
++              orchestrationRole: 'member',
++              scope: 'group',
++              subAgentId: 'member-agent',
++              topicId: 'topic-1',
++            },
++          },
++        },
++      );
++
++      expect(mockSendPrompt).toHaveBeenCalledWith(
++        expect.objectContaining({ agentId: 'member-agent' }),
++      );
++      const usageWrite = mockUpdateMessage.mock.calls.find(
++        ([, value]: any) => value.usage !== undefined,
++      );
++      expect(usageWrite?.[1].metadata).toMatchObject({
++        orchestrationRole: 'member',
++        subAgentId: 'member-agent',
++      });
++    });
++
+     it('should write accumulated reasoning', async () => {
+       await runWithEvents([
+         ccInit(),
+diff --git a/src/store/chat/slices/agentRun/actions/transports/hetero/heterogeneousAgentExecutor.ts b/src/store/chat/slices/agentRun/actions/transports/hetero/heterogeneousAgentExecutor.ts
+index 565e5b41e2..39678e1b89 100644
+--- a/src/store/chat/slices/agentRun/actions/transports/hetero/heterogeneousAgentExecutor.ts
++++ b/src/store/chat/slices/agentRun/actions/transports/hetero/heterogeneousAgentExecutor.ts
+@@ -610,6 +610,20 @@ export const executeHeterogeneousAgent = async (
+     return out;
+   };
+ 
++  const groupOrchestrationMetadata =
++    context.groupId && (context.isSupervisor || context.orchestrationRole || context.subAgentId)
++      ? {
++          ...(context.isSupervisor && { isSupervisor: true }),
++          ...(context.orchestrationRole && { orchestrationRole: context.orchestrationRole }),
++          ...(context.subAgentId && { subAgentId: context.subAgentId }),
++        }
++      : {};
++
++  const withGroupOrchestrationMetadata = (metadata: Record<string, unknown> = {}) => ({
++    ...groupOrchestrationMetadata,
++    ...metadata,
++  });
++
+   /**
+    * Global `tool_use.id → tool message DB id` lookup, shared across the
+    * main agent and every subagent run. `tool_result` events identify
+@@ -748,7 +762,11 @@ export const executeHeterogeneousAgent = async (
+ 
+     data.assistantMessage = {
+       agentId: context.agentId,
++      ...(context.groupId && { groupId: context.groupId }),
+       id: mainState.currentAssistantId,
++      ...(Object.keys(groupOrchestrationMetadata).length > 0 && {
++        metadata: groupOrchestrationMetadata,
++      }),
+       model: data.model,
+       provider: data.provider,
+       role: 'assistant',
+@@ -853,6 +871,7 @@ export const executeHeterogeneousAgent = async (
+   const updateMessageOrThrow = async (messageId: string, update: Record<string, any>) => {
+     const result = await messageService.updateMessage(messageId, update, {
+       agentId: context.agentId,
++      groupId: context.groupId,
+       topicId: context.topicId,
+     });
+     if (result?.success === false) {
+@@ -861,6 +880,7 @@ export const executeHeterogeneousAgent = async (
+   };
+   const messageWriteCtx: MessageQueryContext = {
+     agentId: context.agentId,
++    groupId: context.groupId,
+     topicId: context.topicId,
+   };
+   const messageWriteBatcher = createMessageWriteBatcher({
+@@ -1476,11 +1496,14 @@ export const executeHeterogeneousAgent = async (
+   const applyMainIntent = async (intent: MainAgentIntent) => {
+     switch (intent.kind) {
+       case 'createAssistant': {
+-        const createMetadata: Record<string, any> = { ...heteroProvenance(intent.mainMessageId) };
++        const createMetadata: Record<string, any> = withGroupOrchestrationMetadata(
++          heteroProvenance(intent.mainMessageId),
++        );
+         if (intent.signal) createMetadata.signal = intent.signal;
+         const messageToCreate = {
+           agentId: intent.agentId ?? context.agentId,
+           content: '',
++          ...(context.groupId && { groupId: context.groupId }),
+           id: intent.messageId,
+           ...(Object.keys(createMetadata).length > 0 ? { metadata: createMetadata } : {}),
+           model: intent.model,
+@@ -1509,7 +1532,7 @@ export const executeHeterogeneousAgent = async (
+         if (intent.reasoning !== undefined) update.reasoning = { content: intent.reasoning };
+         if (intent.model) update.model = intent.model;
+         if (intent.provider) update.provider = intent.provider;
+-        if (intent.metadata) update.metadata = intent.metadata;
++        if (intent.metadata) update.metadata = withGroupOrchestrationMetadata(intent.metadata);
+         if (Object.keys(update).length === 0) return;
+         messageWriteBatcher.enqueueUpdateMessage(
+           intent.messageId,
+@@ -1565,10 +1588,13 @@ export const executeHeterogeneousAgent = async (
+         };
+ 
+         const buildToolMessage = (x: (typeof intent.tools)[number]) => {
+-          const toolMetadata = heteroProvenance(mainState.currentMainMessageId);
++          const toolMetadata = withGroupOrchestrationMetadata(
++            heteroProvenance(mainState.currentMainMessageId),
++          );
+           return {
+             agentId: context.agentId,
+             content: '',
++            ...(context.groupId && { groupId: context.groupId }),
+             id: x.toolMessageId,
+             ...(Object.keys(toolMetadata).length > 0 ? { metadata: toolMetadata } : {}),
+             parentId: intent.assistantMessageId,
+@@ -1709,7 +1735,9 @@ export const executeHeterogeneousAgent = async (
+           usage: intent.usage as ModelUsage,
+           // Wholesale metadata overwrite — re-stamp the provenance the
+           // createAssistant write put there.
+-          metadata: heteroProvenance(mainState.currentMainMessageId),
++          metadata: withGroupOrchestrationMetadata(
++            heteroProvenance(mainState.currentMainMessageId),
++          ),
+           ...(intent.model && { model: intent.model }),
+           ...(intent.provider && { provider: intent.provider }),
+         };
 diff --git a/src/store/chat/slices/aiAgent/actions/groupOrchestration.ts b/src/store/chat/slices/aiAgent/actions/groupOrchestration.ts
 index 6dec932393..b771012a06 100644
 --- a/src/store/chat/slices/aiAgent/actions/groupOrchestration.ts
