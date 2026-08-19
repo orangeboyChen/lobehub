@@ -141,17 +141,18 @@ index 0d912bfb0b..cc37966929 100644
    };
  
    findByIdOrSlug = async (
-@@ -621,13 +699,14 @@ export class SessionModel {
+@@ -621,14 +699,14 @@ export class SessionModel {
        });
  
        // Filter and map results, ensuring valid session associations
--      return (
--        results
--          .filter((item) => item.agentsToSessions && item.agentsToSessions.length > 0)
--          // @ts-expect-error
--          .map((item) => item.agentsToSessions[0].session)
--          .filter((session) => session !== null && session !== undefined)
--      );
+-      return results
+-        .filter((item) => item.agentsToSessions && item.agentsToSessions.length > 0)
+-        .map(
+-          (item) =>
+-            (item.agentsToSessions as Array<{ session: SessionItem | null | undefined }>)[0]
+-              ?.session,
+-        )
+-        .filter((session) => session !== null && session !== undefined);
 +      return results.flatMap((item) => {
 +        const linkedSession =
 +          (item.agentsToSessions as Array<{ session?: SessionItem | null }> | undefined)?.[0]
