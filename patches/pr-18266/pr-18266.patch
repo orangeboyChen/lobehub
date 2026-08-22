@@ -1,8 +1,8 @@
 diff --git a/apps/server/src/routers/lambda/aiAgent.ts b/apps/server/src/routers/lambda/aiAgent.ts
-index c6bfea49..7e6d3889 100644
+index e2dcc728..b198c0c6 100644
 --- a/apps/server/src/routers/lambda/aiAgent.ts
 +++ b/apps/server/src/routers/lambda/aiAgent.ts
-@@ -302,6 +302,8 @@ const ExecAgentSchema = z
+@@ -313,6 +313,8 @@ const ExecAgentSchema = z
      parentMessageId: z.string().optional(),
      /** Existing gateway operation this fresh turn atomically supersedes. */
      replacesOperationId: z.string().optional(),
@@ -11,7 +11,7 @@ index c6bfea49..7e6d3889 100644
      /** The user input/prompt */
      prompt: z.string(),
      /**
-@@ -979,6 +981,7 @@ export const aiAgentRouter = router({
+@@ -1264,6 +1266,7 @@ export const aiAgentRouter = router({
        fileIds,
        mentionedAgents,
        parentMessageId,
@@ -19,7 +19,7 @@ index c6bfea49..7e6d3889 100644
        resumeApproval,
        resumeApprovals,
        resumeToolResult,
-@@ -1003,6 +1006,7 @@ export const aiAgentRouter = router({
+@@ -1288,6 +1291,7 @@ export const aiAgentRouter = router({
          messageIds: [
            ...existingMessageIds,
            parentMessageId,
@@ -27,7 +27,7 @@ index c6bfea49..7e6d3889 100644
            resumeApproval?.parentMessageId,
            // Every batch target is authorized too — a caller must not be able to
            // slip a message it doesn't own into the list behind an owned anchor.
-@@ -1030,6 +1034,7 @@ export const aiAgentRouter = router({
+@@ -1315,6 +1319,7 @@ export const aiAgentRouter = router({
          mentionedAgents,
          parentMessageId,
          prompt,
@@ -242,7 +242,7 @@ index 75823a23..52de514a 100644
      await expect(
        service.execAgent({
 diff --git a/apps/server/src/services/aiAgent/index.ts b/apps/server/src/services/aiAgent/index.ts
-index 1b7dca98..e44c1b55 100644
+index 97b12db1..bbeae269 100644
 --- a/apps/server/src/services/aiAgent/index.ts
 +++ b/apps/server/src/services/aiAgent/index.ts
 @@ -1394,6 +1394,7 @@ export class AiAgentService {
@@ -391,7 +391,7 @@ index 1b7dca98..e44c1b55 100644
      selfMessageIds.add(assistantMessageRecord.id);
      assistantMessageRef.current = assistantMessageRecord.id;
      log('execAgent: created assistant message %s', assistantMessageRecord.id);
-@@ -3212,6 +3269,18 @@ export class AiAgentService {
+@@ -3204,6 +3261,18 @@ export class AiAgentService {
          historyMessagesCache = pruneRegeneratedBranch(historyMessagesCache, tree, parentMessageId);
        }
  
@@ -410,6 +410,27 @@ index 1b7dca98..e44c1b55 100644
        return historyMessagesCache;
      };
  
+diff --git a/packages/builtin-agents/src/agents/group-supervisor/systemRole.test.ts b/packages/builtin-agents/src/agents/group-supervisor/systemRole.test.ts
+new file mode 100644
+index 00000000..1d739bec
+--- /dev/null
++++ b/packages/builtin-agents/src/agents/group-supervisor/systemRole.test.ts
+@@ -0,0 +1,15 @@
++import { systemPrompt as groupManagementSystemPrompt } from '@lobechat/builtin-tool-group-management';
++import { describe, expect, it } from 'vitest';
++
++import { supervisorSystemRole } from './systemRole';
++
++describe('group supervisor prompts', () => {
++  it.each([supervisorSystemRole, groupManagementSystemPrompt])(
++    'keeps the supervisor role internal',
++    (prompt) => {
++      expect(prompt).not.toContain('You are a Group Supervisor');
++      expect(prompt).toContain('"Supervisor" is an internal');
++      expect(prompt).toContain('Never introduce or refer to yourself as Supervisor');
++    },
++  );
++});
 diff --git a/packages/builtin-agents/src/agents/group-supervisor/systemRole.ts b/packages/builtin-agents/src/agents/group-supervisor/systemRole.ts
 index cfc9ddc0..f3a193f8 100644
 --- a/packages/builtin-agents/src/agents/group-supervisor/systemRole.ts
@@ -783,7 +804,7 @@ index c6d438ed..8073ba0e 100644
  const getDbMessageByToolCallId = (id: string) => (s: State) =>
    s.dbMessages.find((m) => m.tool_call_id === id);
 diff --git a/src/features/Conversation/store/slices/generation/action.test.ts b/src/features/Conversation/store/slices/generation/action.test.ts
-index 39d83f06..3727efd8 100644
+index 39d83f06..5e0b2c82 100644
 --- a/src/features/Conversation/store/slices/generation/action.test.ts
 +++ b/src/features/Conversation/store/slices/generation/action.test.ts
 @@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1278,8 +1299,8 @@ index 39d83f06..3727efd8 100644
  
        executeHeterogeneousAgentSpy = vi
          .spyOn(heterogeneousAgentExecutor, 'executeHeterogeneousAgent')
-@@ -1773,6 +2155,71 @@ describe('Generation Actions', () => {
-       );
+@@ -1825,6 +2207,71 @@ describe('Generation Actions', () => {
+       }
      });
  
 +    it('keeps heterogeneous member retries in the group transcript', async () => {
@@ -1347,11 +1368,11 @@ index 39d83f06..3727efd8 100644
 +      );
 +    });
 +
-     it('preserves a legacy subscription resume when the Provider Binding Lab is enabled', async () => {
-       const previousLab = useUserStore.getState().preference.lab;
-       useUserStore.setState((state) => ({
+     it('creates the child execHeterogeneousAgent op as a child of the parent regenerate op', async () => {
+       const { mockHeteroStartOperation, mockAssociateMessageWithOperation } =
+         await setupHeteroChatStore();
 diff --git a/src/features/Conversation/store/slices/generation/action.ts b/src/features/Conversation/store/slices/generation/action.ts
-index b9df6121..c023a71a 100644
+index 27d5c600..53382479 100644
 --- a/src/features/Conversation/store/slices/generation/action.ts
 +++ b/src/features/Conversation/store/slices/generation/action.ts
 @@ -6,6 +6,7 @@ import type {
@@ -1370,7 +1391,7 @@ index b9df6121..c023a71a 100644
  import { useChatStore } from '@/store/chat';
  import { topicSelectors } from '@/store/chat/selectors';
  import { selectRuntimeType } from '@/store/chat/slices/agentRun/actions/dispatch/agentDispatcher';
-@@ -191,6 +193,7 @@ const resolveHeteroRunContext = (
+@@ -193,6 +195,7 @@ const resolveHeteroRunContext = (
  const runHeterogeneousFromExistingMessage = async (
    chatStore: ReturnType<typeof useChatStore.getState>,
    params: {
@@ -1378,7 +1399,7 @@ index b9df6121..c023a71a 100644
      context: ConversationContext;
      heterogeneousProvider: HeterogeneousProviderConfig;
      /** Image attachments from the original user message — forwarded to the CLI for vision support */
-@@ -200,8 +203,15 @@ const runHeterogeneousFromExistingMessage = async (
+@@ -202,8 +205,15 @@ const runHeterogeneousFromExistingMessage = async (
      prompt: string;
    },
  ): Promise<string> => {
@@ -1396,7 +1417,7 @@ index b9df6121..c023a71a 100644
    const agentId = context.agentId;
    if (!agentId) throw new Error('agentId is required for heterogeneous agent');
  
-@@ -211,21 +221,36 @@ const runHeterogeneousFromExistingMessage = async (
+@@ -213,21 +223,36 @@ const runHeterogeneousFromExistingMessage = async (
    else if (reason === 'binding_changed')
      toast.info(t('heteroAgent.resumeReset.bindingChanged', { ns: 'chat' }));
  
@@ -1447,7 +1468,7 @@ index b9df6121..c023a71a 100644
  
    const { operationId: heteroOpId } = chatStore.startOperation({
      context,
-@@ -234,12 +259,12 @@ const runHeterogeneousFromExistingMessage = async (
+@@ -236,12 +261,12 @@ const runHeterogeneousFromExistingMessage = async (
      parentOperationId,
      type: 'execHeterogeneousAgent',
    });
@@ -1462,7 +1483,7 @@ index b9df6121..c023a71a 100644
      context,
      heterogeneousProvider,
      imageList: imageList?.length ? imageList : undefined,
-@@ -250,7 +275,7 @@ const runHeterogeneousFromExistingMessage = async (
+@@ -252,7 +277,7 @@ const runHeterogeneousFromExistingMessage = async (
      workingDirectory,
    });
  
@@ -1471,7 +1492,7 @@ index b9df6121..c023a71a 100644
  };
  
  export interface HeteroContinuationScheduleParams {
-@@ -268,6 +293,122 @@ interface RegenerateUserMessageSource {
+@@ -270,6 +295,122 @@ interface RegenerateUserMessageSource {
    readDbMessages: () => ConversationStore['dbMessages'];
  }
  
@@ -1594,7 +1615,7 @@ index b9df6121..c023a71a 100644
  const captureRegenerateUserMessageSource = (
    get: () => ConversationStore,
  ): RegenerateUserMessageSource => {
-@@ -287,11 +428,176 @@ const captureRegenerateUserMessageSource = (
+@@ -289,11 +430,176 @@ const captureRegenerateUserMessageSource = (
    };
  };
  
@@ -1772,7 +1793,7 @@ index b9df6121..c023a71a 100644
    const chatStore = useChatStore.getState();
  
    // Block a genuine double-regenerate, and ONLY that. The guard used to be
-@@ -312,6 +618,20 @@ const regenerateUserMessageFromSource = async (
+@@ -314,6 +620,20 @@ const regenerateUserMessageFromSource = async (
    const currentIndex = displayMessages.findIndex((c) => c.id === messageId);
    const item = displayMessages[currentIndex];
    if (!item) return;
@@ -1793,7 +1814,7 @@ index b9df6121..c023a71a 100644
    // Start the interim regenerate op BEFORE the async preflight below
    // (document-context resolve + onBeforeRegenerate hook). In page / bound-
    // document contexts those reads are real round trips, so creating the op
-@@ -357,8 +677,38 @@ const regenerateUserMessageFromSource = async (
+@@ -359,8 +679,38 @@ const regenerateUserMessageFromSource = async (
      // Read the database messages from the captured conversation. If the shared
      // ConversationStore has switched context, the source falls back to the old
      // context's ChatStore bucket instead of observing the new topic.
@@ -1834,13 +1855,16 @@ index b9df6121..c023a71a 100644
      const nextBranchIndex = childrenCount;
  
      // Switch to the new branch so the UI shows the incoming response immediately
-@@ -373,13 +723,14 @@ const regenerateUserMessageFromSource = async (
+@@ -375,15 +725,15 @@ const regenerateUserMessageFromSource = async (
      const postSwitchOp = operationSelectors.getOperationById(operationId)(useChatStore.getState());
      if (postSwitchOp && postSwitchOp.status !== 'running') return;
  
--    const { agencyConfig, workspaceScoped } = getEffectiveAgencyConfig(context.agentId);
+-    const { agencyConfig, isWorkspaceAgent, workspaceScoped } = getEffectiveAgencyConfig(
+-      context.agentId,
+-    );
 +    const executionAgentId = getRetryExecutionAgentId(context);
-+    const { agencyConfig, workspaceScoped } = getEffectiveAgencyConfig(executionAgentId);
++    const { agencyConfig, isWorkspaceAgent, workspaceScoped } =
++      getEffectiveAgencyConfig(executionAgentId);
      const heterogeneousProvider = agencyConfig?.heterogeneousProvider;
      const runtimeType = selectRuntimeType({
        boundDeviceId: agencyConfig?.boundDeviceId,
@@ -1848,10 +1872,10 @@ index b9df6121..c023a71a 100644
        heterogeneousProvider,
 -      isGatewayMode: chatStore.isGatewayModeEnabled(context.agentId),
 +      isGatewayMode: chatStore.isGatewayModeEnabled(executionAgentId),
-       isWorkspaceAgent: workspaceScoped,
+       isWorkspaceAgent,
+       workspaceScoped,
      });
- 
-@@ -398,8 +749,9 @@ const regenerateUserMessageFromSource = async (
+@@ -403,8 +753,9 @@ const regenerateUserMessageFromSource = async (
        // `onComplete` still fires at session end for the UI hook; re-completing
        // the already-settled wrapper is an idempotent no-op.
        await chatStore.executeGatewayAgent({
@@ -1862,7 +1886,7 @@ index b9df6121..c023a71a 100644
          onComplete: () =>
            settleGenerationEntry(chatStore, operationId, () =>
              hooks.onRegenerateComplete?.(messageId),
-@@ -418,7 +770,7 @@ const regenerateUserMessageFromSource = async (
+@@ -423,7 +774,7 @@ const regenerateUserMessageFromSource = async (
      // so prior context is preserved.
      if (runtimeType === 'hetero' && heterogeneousProvider) {
        await runHeterogeneousFromExistingMessage(chatStore, {
@@ -1871,15 +1895,17 @@ index b9df6121..c023a71a 100644
          heterogeneousProvider,
          // Forward the original user message's images so regenerate re-runs
          // the CLI with the same vision input as the first attempt. Without
-@@ -846,19 +1198,22 @@ export const generationSlice: StateCreator<
+@@ -854,22 +1205,25 @@ export const generationSlice: StateCreator<
      // tool/provider error on a grouped reply is not resumable this way.
      if (!isHeterogeneousAgentStatusGuideError(erroredStep.error?.body)) return;
  
--    const { agencyConfig, workspaceScoped } = getEffectiveAgencyConfig(context.agentId);
 +    const executionContext = getRetryHeterogeneousExecutionContext(
 +      getRetryExecutionContext(erroredStep, context),
 +    );
-+    const { agencyConfig, workspaceScoped } = getEffectiveAgencyConfig(executionContext.agentId);
+     const { agencyConfig, isWorkspaceAgent, workspaceScoped } = getEffectiveAgencyConfig(
+-      context.agentId,
++      executionContext.agentId,
+     );
      const heterogeneousProvider = agencyConfig?.heterogeneousProvider;
      const runtimeType = selectRuntimeType({
        boundDeviceId: agencyConfig?.boundDeviceId,
@@ -1887,7 +1913,8 @@ index b9df6121..c023a71a 100644
        heterogeneousProvider,
 -      isGatewayMode: chatStore.isGatewayModeEnabled(context.agentId),
 +      isGatewayMode: chatStore.isGatewayModeEnabled(executionContext.agentId),
-       isWorkspaceAgent: workspaceScoped,
+       isWorkspaceAgent,
+       workspaceScoped,
      });
 -    const agentId = context.agentId;
 +    const agentId = executionContext.agentId;
@@ -1898,7 +1925,7 @@ index b9df6121..c023a71a 100644
        : undefined;
  
      // Nothing to continue from: the failed step IS the group's head (the run
-@@ -893,7 +1248,7 @@ export const generationSlice: StateCreator<
+@@ -904,7 +1258,7 @@ export const generationSlice: StateCreator<
      }
  
      const { operationId } = chatStore.startOperation({
@@ -1907,7 +1934,7 @@ index b9df6121..c023a71a 100644
        type: 'regenerate',
      });
  
-@@ -905,7 +1260,7 @@ export const generationSlice: StateCreator<
+@@ -916,7 +1270,7 @@ export const generationSlice: StateCreator<
        // steps inside the same assistantGroup, so the bubble grows instead of
        // being replaced.
        await runHeterogeneousFromExistingMessage(chatStore, {
@@ -1916,7 +1943,7 @@ index b9df6121..c023a71a 100644
          heterogeneousProvider,
          parentMessageId: continueParentId,
          parentOperationId: operationId,
-@@ -1177,7 +1532,10 @@ export const generationSlice: StateCreator<
+@@ -1188,7 +1542,10 @@ export const generationSlice: StateCreator<
    },
  
    regenerateAssistantMessage: async (messageId: string) => {
@@ -1928,7 +1955,7 @@ index b9df6121..c023a71a 100644
  
      // Find the assistant message
      const currentIndex = displayMessages.findIndex((c) => c.id === messageId);
-@@ -1185,12 +1543,15 @@ export const generationSlice: StateCreator<
+@@ -1196,12 +1553,15 @@ export const generationSlice: StateCreator<
  
      if (!currentMessage) return;
  
@@ -1948,7 +1975,7 @@ index b9df6121..c023a71a 100644
  
    regenerateUserMessage: async (messageId: string) =>
 diff --git a/src/features/Conversation/store/slices/generation/continueHeteroAfterError.test.ts b/src/features/Conversation/store/slices/generation/continueHeteroAfterError.test.ts
-index 177408aa..c90440e7 100644
+index 5ae548b9..000b7a65 100644
 --- a/src/features/Conversation/store/slices/generation/continueHeteroAfterError.test.ts
 +++ b/src/features/Conversation/store/slices/generation/continueHeteroAfterError.test.ts
 @@ -202,6 +202,65 @@ describe('continueHeteroAfterError', () => {
@@ -2244,10 +2271,10 @@ index 390bb0bd..c8834f3a 100644
        await runWithEvents([
          ccInit(),
 diff --git a/src/store/chat/slices/agentRun/actions/entries/conversationLifecycle.ts b/src/store/chat/slices/agentRun/actions/entries/conversationLifecycle.ts
-index 8bfb9fe5..71c8e7fc 100644
+index 9cf8f116..8122fec8 100644
 --- a/src/store/chat/slices/agentRun/actions/entries/conversationLifecycle.ts
 +++ b/src/store/chat/slices/agentRun/actions/entries/conversationLifecycle.ts
-@@ -745,7 +745,6 @@ export class ConversationLifecycleActionImpl {
+@@ -746,7 +746,6 @@ export class ConversationLifecycleActionImpl {
        .findLast(
          (operation) =>
            operation?.type === 'execServerAgentRuntime' &&
