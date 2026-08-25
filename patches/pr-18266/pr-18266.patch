@@ -1381,7 +1381,7 @@ index 27d5c600..53382479 100644
    HeterogeneousProviderConfig,
 +  UIChatMessage,
  } from '@lobechat/types';
- import { resolveAgentAgencyConfig } from '@lobechat/types';
+ import { applyTopicModelToHeterogeneousProvider, resolveAgentAgencyConfig } from '@lobechat/types';
  import { toast } from '@lobehub/ui/base-ui';
 @@ -22,6 +23,7 @@ import { globalAgentContextManager } from '@/helpers/GlobalAgentContextManager';
  import { messageService } from '@/services/message';
@@ -1417,10 +1417,7 @@ index 27d5c600..53382479 100644
    const agentId = context.agentId;
    if (!agentId) throw new Error('agentId is required for heterogeneous agent');
  
-@@ -213,21 +223,36 @@ const runHeterogeneousFromExistingMessage = async (
-   else if (reason === 'binding_changed')
-     toast.info(t('heteroAgent.resumeReset.bindingChanged', { ns: 'chat' }));
- 
+@@ -219,18 +229,33 @@ const runHeterogeneousFromExistingMessage = async (
 -  const assistantMsg = await messageService.createMessage({
 -    agentId,
 -    content: LOADING_FLAT,
@@ -1481,7 +1478,7 @@ index 27d5c600..53382479 100644
 -    assistantMessageId: assistantMsg.id,
 +    assistantMessageId: assistantMsgId,
      context,
-     heterogeneousProvider,
+     heterogeneousProvider: effectiveHeterogeneousProvider,
      imageList: imageList?.length ? imageList : undefined,
 @@ -252,7 +277,7 @@ const runHeterogeneousFromExistingMessage = async (
      workingDirectory,
@@ -1978,8 +1975,8 @@ diff --git a/src/features/Conversation/store/slices/generation/continueHeteroAft
 index 5ae548b9..000b7a65 100644
 --- a/src/features/Conversation/store/slices/generation/continueHeteroAfterError.test.ts
 +++ b/src/features/Conversation/store/slices/generation/continueHeteroAfterError.test.ts
-@@ -202,6 +202,65 @@ describe('continueHeteroAfterError', () => {
-     expect(executorParams().message).not.toBe(USER_MESSAGE.content);
+@@ -225,6 +225,65 @@ describe('continueHeteroAfterError', () => {
+     });
    });
  
 +  it('continues a heterogeneous group member with its own execution identity', async () => {

@@ -158,7 +158,7 @@ index 371ea7e44d..32a6e39400 100644
 +          succeeded,
 +          topicId: result.topicId,
 +        }),
-@@ -856,24 +863,6 @@ export class GatewayActionImpl {
+@@ -856,28 +863,6 @@ export class GatewayActionImpl {
 -        if (result.topicId) {
 -          // A clean completion the user isn't watching is owned by
 -          // `markTopicUnread` (status: 'unread'). Every other case (viewing,
@@ -173,13 +173,17 @@ index 371ea7e44d..32a6e39400 100644
 -              viewing || !succeeded ? 'active' : 'unread',
 -            )
 -            .catch(console.error);
--          // Also clear the local store copy — the server clear above does NOT touch
--          // the Zustand topic map that useGatewayReconnect reads. Ownership-guarded
--          // on its own, so it is safe to call either way.
+-          // Also clear the local store copy — the server settle above does NOT
+-          // touch the Zustand topic map that useGatewayReconnect (and the sidebar
+-          // spinner) read. Mirror the same 'active' decision passed to the server
+-          // call above; omit it for the unwatched-clean-completion case, which
+-          // `markTopicUnread` owns. Ownership-guarded on its own (see
+-          // clearLocalRunningOperation), so it is safe to call either way.
 -          this.clearLocalRunningOperation({
 -            agentId: resolvedMessageContext.agentId,
 -            groupId: resolvedMessageContext.groupId,
 -            operationId: result.operationId,
+-            status: viewing || !succeeded ? 'active' : undefined,
 -            topicId: result.topicId,
 -          });
 -        }
@@ -314,4 +318,3 @@ index cd50e607e1..99d8bbbd77 100644
 +            await onRunTerminal?.({ succeeded: status === 'completed' });
 @@ -1261,0 +1269 @@ export const createGatewayEventHandler = (
 +            await onRunTerminal?.({ succeeded: false });
-
