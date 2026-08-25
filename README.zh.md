@@ -17,6 +17,8 @@
   - [#18239](https://github.com/lobehub/lobehub/pull/18239)：在 SPA 侧边栏显示没有会话的 Agent
   - [#18449](https://github.com/lobehub/lobehub/pull/18449)：让群组 Supervisor 使用群组头像
   - [#18266](https://github.com/lobehub/lobehub/pull/18266)：重试消息时保留原始群组 Agent 身份
+  - [#18666](https://github.com/lobehub/lobehub/pull/18666)：服务端运行结束时原子收敛 Gateway Topic 状态
+  - [#18678](https://github.com/lobehub/lobehub/pull/18678)：Gateway 运行终态到达时同步桌面端 Topic 行状态
 
 ## 触发
 

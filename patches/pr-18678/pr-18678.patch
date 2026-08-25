@@ -1,0 +1,317 @@
+diff --git a/src/store/chat/slices/agentRun/actions/__tests__/gateway.test.ts b/src/store/chat/slices/agentRun/actions/__tests__/gateway.test.ts
+index 042cd5767b..d8cf0a2a0c 100644
+--- a/src/store/chat/slices/agentRun/actions/__tests__/gateway.test.ts
++++ b/src/store/chat/slices/agentRun/actions/__tests__/gateway.test.ts
+@@ -30 +30 @@ vi.mock('@/services/topic', () => ({
+-    settleRunningOperation: vi.fn().mockResolvedValue(undefined),
++    settleRunningOperation: vi.fn().mockResolvedValue({ status: 'settled' }),
+@@ -171 +171,3 @@ describe('GatewayActionImpl', () => {
+-    vi.mocked(topicService.settleRunningOperation).mockResolvedValue(undefined as never);
++    vi.mocked(topicService.settleRunningOperation).mockResolvedValue({
++      status: 'settled',
++    } as never);
+@@ -1246,2 +1247,0 @@ describe('GatewayActionImpl', () => {
+-      vi.mocked(topicService.updateTopicMetadata).mockResolvedValue(undefined as never);
+-
+@@ -1250,7 +1250,10 @@ describe('GatewayActionImpl', () => {
+-      expect(internalDispatchTopic).toHaveBeenCalledWith({
+-        agentId: 'agent-1',
+-        groupId: undefined,
+-        id: 'topic-1',
+-        type: 'updateTopic',
+-        value: { metadata: { model: 'gpt-4', runningOperation: null } },
+-      });
++      await vi.waitFor(() =>
++        expect(internalDispatchTopic).toHaveBeenCalledWith({
++          agentId: 'agent-1',
++          groupId: undefined,
++          id: 'topic-1',
++          scope: undefined,
++          type: 'updateTopic',
++          value: { metadata: { model: 'gpt-4', runningOperation: null }, status: 'active' },
++        }),
++      );
+@@ -1333,2 +1335,0 @@ describe('GatewayActionImpl', () => {
+-      vi.mocked(topicService.updateTopicMetadata).mockResolvedValue(undefined as never);
+-
+@@ -1341,7 +1342,10 @@ describe('GatewayActionImpl', () => {
+-      expect(internalDispatchTopic).toHaveBeenCalledWith({
+-        agentId: 'agent-1',
+-        groupId: undefined,
+-        id: 'topic-1',
+-        type: 'updateTopic',
+-        value: { metadata: { model: 'gpt-4', runningOperation: null } },
+-      });
++      await vi.waitFor(() =>
++        expect(internalDispatchTopic).toHaveBeenCalledWith({
++          agentId: 'agent-1',
++          groupId: undefined,
++          id: 'topic-1',
++          scope: undefined,
++          type: 'updateTopic',
++          value: { metadata: { model: 'gpt-4', runningOperation: null }, status: 'active' },
++        }),
++      );
+@@ -1428 +1432,3 @@ describe('GatewayActionImpl', () => {
+-      vi.mocked(topicService.settleRunningOperation).mockResolvedValue(undefined as never);
++      vi.mocked(topicService.settleRunningOperation).mockResolvedValue({
++        status: 'conflict',
++      } as never);
+@@ -1830,3 +1836 @@ describe('GatewayActionImpl', () => {
+-      vi.mocked(topicService.updateTopicMetadata)
+-        .mockClear()
+-        .mockResolvedValue(undefined as never);
++      vi.mocked(topicService.settleRunningOperation).mockClear();
+@@ -1838,3 +1842,7 @@ describe('GatewayActionImpl', () => {
+-      expect(topicService.updateTopicMetadata).toHaveBeenCalledWith('topic-1', {
+-        runningOperation: null,
+-      });
++      await vi.waitFor(() =>
++        expect(topicService.settleRunningOperation).toHaveBeenCalledWith(
++          'topic-1',
++          'server-op-1',
++          'active',
++        ),
++      );
+@@ -1856,3 +1864 @@ describe('GatewayActionImpl', () => {
+-      vi.mocked(topicService.updateTopicMetadata)
+-        .mockClear()
+-        .mockResolvedValue(undefined as never);
++      vi.mocked(topicService.settleRunningOperation).mockClear();
+@@ -1862,3 +1868,7 @@ describe('GatewayActionImpl', () => {
+-      expect(topicService.updateTopicMetadata).toHaveBeenCalledWith('topic-1', {
+-        runningOperation: null,
+-      });
++      await vi.waitFor(() =>
++        expect(topicService.settleRunningOperation).toHaveBeenCalledWith(
++          'topic-1',
++          'server-op-1',
++          'active',
++        ),
++      );
+@@ -1986 +1995,0 @@ describe('GatewayActionImpl', () => {
+-      vi.mocked(topicService.updateTopicMetadata).mockResolvedValue(undefined as never);
+@@ -1989,7 +1998,10 @@ describe('GatewayActionImpl', () => {
+-      expect(internalDispatchTopic).toHaveBeenCalledWith({
+-        agentId: 'agent-1',
+-        groupId: undefined,
+-        id: 'topic-1',
+-        type: 'updateTopic',
+-        value: { metadata: { model: 'gpt-4', runningOperation: null } },
+-      });
++      await vi.waitFor(() =>
++        expect(internalDispatchTopic).toHaveBeenCalledWith({
++          agentId: 'agent-1',
++          groupId: undefined,
++          id: 'topic-1',
++          scope: undefined,
++          type: 'updateTopic',
++          value: { metadata: { model: 'gpt-4', runningOperation: null }, status: 'active' },
++        }),
++      );
+diff --git a/src/store/chat/slices/agentRun/actions/__tests__/gatewayEventHandler.test.ts b/src/store/chat/slices/agentRun/actions/__tests__/gatewayEventHandler.test.ts
+index e89eacff2a..f0099dde56 100644
+--- a/src/store/chat/slices/agentRun/actions/__tests__/gatewayEventHandler.test.ts
++++ b/src/store/chat/slices/agentRun/actions/__tests__/gatewayEventHandler.test.ts
+@@ -81 +81,5 @@ function createHandler(
+-  overrides?: { assistantMessageId?: string; gatewayOperationId?: string },
++  overrides?: {
++    assistantMessageId?: string;
++    gatewayOperationId?: string;
++    onRunTerminal?: (event: { succeeded: boolean }) => Promise<void>;
++  },
+@@ -90,0 +95 @@ function createHandler(
++    onRunTerminal: overrides?.onRunTerminal,
+@@ -1533,0 +1539,11 @@ describe('createGatewayEventHandler', () => {
++    it('settles the topic on agent_runtime_end without waiting for the Gateway session to close', async () => {
++      const store = createMockStore();
++      const onRunTerminal = vi.fn().mockResolvedValue(undefined);
++      const handler = createHandler(store, { onRunTerminal });
++
++      handler(makeEvent('agent_runtime_end'));
++      await flush();
++
++      expect(onRunTerminal).toHaveBeenCalledWith({ succeeded: true });
++    });
++
+@@ -1547,0 +1564,11 @@ describe('createGatewayEventHandler', () => {
++    it('settles an error terminal as unsuccessful without waiting for session close', async () => {
++      const store = createMockStore();
++      const onRunTerminal = vi.fn().mockResolvedValue(undefined);
++      const handler = createHandler(store, { onRunTerminal });
++
++      handler(makeEvent('error', { message: 'failed' }));
++      await flush();
++
++      expect(onRunTerminal).toHaveBeenCalledWith({ succeeded: false });
++    });
++
+diff --git a/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts b/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
+index 371ea7e44d..32a6e39400 100644
+--- a/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
++++ b/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
+@@ -820,0 +821,7 @@ export class GatewayActionImpl {
++      onRunTerminal: ({ succeeded }) =>
++        this.settleTopicOperation({
++          context: resolvedMessageContext,
++          operationId: result.operationId,
++          succeeded,
++          topicId: result.topicId,
++        }),
+@@ -856,24 +863,6 @@ export class GatewayActionImpl {
+-        if (result.topicId) {
+-          // A clean completion the user isn't watching is owned by
+-          // `markTopicUnread` (status: 'unread'). Every other case (viewing,
+-          // error, abort) settles the running state back to 'active'. The server
+-          // compares the operation id under the topic row lock so a late close
+-          // from another tab cannot clear or settle a newer run.
+-          const viewing = this.#get().activeTopicId === result.topicId;
+-          topicService
+-            .settleRunningOperation(
+-              result.topicId,
+-              result.operationId,
+-              viewing || !succeeded ? 'active' : 'unread',
+-            )
+-            .catch(console.error);
+-          // Also clear the local store copy — the server clear above does NOT touch
+-          // the Zustand topic map that useGatewayReconnect reads. Ownership-guarded
+-          // on its own, so it is safe to call either way.
+-          this.clearLocalRunningOperation({
+-            agentId: resolvedMessageContext.agentId,
+-            groupId: resolvedMessageContext.groupId,
+-            operationId: result.operationId,
+-            topicId: result.topicId,
+-          });
+-        }
++        void this.settleTopicOperation({
++          context: resolvedMessageContext,
++          operationId: result.operationId,
++          succeeded,
++          topicId: result.topicId,
++        });
+@@ -1009,0 +999,2 @@ export class GatewayActionImpl {
++      onRunTerminal: ({ succeeded }) =>
++        this.settleTopicOperation({ context, operationId, succeeded, topicId }),
+@@ -1054,27 +1045 @@ export class GatewayActionImpl {
+-        // Same supersede guard as executeGatewayAgent's onSessionComplete: a
+-        // newer run may own this topic by now, and both writes below are
+-        // unconditional stomps that would retire it mid-flight.
+-        const superseded = this.#isSupersededRunningOperation({
+-          agentId: context.agentId,
+-          operationId,
+-          topicId,
+-        });
+-
+-        // See executeGatewayAgent's onSessionComplete: a clean background
+-        // completion is left to markTopicUnread (status: 'unread').
+-        const viewing = this.#get().activeTopicId === topicId;
+-        if (!superseded && (viewing || !succeeded)) {
+-          void this.#get().updateTopicStatus?.({
+-            agentId: context.agentId,
+-            status: 'active',
+-            topicId,
+-          });
+-        }
+-        // Clear the persisted marker useGatewayReconnect keys off so a dead op
+-        // doesn't get reconnected on every reload / task-drawer open.
+-        if (!superseded) {
+-          topicService.updateTopicMetadata(topicId, { runningOperation: null }).catch(() => {});
+-        }
+-        // Mirror the clear into the local store — the server clear above leaves the
+-        // Zustand topic map stale, which useGatewayReconnect keys off.
+-        this.clearLocalRunningOperation({ agentId: context.agentId, operationId, topicId });
++        void this.settleTopicOperation({ context, operationId, succeeded, topicId });
+@@ -1123,0 +1089,44 @@ export class GatewayActionImpl {
++  private settleTopicOperation = async (params: {
++    context: ConversationContext;
++    operationId: string;
++    succeeded: boolean;
++    topicId: string;
++  }): Promise<void> => {
++    const { context, operationId, succeeded, topicId } = params;
++    const status = this.#get().activeTopicId === topicId || !succeeded ? 'active' : 'unread';
++    const result = await topicService
++      .settleRunningOperation(topicId, operationId, status)
++      .catch((error) => {
++        console.error('[Gateway] failed to settle topic operation:', error);
++        return undefined;
++      });
++    if (!result || result.status === 'conflict') return;
++
++    const state = this.#get();
++    const scope =
++      context.scope === 'group' || context.scope === 'group_agent' ? context.scope : undefined;
++    const key = topicMapKey({
++      agentId: context.agentId,
++      groupId: context.groupId,
++      scope,
++    });
++    const topic = state.topicDataMap[key]?.items?.find((item) => item.id === topicId);
++    const localOwner = topic?.metadata?.runningOperation?.operationId;
++    if (!topic || (localOwner && localOwner !== operationId)) return;
++
++    state.internal_dispatchTopic({
++      agentId: context.agentId,
++      groupId: context.groupId,
++      id: topicId,
++      scope,
++      type: 'updateTopic',
++      value: {
++        metadata:
++          localOwner === operationId
++            ? { ...topic.metadata, runningOperation: null }
++            : topic.metadata,
++        status,
++      },
++    });
++  };
++
+@@ -1145,29 +1153,0 @@ export class GatewayActionImpl {
+-  /**
+-   * Whether a DIFFERENT run has since claimed this topic's `runningOperation`.
+-   *
+-   * Read from the local topic map, which every run's start writes optimistically
+-   * — so a session closing after a newer run began can tell "my run ended" from
+-   * "the topic is idle" and keep its hands off the newer run's markers.
+-   *
+-   * Deliberately false when the topic carries no marker at all (not loaded into
+-   * `topicDataMap`, or already cleared): there is nothing to protect, and the
+-   * caller's clear must still run so a dead marker never survives.
+-   */
+-  #isSupersededRunningOperation = (params: {
+-    agentId?: string;
+-    groupId?: string;
+-    operationId: string;
+-    topicId: string;
+-  }): boolean => {
+-    const { agentId, groupId, operationId, topicId } = params;
+-    const state = this.#get();
+-    const key = topicMapKey({
+-      agentId: agentId ?? state.activeAgentId,
+-      groupId: groupId ?? state.activeGroupId,
+-    });
+-    const owner = state.topicDataMap[key]?.items?.find((t) => t.id === topicId)?.metadata
+-      ?.runningOperation?.operationId;
+-
+-    return !!owner && owner !== operationId;
+-  };
+-
+diff --git a/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts b/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts
+index cd50e607e1..99d8bbbd77 100644
+--- a/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts
++++ b/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts
+@@ -387,0 +388,6 @@ export const createGatewayEventHandler = (
++    /**
++     * Settle the persisted topic row as soon as the runtime terminal arrives.
++     * The Gateway session may stay connected after `agent_runtime_end`, so
++     * waiting for `onSessionComplete` can leave the topic stuck `running`.
++     */
++    onRunTerminal?: (event: { succeeded: boolean }) => Promise<void>;
+@@ -409 +415 @@ export const createGatewayEventHandler = (
+-  const { context, operationId, runLifecycle } = params;
++  const { context, onRunTerminal, operationId, runLifecycle } = params;
+@@ -1181,0 +1188 @@ export const createGatewayEventHandler = (
++            await onRunTerminal?.({ succeeded: status === 'completed' });
+@@ -1261,0 +1269 @@ export const createGatewayEventHandler = (
++            await onRunTerminal?.({ succeeded: false });
+
