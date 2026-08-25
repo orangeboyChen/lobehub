@@ -74,6 +74,7 @@ jobs:
     needs: patch-validation
     if: failure() && needs.patch-validation.result == 'failure'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout automation repository
         uses: actions/checkout@v6
@@ -143,7 +144,7 @@ jobs:
 
       - name: Ask Codex to repair patches
         if: steps.configuration.outputs.enabled == 'true' && steps.existing-pr.outputs.exists != 'true'
-        uses: openai/codex-action@v1
+        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           responses-api-endpoint: ${{ secrets.CODEX_RESPONSES_API_ENDPOINT }}
