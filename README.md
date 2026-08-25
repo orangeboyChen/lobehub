@@ -15,7 +15,6 @@ The upstream image needs a small patch set for iOS viewport behavior, input zoom
   - [#16609](https://github.com/lobehub/lobehub/pull/16609): make the connector detail header responsive
   - [#16616](https://github.com/lobehub/lobehub/pull/16616): localize the API Keys empty state
   - [#18239](https://github.com/lobehub/lobehub/pull/18239): show agents without sessions in the SPA sidebar
-  - [#18240](https://github.com/lobehub/lobehub/pull/18240): preserve desktop group conversation routes
   - [#18449](https://github.com/lobehub/lobehub/pull/18449): use group avatars for supervisor surfaces
   - [#18266](https://github.com/lobehub/lobehub/pull/18266): preserve the original group agent when retrying a message
 

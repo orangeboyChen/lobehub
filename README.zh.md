@@ -15,7 +15,6 @@
   - [#16609](https://github.com/lobehub/lobehub/pull/16609)：让 connector 详情页头部支持响应式布局
   - [#16616](https://github.com/lobehub/lobehub/pull/16616)：本地化 API Keys 空状态
   - [#18239](https://github.com/lobehub/lobehub/pull/18239)：在 SPA 侧边栏显示没有会话的 Agent
-  - [#18240](https://github.com/lobehub/lobehub/pull/18240)：保持桌面端群组会话路由状态
   - [#18449](https://github.com/lobehub/lobehub/pull/18449)：让群组 Supervisor 使用群组头像
   - [#18266](https://github.com/lobehub/lobehub/pull/18266)：重试消息时保留原始群组 Agent 身份
 
