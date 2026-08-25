@@ -1,5 +1,21 @@
+diff --git a/apps/server/src/modules/AgentRuntime/executorHelpers.ts b/apps/server/src/modules/AgentRuntime/executorHelpers.ts
+index ede9ed8006..454195b5d0 100644
+--- a/apps/server/src/modules/AgentRuntime/executorHelpers.ts
++++ b/apps/server/src/modules/AgentRuntime/executorHelpers.ts
+@@ -348,8 +348,9 @@ export const buildServerAgentMemberRunner = (
+ 
+   return {
+     run: async ({ members, mode, onComplete, disableTools, timeout }) => {
+-      const agentMap = (state.metadata?.agentGroup as { agentMap?: Record<string, { name: string }> }
+-        | undefined)?.agentMap;
++      const agentMap = (
++        state.metadata?.agentGroup as { agentMap?: Record<string, { name: string }> } | undefined
++      )?.agentMap;
+       const resolvedMembers = members.map((member) => ({
+         ...member,
+         agentId: resolveGroupMemberId(member.agentId, agentMap),
 diff --git a/apps/server/src/routers/lambda/aiAgent.ts b/apps/server/src/routers/lambda/aiAgent.ts
-index e2dcc728..b198c0c6 100644
+index 246d523c83..0c557aeff1 100644
 --- a/apps/server/src/routers/lambda/aiAgent.ts
 +++ b/apps/server/src/routers/lambda/aiAgent.ts
 @@ -313,6 +313,8 @@ const ExecAgentSchema = z
@@ -27,7 +43,7 @@ index e2dcc728..b198c0c6 100644
            resumeApproval?.parentMessageId,
            // Every batch target is authorized too — a caller must not be able to
            // slip a message it doesn't own into the list behind an owned anchor.
-@@ -1315,6 +1319,7 @@ export const aiAgentRouter = router({
+@@ -1319,6 +1323,7 @@ export const aiAgentRouter = router({
          mentionedAgents,
          parentMessageId,
          prompt,
@@ -36,7 +52,7 @@ index e2dcc728..b198c0c6 100644
          // human-approval resume — either way, skip user message creation.
          resume: !!parentMessageId,
 diff --git a/apps/server/src/services/aiAgent/__tests__/execAgent.resume.test.ts b/apps/server/src/services/aiAgent/__tests__/execAgent.resume.test.ts
-index 75823a23..52de514a 100644
+index 75823a235b..52de514a69 100644
 --- a/apps/server/src/services/aiAgent/__tests__/execAgent.resume.test.ts
 +++ b/apps/server/src/services/aiAgent/__tests__/execAgent.resume.test.ts
 @@ -3,14 +3,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -242,10 +258,10 @@ index 75823a23..52de514a 100644
      await expect(
        service.execAgent({
 diff --git a/apps/server/src/services/aiAgent/index.ts b/apps/server/src/services/aiAgent/index.ts
-index 97b12db1..bbeae269 100644
+index c18f432e68..d716ee3f17 100644
 --- a/apps/server/src/services/aiAgent/index.ts
 +++ b/apps/server/src/services/aiAgent/index.ts
-@@ -1394,6 +1394,7 @@ export class AiAgentService {
+@@ -1417,6 +1417,7 @@ export class AiAgentService {
        queueRetryDelay,
        parentMessageId,
        parentOperationId,
@@ -253,7 +269,7 @@ index 97b12db1..bbeae269 100644
        resume,
        resumeApproval,
        resumeApprovals,
-@@ -1409,7 +1410,12 @@ export class AiAgentService {
+@@ -1432,7 +1433,12 @@ export class AiAgentService {
      // parentMessageId), and a replayed id there would collide with the row the
      // original send already created — so those paths drop the ids defensively
      // rather than trusting every caller to omit them.
@@ -267,7 +283,7 @@ index 97b12db1..bbeae269 100644
      const clientIds = isResumeLike ? undefined : params.clientIds;
  
      // Validate that either agentId or slug is provided
-@@ -1731,6 +1737,7 @@ export class AiAgentService {
+@@ -1754,6 +1760,7 @@ export class AiAgentService {
      }
  
      let resumeParentMessage: Awaited<ReturnType<MessageModel['findById']>>;
@@ -275,7 +291,7 @@ index 97b12db1..bbeae269 100644
  
      // `resumeApproval` implies the same "load parent message + skip user
      // message creation" semantics as `resume`. Callers that go through the
-@@ -1746,7 +1753,8 @@ export class AiAgentService {
+@@ -1769,7 +1776,8 @@ export class AiAgentService {
          ? [resumeApproval]
          : [];
  
@@ -285,7 +301,7 @@ index 97b12db1..bbeae269 100644
  
      // Both resume and suppressUserMessage run the turn off existing history
      // instead of appending a new user message — share the message-construction
-@@ -1789,6 +1797,33 @@ export class AiAgentService {
+@@ -1812,6 +1820,33 @@ export class AiAgentService {
        }
      }
  
@@ -319,7 +335,7 @@ index 97b12db1..bbeae269 100644
      // 2.6. Human-approval resume: write the user's decision to the target tool
      // message in the DB so the history fetched below (step 11) + the runtime
      // state both reflect the decision before the first step runs. Validates
-@@ -2255,29 +2290,51 @@ export class AiAgentService {
+@@ -2280,29 +2315,51 @@ export class AiAgentService {
      // / `turn_metadata` (backfilled by HeterogeneousPersistenceHandler), and
      // seeding the agent's chat model would leak it into the model tag. A normal
      // run seeds model + provider as usual.
@@ -391,7 +407,7 @@ index 97b12db1..bbeae269 100644
      selfMessageIds.add(assistantMessageRecord.id);
      assistantMessageRef.current = assistantMessageRecord.id;
      log('execAgent: created assistant message %s', assistantMessageRecord.id);
-@@ -3204,6 +3261,18 @@ export class AiAgentService {
+@@ -3267,6 +3324,18 @@ export class AiAgentService {
          historyMessagesCache = pruneRegeneratedBranch(historyMessagesCache, tree, parentMessageId);
        }
  
@@ -412,7 +428,7 @@ index 97b12db1..bbeae269 100644
  
 diff --git a/packages/builtin-agents/src/agents/group-supervisor/systemRole.test.ts b/packages/builtin-agents/src/agents/group-supervisor/systemRole.test.ts
 new file mode 100644
-index 00000000..1d739bec
+index 0000000000..1d739bec9b
 --- /dev/null
 +++ b/packages/builtin-agents/src/agents/group-supervisor/systemRole.test.ts
 @@ -0,0 +1,15 @@
@@ -432,7 +448,7 @@ index 00000000..1d739bec
 +  );
 +});
 diff --git a/packages/builtin-agents/src/agents/group-supervisor/systemRole.ts b/packages/builtin-agents/src/agents/group-supervisor/systemRole.ts
-index cfc9ddc0..f3a193f8 100644
+index cfc9ddc0e1..f3a193f873 100644
 --- a/packages/builtin-agents/src/agents/group-supervisor/systemRole.ts
 +++ b/packages/builtin-agents/src/agents/group-supervisor/systemRole.ts
 @@ -53,5 +53,6 @@ export const supervisorSystemRole = `You are LobeAI, an intelligent team coordin
@@ -443,7 +459,7 @@ index cfc9ddc0..f3a193f8 100644
  </constraints>
  `;
 diff --git a/packages/builtin-tool-group-management/src/systemRole.ts b/packages/builtin-tool-group-management/src/systemRole.ts
-index b1ef884c..b08077d2 100644
+index b1ef884c5a..b08077d223 100644
 --- a/packages/builtin-tool-group-management/src/systemRole.ts
 +++ b/packages/builtin-tool-group-management/src/systemRole.ts
 @@ -4,7 +4,7 @@
@@ -464,7 +480,7 @@ index b1ef884c..b08077d2 100644
  
  <response_format>
 diff --git a/packages/context-engine/src/providers/__tests__/__snapshots__/GroupContextInjector.test.ts.snap b/packages/context-engine/src/providers/__tests__/__snapshots__/GroupContextInjector.test.ts.snap
-index 461a1428..b9e4eb28 100644
+index 461a142806..b9e4eb28c9 100644
 --- a/packages/context-engine/src/providers/__tests__/__snapshots__/GroupContextInjector.test.ts.snap
 +++ b/packages/context-engine/src/providers/__tests__/__snapshots__/GroupContextInjector.test.ts.snap
 @@ -17,6 +17,7 @@ Empty group description
@@ -507,8 +523,151 @@ index 461a1428..b9e4eb28 100644
  </identity_rules>
  </group_context>"
  `;
+diff --git a/packages/conversation-flow/src/__tests__/parse.test.ts b/packages/conversation-flow/src/__tests__/parse.test.ts
+index cfd3dcb936..a71860844c 100644
+--- a/packages/conversation-flow/src/__tests__/parse.test.ts
++++ b/packages/conversation-flow/src/__tests__/parse.test.ts
+@@ -1016,6 +1016,47 @@ describe('parse', () => {
+       expect(findCouncilBlock(result)?.council).toHaveLength(3);
+     });
+ 
++    it('keeps all council columns when switching back from a regenerated user branch', () => {
++      const skillCall = {
++        apiName: 'runSkill',
++        arguments: '{}',
++        id: 'call-skill-1',
++        identifier: 'lobe-agent-skills',
++        type: 'builtin',
++      };
++      const messages = inputs.agentCouncil.withSupervisorReply.map((message) =>
++        message.id === 'msg-agent-backend-1' ? { ...message, tools: [skillCall as any] } : message,
++      );
++      messages.push({
++        content: 'Regenerated branch',
++        createdAt: 1_704_067_220_000,
++        id: 'msg-regenerated-supervisor',
++        parentId: 'msg-user-1',
++        role: 'assistant',
++        updatedAt: 1_704_067_220_000,
++      } as any);
++      messages.push({
++        content: 'Skill result',
++        createdAt: 1_704_067_205_000,
++        id: 'msg-skill-result-1',
++        parentId: 'msg-agent-backend-1',
++        role: 'tool',
++        tool_call_id: 'call-skill-1',
++        updatedAt: 1_704_067_205_000,
++      } as any);
++
++      const result = parse(
++        messages.map((message) =>
++          message.id === 'msg-user-1'
++            ? { ...message, metadata: { activeBranchIndex: 0 } }
++            : message,
++        ),
++      );
++
++      expect(findCouncilBlock(result)?.council).toHaveLength(3);
++      expect(result.flatList.some((message) => message.role === 'tool')).toBe(false);
++    });
++
+     // Regression: the supervisor's post-council reply must surface no matter which council
+     // member it parents to. Broadcast agents finish near-simultaneously (tied createdAt), so
+     // the writer's createdAt-last member can differ from the array order; previously the reader
+diff --git a/packages/conversation-flow/src/transformation/FlatListBuilder.ts b/packages/conversation-flow/src/transformation/FlatListBuilder.ts
+index 6f3c99ca14..bcd8907d7d 100644
+--- a/packages/conversation-flow/src/transformation/FlatListBuilder.ts
++++ b/packages/conversation-flow/src/transformation/FlatListBuilder.ts
+@@ -392,11 +392,16 @@ export class FlatListBuilder {
+               processedIds,
+             );
+ 
++            const council = this.collectCouncilMembers(allToolMessages, allMessages, processedIds);
++
+             // Create assistantGroup virtual message with branch metadata
+             const groupMessage = this.createAssistantGroupMessage(
+               assistantChain[0],
+               assistantChain,
+               allToolMessages,
++              undefined,
++              undefined,
++              council?.members,
+             );
+             // Add branch info to the assistantGroup message
+             const groupMessageWithBranches = this.createMessageWithBranches(
+@@ -410,6 +415,12 @@ export class FlatListBuilder {
+             assistantChain.forEach((m) => processedIds.add(m.id));
+             allToolMessages.forEach((m) => processedIds.add(m.id));
+ 
++            if (council) {
++              for (const memberId of council.memberIds) {
++                this.buildFlatListRecursive(memberId, flatList, processedIds, allMessages);
++              }
++            }
++
+             this.continueAfterAssistantGroup(
+               assistantChain,
+               allToolMessages,
+@@ -646,14 +657,10 @@ export class FlatListBuilder {
+ 
+     const supervisorId = councilTool.parentId;
+     let memberIds = supervisorId
+-      ? this.councilMemberChildIds(this.childrenMap.get(supervisorId) ?? []).filter(
+-          (id) => !processedIds.has(id),
+-        )
++      ? this.councilMemberChildIds(this.childrenMap.get(supervisorId) ?? [])
+       : [];
+     if (memberIds.length <= 1) {
+-      memberIds = this.councilMemberChildIds(this.childrenMap.get(councilTool.id) ?? []).filter(
+-        (id) => !processedIds.has(id),
+-      );
++      memberIds = this.councilMemberChildIds(this.childrenMap.get(councilTool.id) ?? []);
+     }
+     if (memberIds.length <= 1) return undefined;
+ 
+diff --git a/packages/database/src/models/__tests__/messages/message.pluginsForOperation.test.ts b/packages/database/src/models/__tests__/messages/message.pluginsForOperation.test.ts
+index 103f13d0fb..fe1e15c1a4 100644
+--- a/packages/database/src/models/__tests__/messages/message.pluginsForOperation.test.ts
++++ b/packages/database/src/models/__tests__/messages/message.pluginsForOperation.test.ts
+@@ -77,11 +77,9 @@ const captureEmittedSql = async (
+     logQuery: (sql: string, params: unknown[]) => captured.push({ params, sql }),
+   };
+   const client = (serverDB as unknown as { $client: { waitReady?: unknown } }).$client;
+-  const db = (
+-    'waitReady' in (client ?? {})
+-      ? pgliteDrizzle({ client: client as any, logger, schema })
+-      : nodeDrizzle(client as any, { logger, schema })
+-  ) as unknown as LobeChatDatabase;
++  const db = ('waitReady' in (client ?? {})
++    ? pgliteDrizzle({ client: client as any, logger, schema })
++    : nodeDrizzle(client as any, { logger, schema })) as unknown as LobeChatDatabase;
+   await run(db);
+   return captured;
+ };
+@@ -268,8 +266,18 @@ describe('MessageModel.listMessagePluginsForOperation', () => {
+           userId,
+         })),
+       );
+-      await seedToolCall({ createdAt: T1, id: 'in-window', threadId: 'thread1', topicId: 'topic1' });
+-      await seedToolCall({ createdAt: T2, id: 'in-window-2', threadId: 'thread1', topicId: 'topic1' });
++      await seedToolCall({
++        createdAt: T1,
++        id: 'in-window',
++        threadId: 'thread1',
++        topicId: 'topic1',
++      });
++      await seedToolCall({
++        createdAt: T2,
++        id: 'in-window-2',
++        threadId: 'thread1',
++        topicId: 'topic1',
++      });
+       await seedToolCall({
+         createdAt: new Date('2027-01-01T00:00:00.000Z'),
+         id: 'hetero',
 diff --git a/packages/prompts/src/prompts/agentGroup/__snapshots__/index.test.ts.snap b/packages/prompts/src/prompts/agentGroup/__snapshots__/index.test.ts.snap
-index 7d4affed..0fc2a9c5 100644
+index 7d4affed6c..0fc2a9c59a 100644
 --- a/packages/prompts/src/prompts/agentGroup/__snapshots__/index.test.ts.snap
 +++ b/packages/prompts/src/prompts/agentGroup/__snapshots__/index.test.ts.snap
 @@ -77,5 +77,6 @@ Your internal agent ID is {{AGENT_ID}} (for system use only, never expose to use
@@ -519,7 +678,7 @@ index 7d4affed..0fc2a9c5 100644
  </identity_rules>"
  `;
 diff --git a/packages/prompts/src/prompts/agentGroup/groupContext.ts b/packages/prompts/src/prompts/agentGroup/groupContext.ts
-index b31754e9..1063cc3b 100644
+index b31754e93e..1063cc3ba6 100644
 --- a/packages/prompts/src/prompts/agentGroup/groupContext.ts
 +++ b/packages/prompts/src/prompts/agentGroup/groupContext.ts
 @@ -31,6 +31,7 @@ Your internal agent ID is {{AGENT_ID}} (for system use only, never expose to use
@@ -531,7 +690,7 @@ index b31754e9..1063cc3b 100644
  
  /**
 diff --git a/packages/prompts/src/prompts/agentGroup/index.test.ts b/packages/prompts/src/prompts/agentGroup/index.test.ts
-index 358e2fb4..27a93e43 100644
+index 358e2fb49c..27a93e438b 100644
 --- a/packages/prompts/src/prompts/agentGroup/index.test.ts
 +++ b/packages/prompts/src/prompts/agentGroup/index.test.ts
 @@ -64,6 +64,11 @@ describe('groupContextTemplate', () => {
@@ -547,7 +706,7 @@ index 358e2fb4..27a93e43 100644
  
  describe('formatGroupMembers', () => {
 diff --git a/packages/types/src/agentExecution/index.ts b/packages/types/src/agentExecution/index.ts
-index 1274b7d1..fc20dafb 100644
+index 1274b7d18a..fc20dafb3e 100644
 --- a/packages/types/src/agentExecution/index.ts
 +++ b/packages/types/src/agentExecution/index.ts
 @@ -230,6 +230,8 @@ export interface ExecAgentParams {
@@ -559,8 +718,42 @@ index 1274b7d1..fc20dafb 100644
    /**
     * Existing topic operation this fresh turn atomically supersedes. The server
     * accepts the handoff only while the topic marker still belongs to this id.
+diff --git a/packages/types/src/topic/topic.ts b/packages/types/src/topic/topic.ts
+index 312f90ce24..b5f77fdefd 100644
+--- a/packages/types/src/topic/topic.ts
++++ b/packages/types/src/topic/topic.ts
+@@ -118,8 +118,6 @@ export interface ChatTopicMetadata {
+     summarizedAt: string;
+     version: number;
+   };
+-  /** Restored-history tail used as the source message for eval attempt threads. */
+-  evalHistoryTailMessageId?: string;
+   bot?: ChatTopicBotContext;
+   boundDeviceId?: string;
+   cronJobId?: string;
+@@ -145,6 +143,8 @@ export interface ChatTopicMetadata {
+    * written without it can never be attributed afterwards.
+    */
+   editingGroupId?: string;
++  /** Restored-history tail used as the source message for eval attempt threads. */
++  evalHistoryTailMessageId?: string;
+   /**
+    * Scoped pointer to the currently active assistant message for a running
+    * heterogeneous agent operation. Includes `operationId` so cold-start
+diff --git a/src/features/AgentDocumentsExplorer/DocumentExplorerTree.tsx b/src/features/AgentDocumentsExplorer/DocumentExplorerTree.tsx
+index 49c39d8e65..e1df9a5788 100644
+--- a/src/features/AgentDocumentsExplorer/DocumentExplorerTree.tsx
++++ b/src/features/AgentDocumentsExplorer/DocumentExplorerTree.tsx
+@@ -95,7 +95,6 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
+ 
+     /* Consumed by DOCUMENT_TREE_ICON_CSS inside the shadow root. */
+     --explorer-tree-icon-fg: ${cssVar.colorTextDescription};
+-
+   `,
+ }));
+ 
 diff --git a/src/features/Conversation/Messages/CompressedGroup/index.tsx b/src/features/Conversation/Messages/CompressedGroup/index.tsx
-index ea1a6151..297428f1 100644
+index ea1a615149..297428f11e 100644
 --- a/src/features/Conversation/Messages/CompressedGroup/index.tsx
 +++ b/src/features/Conversation/Messages/CompressedGroup/index.tsx
 @@ -84,7 +84,7 @@ const CompressedGroupMessage = memo<CompressedGroupMessageProps>(({ id }) => {
@@ -582,7 +775,7 @@ index ea1a6151..297428f1 100644
  
    return (
 diff --git a/src/features/Conversation/Messages/components/PendingRetryTurn.tsx b/src/features/Conversation/Messages/components/PendingRetryTurn.tsx
-index e640b800..d75fac9f 100644
+index e640b8008b..d75fac9fce 100644
 --- a/src/features/Conversation/Messages/components/PendingRetryTurn.tsx
 +++ b/src/features/Conversation/Messages/components/PendingRetryTurn.tsx
 @@ -1,8 +1,14 @@
@@ -642,7 +835,7 @@ index e640b800..d75fac9f 100644
        <ContentLoading id={userMessageId} />
      </ChatItem>
 diff --git a/src/features/Conversation/Messages/components/usePendingRetryTurn.test.ts b/src/features/Conversation/Messages/components/usePendingRetryTurn.test.ts
-index dfbafdc8..0ba025a4 100644
+index dfbafdc85f..0ba025a4db 100644
 --- a/src/features/Conversation/Messages/components/usePendingRetryTurn.test.ts
 +++ b/src/features/Conversation/Messages/components/usePendingRetryTurn.test.ts
 @@ -2,7 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -699,7 +892,7 @@ index dfbafdc8..0ba025a4 100644
  
    it('stops as soon as the replacement reply exists', () => {
 diff --git a/src/features/Conversation/Messages/components/usePendingRetryTurn.ts b/src/features/Conversation/Messages/components/usePendingRetryTurn.ts
-index bf177692..d43dcec0 100644
+index bf177692e2..d43dcec021 100644
 --- a/src/features/Conversation/Messages/components/usePendingRetryTurn.ts
 +++ b/src/features/Conversation/Messages/components/usePendingRetryTurn.ts
 @@ -21,6 +21,7 @@ export const usePendingRetryTurn = (userMessageId: string) => {
@@ -712,7 +905,7 @@ index bf177692..d43dcec0 100644
 +  return { agentId, groupId, showPendingTurn: isRetrying && hasNoReply };
  };
 diff --git a/src/features/Conversation/store/slices/data/action.test.ts b/src/features/Conversation/store/slices/data/action.test.ts
-index b9a8c242..0744ec32 100644
+index b9a8c242ce..0744ec325b 100644
 --- a/src/features/Conversation/store/slices/data/action.test.ts
 +++ b/src/features/Conversation/store/slices/data/action.test.ts
 @@ -422,6 +422,39 @@ describe('DataSlice', () => {
@@ -756,7 +949,7 @@ index b9a8c242..0744ec32 100644
        const store = createTestStore();
  
 diff --git a/src/features/Conversation/store/slices/data/selectors.ts b/src/features/Conversation/store/slices/data/selectors.ts
-index c6d438ed..8073ba0e 100644
+index c6d438edb2..8073ba0e39 100644
 --- a/src/features/Conversation/store/slices/data/selectors.ts
 +++ b/src/features/Conversation/store/slices/data/selectors.ts
 @@ -17,21 +17,34 @@ const dbMessages = (s: State) => s.dbMessages;
@@ -804,10 +997,10 @@ index c6d438ed..8073ba0e 100644
  const getDbMessageByToolCallId = (id: string) => (s: State) =>
    s.dbMessages.find((m) => m.tool_call_id === id);
 diff --git a/src/features/Conversation/store/slices/generation/action.test.ts b/src/features/Conversation/store/slices/generation/action.test.ts
-index 39d83f06..5e0b2c82 100644
+index eae09944ab..cc4dec4fad 100644
 --- a/src/features/Conversation/store/slices/generation/action.test.ts
 +++ b/src/features/Conversation/store/slices/generation/action.test.ts
-@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+@@ -4,11 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  
  import { messageService } from '@/services/message';
  import { agentSelectors } from '@/store/agent/selectors';
@@ -815,7 +1008,12 @@ index 39d83f06..5e0b2c82 100644
  import * as agentDispatcher from '@/store/chat/slices/agentRun/actions/dispatch/agentDispatcher';
  import * as heterogeneousAgentExecutor from '@/store/chat/slices/agentRun/actions/transports/hetero/heterogeneousAgentExecutor';
  import { INPUT_LOADING_OPERATION_TYPES } from '@/store/chat/slices/operation/types';
-@@ -28,37 +29,49 @@ const mockCompleteOperation = vi.fn();
+ import { messageMapKey } from '@/store/chat/utils/messageMapKey';
+-import { useUserStore } from '@/store/user';
+ 
+ import { type ConversationContext, type ConversationHooks } from '../../../types';
+ import { createStore } from '../../index';
+@@ -28,37 +28,49 @@ const mockCompleteOperation = vi.fn();
  const mockAssociateMessageWithOperation = vi.fn();
  const mockFailOperation = vi.fn();
  const mockExecuteClientAgent = vi.fn();
@@ -891,7 +1089,7 @@ index 39d83f06..5e0b2c82 100644
      setState: vi.fn(),
    },
  }));
-@@ -66,10 +79,12 @@ vi.mock('@/store/chat', () => ({
+@@ -66,10 +78,12 @@ vi.mock('@/store/chat', () => ({
  describe('Generation Actions', () => {
    beforeEach(() => {
      vi.clearAllMocks();
@@ -904,7 +1102,7 @@ index 39d83f06..5e0b2c82 100644
    });
  
    describe('stopGenerating', () => {
-@@ -1223,6 +1238,366 @@ describe('Generation Actions', () => {
+@@ -1223,6 +1237,366 @@ describe('Generation Actions', () => {
        );
      });
  
@@ -1271,7 +1469,7 @@ index 39d83f06..5e0b2c82 100644
      it('should bail out if the interim op was cancelled during preflight (Stop pressed)', async () => {
        const { useChatStore } = await import('@/store/chat');
        vi.mocked(useChatStore.getState).mockReturnValue({
-@@ -1688,6 +2063,9 @@ describe('Generation Actions', () => {
+@@ -1688,6 +2062,9 @@ describe('Generation Actions', () => {
          associateMessageWithOperation: mockAssociateMessageWithOperation,
          executeClientAgent: mockExecuteClientAgent,
          executeGatewayAgent: mockExecuteGatewayAgent,
@@ -1281,7 +1479,7 @@ index 39d83f06..5e0b2c82 100644
          ...overrides,
        } as any);
  
-@@ -1700,6 +2078,7 @@ describe('Generation Actions', () => {
+@@ -1700,6 +2077,7 @@ describe('Generation Actions', () => {
  
      let executeHeterogeneousAgentSpy: ReturnType<typeof vi.spyOn>;
      let createMessageSpy: ReturnType<typeof vi.spyOn>;
@@ -1289,7 +1487,7 @@ index 39d83f06..5e0b2c82 100644
  
      beforeEach(() => {
        // Force the hetero routing decision.
-@@ -1712,6 +2091,9 @@ describe('Generation Actions', () => {
+@@ -1712,6 +2090,9 @@ describe('Generation Actions', () => {
        createMessageSpy = vi
          .spyOn(messageService, 'createMessage')
          .mockResolvedValue({ id: 'hetero-assistant-msg', messages: [] } as any) as any;
@@ -1299,23 +1497,35 @@ index 39d83f06..5e0b2c82 100644
  
        executeHeterogeneousAgentSpy = vi
          .spyOn(heterogeneousAgentExecutor, 'executeHeterogeneousAgent')
-@@ -1825,6 +2207,71 @@ describe('Generation Actions', () => {
-       }
+@@ -1773,88 +2154,71 @@ describe('Generation Actions', () => {
+       );
      });
  
+-    it('regenerates with the topic-pinned heterogeneous model', async () => {
+-      await setupHeteroChatStore({
+-        topicDataMap: {
+-          test: {
+-            items: [{ id: 'topic-1', model: 'opus', provider: 'claude-code' }],
+-          },
+-        },
+-      });
 +    it('keeps heterogeneous member retries in the group transcript', async () => {
 +      await setupHeteroChatStore();
 +
-+      const context: ConversationContext = {
+       const context: ConversationContext = {
+-        agentId: 'session-1',
 +        agentId: 'supervisor-agent',
 +        groupId: 'group-1',
 +        orchestrationRole: 'member',
 +        scope: 'group',
 +        subAgentId: 'member-agent',
-+        threadId: null,
-+        topicId: 'topic-1',
-+      };
-+      const store = createStore({ context });
+         threadId: null,
+         topicId: 'topic-1',
+       };
+       const store = createStore({ context });
+-      store.setState({
+-        displayMessages: [{ content: 'Retry with the pinned model', id: 'msg-1', role: 'user' }],
+-      } as any);
 +
 +      act(() => {
 +        store.setState({
@@ -1343,20 +1553,22 @@ index 39d83f06..5e0b2c82 100644
 +          ],
 +        } as any);
 +      });
-+
-+      await act(async () => {
+ 
+       await act(async () => {
+-        await store.getState().regenerateUserMessage('msg-1');
 +        await store.getState().regenerateAssistantMessage('assistant-1');
-+      });
-+
+       });
+ 
 +      expect(createMessageSpy).not.toHaveBeenCalled();
 +      expect(updateMessageSpy).toHaveBeenCalledWith(
 +        'assistant-1',
 +        expect.objectContaining({ content: expect.any(String), tools: null }),
 +        context,
 +      );
-+      expect(executeHeterogeneousAgentSpy).toHaveBeenCalledWith(
-+        expect.any(Function),
-+        expect.objectContaining({
+       expect(executeHeterogeneousAgentSpy).toHaveBeenCalledWith(
+         expect.any(Function),
+         expect.objectContaining({
+-          heterogeneousProvider: expect.objectContaining({ model: 'opus', type: 'claude-code' }),
 +          assistantMessageId: 'assistant-1',
 +          context: expect.objectContaining({
 +            agentId: 'member-agent',
@@ -1364,15 +1576,67 @@ index 39d83f06..5e0b2c82 100644
 +            orchestrationRole: 'member',
 +            subAgentId: 'member-agent',
 +          }),
-+        }),
-+      );
-+    });
-+
+         }),
+       );
+     });
+ 
+-    it('preserves a legacy subscription resume when the Provider Binding Lab is enabled', async () => {
+-      const previousLab = useUserStore.getState().preference.lab;
+-      useUserStore.setState((state) => ({
+-        preference: {
+-          ...state.preference,
+-          lab: { ...state.preference.lab, enableAgentProviderBinding: true },
+-        },
+-      }));
+-      await setupHeteroChatStore({
+-        topicDataMap: {
+-          test: {
+-            items: [
+-              {
+-                id: 'topic-1',
+-                metadata: {
+-                  heteroSessionId: 'legacy-session',
+-                  workingDirectory: '/repo',
+-                },
+-              },
+-            ],
+-          },
+-        },
+-      });
+-
+-      const context: ConversationContext = {
+-        agentId: 'session-1',
+-        threadId: null,
+-        topicId: 'topic-1',
+-      };
+-      const store = createStore({ context });
+-      store.setState({
+-        displayMessages: [{ content: 'Retry me', id: 'msg-1', role: 'user' }],
+-      } as any);
+-
+-      try {
+-        await store.getState().regenerateUserMessage('msg-1');
+-
+-        expect(executeHeterogeneousAgentSpy).toHaveBeenCalledWith(
+-          expect.any(Function),
+-          expect.objectContaining({
+-            resumeBindingKey: undefined,
+-            resumeSessionId: 'legacy-session',
+-            workingDirectory: '/repo',
+-          }),
+-        );
+-      } finally {
+-        useUserStore.setState((state) => ({
+-          preference: { ...state.preference, lab: previousLab },
+-        }));
+-      }
+-    });
+-
      it('creates the child execHeterogeneousAgent op as a child of the parent regenerate op', async () => {
        const { mockHeteroStartOperation, mockAssociateMessageWithOperation } =
          await setupHeteroChatStore();
 diff --git a/src/features/Conversation/store/slices/generation/action.ts b/src/features/Conversation/store/slices/generation/action.ts
-index 27d5c600..53382479 100644
+index fcdefdd8eb..c9fc7aa993 100644
 --- a/src/features/Conversation/store/slices/generation/action.ts
 +++ b/src/features/Conversation/store/slices/generation/action.ts
 @@ -6,6 +6,7 @@ import type {
@@ -1417,7 +1681,10 @@ index 27d5c600..53382479 100644
    const agentId = context.agentId;
    if (!agentId) throw new Error('agentId is required for heterogeneous agent');
  
-@@ -219,18 +229,33 @@ const runHeterogeneousFromExistingMessage = async (
+@@ -221,21 +231,36 @@ const runHeterogeneousFromExistingMessage = async (
+     topicModel,
+   );
+ 
 -  const assistantMsg = await messageService.createMessage({
 -    agentId,
 -    content: LOADING_FLAT,
@@ -1465,7 +1732,7 @@ index 27d5c600..53382479 100644
  
    const { operationId: heteroOpId } = chatStore.startOperation({
      context,
-@@ -236,12 +261,12 @@ const runHeterogeneousFromExistingMessage = async (
+@@ -244,12 +269,12 @@ const runHeterogeneousFromExistingMessage = async (
      parentOperationId,
      type: 'execHeterogeneousAgent',
    });
@@ -1480,7 +1747,7 @@ index 27d5c600..53382479 100644
      context,
      heterogeneousProvider: effectiveHeterogeneousProvider,
      imageList: imageList?.length ? imageList : undefined,
-@@ -252,7 +277,7 @@ const runHeterogeneousFromExistingMessage = async (
+@@ -260,7 +285,7 @@ const runHeterogeneousFromExistingMessage = async (
      workingDirectory,
    });
  
@@ -1489,7 +1756,7 @@ index 27d5c600..53382479 100644
  };
  
  export interface HeteroContinuationScheduleParams {
-@@ -270,6 +295,122 @@ interface RegenerateUserMessageSource {
+@@ -278,6 +303,122 @@ interface RegenerateUserMessageSource {
    readDbMessages: () => ConversationStore['dbMessages'];
  }
  
@@ -1612,7 +1879,7 @@ index 27d5c600..53382479 100644
  const captureRegenerateUserMessageSource = (
    get: () => ConversationStore,
  ): RegenerateUserMessageSource => {
-@@ -289,11 +430,176 @@ const captureRegenerateUserMessageSource = (
+@@ -297,11 +438,178 @@ const captureRegenerateUserMessageSource = (
    };
  };
  
@@ -1721,14 +1988,16 @@ index 27d5c600..53382479 100644
 +    const contextMessages = dbMessages.filter((message) => !excludedIds.has(message.id));
 +    const userMessageId = findUserMessageId(targetMessage, dbMessages);
 +    const retryPrompt = dbMessages.find((message) => message.id === userMessageId)?.content ?? '';
-+    const { agencyConfig, workspaceScoped } = getEffectiveAgencyConfig(executionAgentId);
++    const { agencyConfig, isWorkspaceAgent, workspaceScoped } =
++      getEffectiveAgencyConfig(executionAgentId);
 +    const heterogeneousProvider = agencyConfig?.heterogeneousProvider;
 +    const runtimeType = selectRuntimeType({
 +      boundDeviceId: agencyConfig?.boundDeviceId,
 +      executionTarget: agencyConfig?.executionTarget,
 +      heterogeneousProvider,
 +      isGatewayMode: chatStore.isGatewayModeEnabled(executionAgentId),
-+      isWorkspaceAgent: workspaceScoped,
++      isWorkspaceAgent,
++      workspaceScoped,
 +    });
 +
 +    if (runtimeType === 'gateway') {
@@ -1790,7 +2059,7 @@ index 27d5c600..53382479 100644
    const chatStore = useChatStore.getState();
  
    // Block a genuine double-regenerate, and ONLY that. The guard used to be
-@@ -314,6 +620,20 @@ const regenerateUserMessageFromSource = async (
+@@ -322,6 +630,20 @@ const regenerateUserMessageFromSource = async (
    const currentIndex = displayMessages.findIndex((c) => c.id === messageId);
    const item = displayMessages[currentIndex];
    if (!item) return;
@@ -1811,7 +2080,7 @@ index 27d5c600..53382479 100644
    // Start the interim regenerate op BEFORE the async preflight below
    // (document-context resolve + onBeforeRegenerate hook). In page / bound-
    // document contexts those reads are real round trips, so creating the op
-@@ -359,8 +679,38 @@ const regenerateUserMessageFromSource = async (
+@@ -367,8 +689,38 @@ const regenerateUserMessageFromSource = async (
      // Read the database messages from the captured conversation. If the shared
      // ConversationStore has switched context, the source falls back to the old
      // context's ChatStore bucket instead of observing the new topic.
@@ -1852,7 +2121,7 @@ index 27d5c600..53382479 100644
      const nextBranchIndex = childrenCount;
  
      // Switch to the new branch so the UI shows the incoming response immediately
-@@ -375,15 +725,15 @@ const regenerateUserMessageFromSource = async (
+@@ -383,15 +735,15 @@ const regenerateUserMessageFromSource = async (
      const postSwitchOp = operationSelectors.getOperationById(operationId)(useChatStore.getState());
      if (postSwitchOp && postSwitchOp.status !== 'running') return;
  
@@ -1872,7 +2141,7 @@ index 27d5c600..53382479 100644
        isWorkspaceAgent,
        workspaceScoped,
      });
-@@ -403,8 +753,9 @@ const regenerateUserMessageFromSource = async (
+@@ -411,8 +763,9 @@ const regenerateUserMessageFromSource = async (
        // `onComplete` still fires at session end for the UI hook; re-completing
        // the already-settled wrapper is an idempotent no-op.
        await chatStore.executeGatewayAgent({
@@ -1883,7 +2152,7 @@ index 27d5c600..53382479 100644
          onComplete: () =>
            settleGenerationEntry(chatStore, operationId, () =>
              hooks.onRegenerateComplete?.(messageId),
-@@ -423,7 +774,7 @@ const regenerateUserMessageFromSource = async (
+@@ -431,7 +784,7 @@ const regenerateUserMessageFromSource = async (
      // so prior context is preserved.
      if (runtimeType === 'hetero' && heterogeneousProvider) {
        await runHeterogeneousFromExistingMessage(chatStore, {
@@ -1892,7 +2161,7 @@ index 27d5c600..53382479 100644
          heterogeneousProvider,
          // Forward the original user message's images so regenerate re-runs
          // the CLI with the same vision input as the first attempt. Without
-@@ -854,22 +1205,25 @@ export const generationSlice: StateCreator<
+@@ -862,22 +1215,25 @@ export const generationSlice: StateCreator<
      // tool/provider error on a grouped reply is not resumable this way.
      if (!isHeterogeneousAgentStatusGuideError(erroredStep.error?.body)) return;
  
@@ -1922,7 +2191,7 @@ index 27d5c600..53382479 100644
        : undefined;
  
      // Nothing to continue from: the failed step IS the group's head (the run
-@@ -904,7 +1258,7 @@ export const generationSlice: StateCreator<
+@@ -912,7 +1268,7 @@ export const generationSlice: StateCreator<
      }
  
      const { operationId } = chatStore.startOperation({
@@ -1931,7 +2200,7 @@ index 27d5c600..53382479 100644
        type: 'regenerate',
      });
  
-@@ -916,7 +1270,7 @@ export const generationSlice: StateCreator<
+@@ -924,7 +1280,7 @@ export const generationSlice: StateCreator<
        // steps inside the same assistantGroup, so the bubble grows instead of
        // being replaced.
        await runHeterogeneousFromExistingMessage(chatStore, {
@@ -1940,7 +2209,7 @@ index 27d5c600..53382479 100644
          heterogeneousProvider,
          parentMessageId: continueParentId,
          parentOperationId: operationId,
-@@ -1188,7 +1542,10 @@ export const generationSlice: StateCreator<
+@@ -1196,7 +1552,10 @@ export const generationSlice: StateCreator<
    },
  
    regenerateAssistantMessage: async (messageId: string) => {
@@ -1952,7 +2221,7 @@ index 27d5c600..53382479 100644
  
      // Find the assistant message
      const currentIndex = displayMessages.findIndex((c) => c.id === messageId);
-@@ -1196,12 +1553,15 @@ export const generationSlice: StateCreator<
+@@ -1204,12 +1563,15 @@ export const generationSlice: StateCreator<
  
      if (!currentMessage) return;
  
@@ -1972,13 +2241,58 @@ index 27d5c600..53382479 100644
  
    regenerateUserMessage: async (messageId: string) =>
 diff --git a/src/features/Conversation/store/slices/generation/continueHeteroAfterError.test.ts b/src/features/Conversation/store/slices/generation/continueHeteroAfterError.test.ts
-index 5ae548b9..000b7a65 100644
+index ca90008707..55bb17316f 100644
 --- a/src/features/Conversation/store/slices/generation/continueHeteroAfterError.test.ts
 +++ b/src/features/Conversation/store/slices/generation/continueHeteroAfterError.test.ts
-@@ -225,6 +225,65 @@ describe('continueHeteroAfterError', () => {
-     });
+@@ -33,14 +33,10 @@ let mockAgentVisibility: 'private' | 'public' = 'public';
+ let mockIsWorkspaceAgent = false;
+ let mockSharedExecutionTarget: 'device' | 'local' = 'local';
+ let mockWorkspaceOverride: { boundDeviceId: string; executionTarget: 'local' } | undefined;
+-let mockTopic: { id: string; model?: string; provider?: string } | undefined;
+-vi.mock(
+-  '@/store/chat/slices/agentRun/actions/transports/hetero/heteroResume',
+-  async (importOriginal) => ({
+-    ...(await importOriginal<object>()),
+-    resolveHeteroResume: () => ({ cwdChanged: false, resumeSessionId: mockResumeSessionId }),
+-  }),
+-);
++vi.mock('@/store/chat/slices/agentRun/actions/transports/hetero/heteroResume', () => ({
++  getNativeHeteroSessionBindingKey: () => undefined,
++  resolveHeteroResume: () => ({ cwdChanged: false, resumeSessionId: mockResumeSessionId }),
++}));
+ 
+ vi.mock('@/store/chat/utils/activeTopicDocumentContext', () => ({
+   mergeAgentRuntimeInitialContexts: () => undefined,
+@@ -94,9 +90,8 @@ vi.mock('@/store/agent/selectors', () => ({
+ 
+ vi.mock('@/store/chat/selectors', () => ({
+   topicSelectors: {
+-    getTopicById: () => () => mockTopic,
+-    getTopicModelById: () => () =>
+-      mockTopic?.model ? { model: mockTopic.model, provider: mockTopic.provider || '' } : undefined,
++    getTopicById: () => () => undefined,
++    getTopicModelById: () => () => undefined,
+   },
+ }));
+ 
+@@ -176,7 +171,6 @@ describe('continueHeteroAfterError', () => {
+     mockResumeSessionId = 'sess-1';
+     mockIsWorkspaceAgent = false;
+     mockSharedExecutionTarget = 'local';
+-    mockTopic = undefined;
+     mockWorkspaceOverride = undefined;
    });
  
+@@ -208,20 +202,62 @@ describe('continueHeteroAfterError', () => {
+     expect(executorParams().message).not.toBe(USER_MESSAGE.content);
+   });
+ 
+-  it('continues with the topic-pinned heterogeneous model', async () => {
+-    mockTopic = { id: 'topic-1', model: 'opus', provider: 'claude-code' };
+-    const store = buildGroupStore([
+-      { content: 'looking', id: 'step-1', tools: [{ id: 'call-1' }] },
+-      { content: '', error: HETERO_RATE_LIMIT, id: 'step-2', tools: [{ id: 'call-2' }] },
+-    ]);
 +  it('continues a heterogeneous group member with its own execution identity', async () => {
 +    const store = createStore({
 +      context: { ...CONTEXT, agentId: 'supervisor-agent', groupId: 'group-1', scope: 'group' },
@@ -2018,11 +2332,14 @@ index 5ae548b9..000b7a65 100644
 +        ],
 +      } as any);
 +    });
-+
-+    await act(async () => {
-+      await store.getState().continueHeteroAfterError('step-1');
-+    });
-+
+ 
+     await act(async () => {
+       await store.getState().continueHeteroAfterError('step-1');
+     });
+ 
+-    expect(executorParams().heterogeneousProvider).toMatchObject({
+-      model: 'opus',
+-      type: 'claude-code',
 +    expect(mockCreateMessage).toHaveBeenCalledWith(
 +      expect.objectContaining({
 +        agentId: 'member-agent',
@@ -2035,14 +2352,48 @@ index 5ae548b9..000b7a65 100644
 +      groupId: 'group-1',
 +      orchestrationRole: 'member',
 +      subAgentId: 'member-agent',
-+    });
-+  });
-+
-   it('drops an error-only tail step and chains the continuation onto its parent', async () => {
-     // The terminal-error echo suppressor cleared the step's content, so it has
-     // nothing to render — keeping it would leave an empty block in the bubble.
+     });
+   });
+ 
+@@ -297,7 +333,6 @@ describe('continueHeteroAfterError', () => {
+         boundDeviceId: 'personal-device',
+         executionTarget: 'local',
+         isWorkspaceAgent: true,
+-        workspaceScoped: false,
+       }),
+     );
+     expect(mockUpdateMessage).not.toHaveBeenCalled();
+@@ -325,7 +360,6 @@ describe('continueHeteroAfterError', () => {
+         boundDeviceId: 'workspace-device',
+         executionTarget: 'local',
+         isWorkspaceAgent: true,
+-        workspaceScoped: true,
+       }),
+     );
+     expect(mockExecuteGatewayAgent).toHaveBeenCalledWith(
+@@ -356,7 +390,6 @@ describe('continueHeteroAfterError', () => {
+         boundDeviceId: 'workspace-device',
+         executionTarget: 'device',
+         isWorkspaceAgent: true,
+-        workspaceScoped: false,
+       }),
+     );
+   });
+diff --git a/src/features/Electron/ActiveConversationBridge/projectCoordinate.ts b/src/features/Electron/ActiveConversationBridge/projectCoordinate.ts
+index 8724ee7c0e..d9e98b9474 100644
+--- a/src/features/Electron/ActiveConversationBridge/projectCoordinate.ts
++++ b/src/features/Electron/ActiveConversationBridge/projectCoordinate.ts
+@@ -48,7 +48,7 @@ export const projectActiveConversationCoordinate = (
+             ? { activeThreadId: coordinate.threadId!, activeTopicId: coordinate.topicId! }
+             : groupChanged
+               ? { activeThreadId: undefined, activeTopicId: null! }
+-            : {}),
++              : {}),
+         },
+         false,
+         'ActiveConversationBridge/syncGroupRoute',
 diff --git a/src/services/aiAgent.ts b/src/services/aiAgent.ts
-index 8a1a1880..e858de17 100644
+index 3f01c2e981..4047caf169 100644
 --- a/src/services/aiAgent.ts
 +++ b/src/services/aiAgent.ts
 @@ -78,6 +78,8 @@ export interface ExecAgentTaskParams {
@@ -2055,7 +2406,7 @@ index 8a1a1880..e858de17 100644
    replacesOperationId?: string;
    /** Resume a previous op paused on `human_approve_required` instead of starting from a fresh user prompt. */
 diff --git a/src/store/chat/agents/GroupOrchestration/__tests__/call-supervisor.test.ts b/src/store/chat/agents/GroupOrchestration/__tests__/call-supervisor.test.ts
-index c624026a..7d8a5195 100644
+index c624026afc..7d8a519546 100644
 --- a/src/store/chat/agents/GroupOrchestration/__tests__/call-supervisor.test.ts
 +++ b/src/store/chat/agents/GroupOrchestration/__tests__/call-supervisor.test.ts
 @@ -80,6 +80,65 @@ const createInitialState = (overrides: Partial<AgentState> = {}): AgentState =>
@@ -2125,7 +2476,7 @@ index c624026a..7d8a5195 100644
        const mockStore = createMockStore({
          dbMessagesMap: {
 diff --git a/src/store/chat/agents/GroupOrchestration/createGroupOrchestrationExecutors.ts b/src/store/chat/agents/GroupOrchestration/createGroupOrchestrationExecutors.ts
-index 158bf733..73529856 100644
+index 158bf73353..73529856b3 100644
 --- a/src/store/chat/agents/GroupOrchestration/createGroupOrchestrationExecutors.ts
 +++ b/src/store/chat/agents/GroupOrchestration/createGroupOrchestrationExecutors.ts
 @@ -66,6 +66,7 @@ export interface GroupOrchestrationExecutorsContext {
@@ -2170,10 +2521,10 @@ index 158bf733..73529856 100644
        if (!lastMessage) {
          log(`[${sessionLogId}] No messages found, cannot execute supervisor`);
 diff --git a/src/store/chat/slices/agentRun/actions/__tests__/conversationLifecycle.test.ts b/src/store/chat/slices/agentRun/actions/__tests__/conversationLifecycle.test.ts
-index 498dab24..7dcd5b9e 100644
+index 841acf4295..96039925e4 100644
 --- a/src/store/chat/slices/agentRun/actions/__tests__/conversationLifecycle.test.ts
 +++ b/src/store/chat/slices/agentRun/actions/__tests__/conversationLifecycle.test.ts
-@@ -2789,6 +2789,47 @@ describe('ConversationLifecycle actions', () => {
+@@ -2953,6 +2953,47 @@ describe('ConversationLifecycle actions', () => {
          expect(enqueueMessageSpy).not.toHaveBeenCalled();
        });
  
@@ -2222,10 +2573,10 @@ index 498dab24..7dcd5b9e 100644
          // Stop flips the composer back to Send immediately via `isAborting`. The
          // queue drains on success only, so queueing behind an aborting run would
 diff --git a/src/store/chat/slices/agentRun/actions/__tests__/heterogeneousAgentExecutor.test.ts b/src/store/chat/slices/agentRun/actions/__tests__/heterogeneousAgentExecutor.test.ts
-index 390bb0bd..c8834f3a 100644
+index c00b6faf94..f2bdfd703a 100644
 --- a/src/store/chat/slices/agentRun/actions/__tests__/heterogeneousAgentExecutor.test.ts
 +++ b/src/store/chat/slices/agentRun/actions/__tests__/heterogeneousAgentExecutor.test.ts
-@@ -1290,6 +1290,41 @@ describe('heterogeneousAgentExecutor DB persistence', () => {
+@@ -1361,6 +1361,41 @@ describe('heterogeneousAgentExecutor DB persistence', () => {
        expect(dispatched![0].value.metadata.usage).toBeUndefined();
      });
  
@@ -2268,7 +2619,7 @@ index 390bb0bd..c8834f3a 100644
        await runWithEvents([
          ccInit(),
 diff --git a/src/store/chat/slices/agentRun/actions/entries/conversationLifecycle.ts b/src/store/chat/slices/agentRun/actions/entries/conversationLifecycle.ts
-index 9cf8f116..8122fec8 100644
+index 2fe3ead2ee..b04204d187 100644
 --- a/src/store/chat/slices/agentRun/actions/entries/conversationLifecycle.ts
 +++ b/src/store/chat/slices/agentRun/actions/entries/conversationLifecycle.ts
 @@ -746,7 +746,6 @@ export class ConversationLifecycleActionImpl {
@@ -2280,7 +2631,7 @@ index 9cf8f116..8122fec8 100644
        )?.metadata.serverOperationId;
  
 diff --git a/src/store/chat/slices/agentRun/actions/transports/client/streamingExecutor.ts b/src/store/chat/slices/agentRun/actions/transports/client/streamingExecutor.ts
-index 3fb00763..8c32ae06 100644
+index 3fb007631d..8c32ae063a 100644
 --- a/src/store/chat/slices/agentRun/actions/transports/client/streamingExecutor.ts
 +++ b/src/store/chat/slices/agentRun/actions/transports/client/streamingExecutor.ts
 @@ -502,6 +502,8 @@ export class StreamingExecutorActionImpl {
@@ -2326,10 +2677,10 @@ index 3fb00763..8c32ae06 100644
      }
  
 diff --git a/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts b/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
-index 44c92414..3a38aa62 100644
+index 7589502721..a8a8949808 100644
 --- a/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
 +++ b/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
-@@ -436,6 +436,8 @@ export class GatewayActionImpl {
+@@ -437,6 +437,8 @@ export class GatewayActionImpl {
      parentMessageId?: string;
      /** Server operation whose visible output ended before this fresh turn. */
      replacesOperationId?: string;
@@ -2338,7 +2689,7 @@ index 44c92414..3a38aa62 100644
      /**
       * Caller-owned operation that should be completed once the gateway side
       * has finished phase-1 init (network round-trip + child
-@@ -502,6 +504,7 @@ export class GatewayActionImpl {
+@@ -503,6 +505,7 @@ export class GatewayActionImpl {
        optimisticTopic,
        parentMessageId,
        parentOperationId,
@@ -2346,7 +2697,7 @@ index 44c92414..3a38aa62 100644
        replacesOperationId,
        resumeApproval,
        resumeApprovals,
-@@ -625,6 +628,7 @@ export class GatewayActionImpl {
+@@ -626,6 +629,7 @@ export class GatewayActionImpl {
          mentionedAgents,
          parentMessageId,
          prompt: message,
@@ -2355,10 +2706,10 @@ index 44c92414..3a38aa62 100644
          resumeApprovals,
          resumeToolResult,
 diff --git a/src/store/chat/slices/agentRun/actions/transports/hetero/heterogeneousAgentExecutor.ts b/src/store/chat/slices/agentRun/actions/transports/hetero/heterogeneousAgentExecutor.ts
-index 7abacc9d..304ec8f8 100644
+index 6e98912ebe..495abcc697 100644
 --- a/src/store/chat/slices/agentRun/actions/transports/hetero/heterogeneousAgentExecutor.ts
 +++ b/src/store/chat/slices/agentRun/actions/transports/hetero/heterogeneousAgentExecutor.ts
-@@ -617,6 +617,20 @@ export const executeHeterogeneousAgent = async (
+@@ -627,6 +627,20 @@ export const executeHeterogeneousAgent = async (
      return out;
    };
  
@@ -2379,7 +2730,7 @@ index 7abacc9d..304ec8f8 100644
    /**
     * Global `tool_use.id → tool message DB id` lookup, shared across the
     * main agent and every subagent run. `tool_result` events identify
-@@ -755,7 +769,11 @@ export const executeHeterogeneousAgent = async (
+@@ -765,7 +779,11 @@ export const executeHeterogeneousAgent = async (
  
      data.assistantMessage = {
        agentId: context.agentId,
@@ -2391,7 +2742,7 @@ index 7abacc9d..304ec8f8 100644
        model: data.model,
        provider: data.provider,
        role: 'assistant',
-@@ -872,6 +890,7 @@ export const executeHeterogeneousAgent = async (
+@@ -882,6 +900,7 @@ export const executeHeterogeneousAgent = async (
    const updateMessageOrThrow = async (messageId: string, update: Record<string, any>) => {
      const result = await messageService.updateMessage(messageId, update, {
        agentId: context.agentId,
@@ -2399,7 +2750,7 @@ index 7abacc9d..304ec8f8 100644
        topicId: context.topicId,
      });
      if (result?.success === false) {
-@@ -880,6 +899,7 @@ export const executeHeterogeneousAgent = async (
+@@ -890,6 +909,7 @@ export const executeHeterogeneousAgent = async (
    };
    const messageWriteCtx: MessageQueryContext = {
      agentId: context.agentId,
@@ -2407,7 +2758,7 @@ index 7abacc9d..304ec8f8 100644
      topicId: context.topicId,
    };
    const messageWriteBatcher = createMessageWriteBatcher({
-@@ -1502,11 +1522,14 @@ export const executeHeterogeneousAgent = async (
+@@ -1512,11 +1532,14 @@ export const executeHeterogeneousAgent = async (
    const applyMainIntent = async (intent: MainAgentIntent) => {
      switch (intent.kind) {
        case 'createAssistant': {
@@ -2423,7 +2774,7 @@ index 7abacc9d..304ec8f8 100644
            id: intent.messageId,
            ...(Object.keys(createMetadata).length > 0 ? { metadata: createMetadata } : {}),
            model: intent.model,
-@@ -1535,7 +1558,7 @@ export const executeHeterogeneousAgent = async (
+@@ -1545,7 +1568,7 @@ export const executeHeterogeneousAgent = async (
          if (intent.reasoning !== undefined) update.reasoning = { content: intent.reasoning };
          if (intent.model) update.model = intent.model;
          if (intent.provider) update.provider = intent.provider;
@@ -2432,7 +2783,7 @@ index 7abacc9d..304ec8f8 100644
          if (Object.keys(update).length === 0) return;
          messageWriteBatcher.enqueueUpdateMessage(
            intent.messageId,
-@@ -1591,10 +1614,13 @@ export const executeHeterogeneousAgent = async (
+@@ -1601,10 +1624,13 @@ export const executeHeterogeneousAgent = async (
          };
  
          const buildToolMessage = (x: (typeof intent.tools)[number]) => {
@@ -2447,7 +2798,7 @@ index 7abacc9d..304ec8f8 100644
              id: x.toolMessageId,
              ...(Object.keys(toolMetadata).length > 0 ? { metadata: toolMetadata } : {}),
              parentId: intent.assistantMessageId,
-@@ -1735,7 +1761,9 @@ export const executeHeterogeneousAgent = async (
+@@ -1745,7 +1771,9 @@ export const executeHeterogeneousAgent = async (
            usage: intent.usage as ModelUsage,
            // Wholesale metadata overwrite — re-stamp the provenance the
            // createAssistant write put there.
@@ -2459,7 +2810,7 @@ index 7abacc9d..304ec8f8 100644
            ...(intent.provider && { provider: intent.provider }),
          };
 diff --git a/src/store/chat/slices/aiAgent/actions/__tests__/groupOrchestration.test.ts b/src/store/chat/slices/aiAgent/actions/__tests__/groupOrchestration.test.ts
-index b8153c39..0953cee9 100644
+index b8153c39af..0953cee946 100644
 --- a/src/store/chat/slices/aiAgent/actions/__tests__/groupOrchestration.test.ts
 +++ b/src/store/chat/slices/aiAgent/actions/__tests__/groupOrchestration.test.ts
 @@ -49,6 +49,7 @@ describe('groupOrchestration actions', () => {
@@ -2502,7 +2853,7 @@ index b8153c39..0953cee9 100644
  
    describe('useEnablePollingTaskStatus', () => {
 diff --git a/src/store/chat/slices/aiAgent/actions/groupOrchestration.ts b/src/store/chat/slices/aiAgent/actions/groupOrchestration.ts
-index 6dec9323..9328e058 100644
+index 6dec932393..9328e0588f 100644
 --- a/src/store/chat/slices/aiAgent/actions/groupOrchestration.ts
 +++ b/src/store/chat/slices/aiAgent/actions/groupOrchestration.ts
 @@ -33,6 +33,7 @@ export interface GroupOrchestrationParams {
