@@ -438,6 +438,21 @@ jobs:
             git apply --unidiff-zero "$patch"
           done
 
+      - name: Apply release dependency overrides
+        working-directory: source
+        env:
+          VERSION: ${{ matrix.release.version }}
+        run: |
+          set -euo pipefail
+
+          if [ "$VERSION" = "2.2.15-canary.65" ]; then
+            sed -i \
+              's/"@lobehub\/ui": "\^5\.32\.0"/"@lobehub\/ui": "5.32.0"/' \
+              package.json
+
+            grep -F '"@lobehub/ui": "5.32.0"' package.json
+          fi
+
       - name: Resolve commit SHA
         id: vars
         working-directory: source
