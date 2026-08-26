@@ -718,28 +718,6 @@ index 1274b7d18a..fc20dafb3e 100644
    /**
     * Existing topic operation this fresh turn atomically supersedes. The server
     * accepts the handoff only while the topic marker still belongs to this id.
-diff --git a/packages/types/src/topic/topic.ts b/packages/types/src/topic/topic.ts
-index 312f90ce24..b5f77fdefd 100644
---- a/packages/types/src/topic/topic.ts
-+++ b/packages/types/src/topic/topic.ts
-@@ -118,8 +118,6 @@ export interface ChatTopicMetadata {
-     summarizedAt: string;
-     version: number;
-   };
--  /** Restored-history tail used as the source message for eval attempt threads. */
--  evalHistoryTailMessageId?: string;
-   bot?: ChatTopicBotContext;
-   boundDeviceId?: string;
-   cronJobId?: string;
-@@ -145,6 +143,8 @@ export interface ChatTopicMetadata {
-    * written without it can never be attributed afterwards.
-    */
-   editingGroupId?: string;
-+  /** Restored-history tail used as the source message for eval attempt threads. */
-+  evalHistoryTailMessageId?: string;
-   /**
-    * Scoped pointer to the currently active assistant message for a running
-    * heterogeneous agent operation. Includes `operationId` so cold-start
 diff --git a/src/features/AgentDocumentsExplorer/DocumentExplorerTree.tsx b/src/features/AgentDocumentsExplorer/DocumentExplorerTree.tsx
 index 49c39d8e65..e1df9a5788 100644
 --- a/src/features/AgentDocumentsExplorer/DocumentExplorerTree.tsx
