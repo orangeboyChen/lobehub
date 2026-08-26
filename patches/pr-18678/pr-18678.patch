@@ -57,38 +57,6 @@ index 042cd5767b..d8cf0a2a0c 100644
 +      vi.mocked(topicService.settleRunningOperation).mockResolvedValue({
 +        status: 'conflict',
 +      } as never);
-@@ -1830,3 +1836 @@ describe('GatewayActionImpl', () => {
--      vi.mocked(topicService.updateTopicMetadata)
--        .mockClear()
--        .mockResolvedValue(undefined as never);
-+      vi.mocked(topicService.settleRunningOperation).mockClear();
-@@ -1838,3 +1842,7 @@ describe('GatewayActionImpl', () => {
--      expect(topicService.updateTopicMetadata).toHaveBeenCalledWith('topic-1', {
--        runningOperation: null,
--      });
-+      await vi.waitFor(() =>
-+        expect(topicService.settleRunningOperation).toHaveBeenCalledWith(
-+          'topic-1',
-+          'server-op-1',
-+          'active',
-+        ),
-+      );
-@@ -1856,3 +1864 @@ describe('GatewayActionImpl', () => {
--      vi.mocked(topicService.updateTopicMetadata)
--        .mockClear()
--        .mockResolvedValue(undefined as never);
-+      vi.mocked(topicService.settleRunningOperation).mockClear();
-@@ -1862,3 +1868,7 @@ describe('GatewayActionImpl', () => {
--      expect(topicService.updateTopicMetadata).toHaveBeenCalledWith('topic-1', {
--        runningOperation: null,
--      });
-+      await vi.waitFor(() =>
-+        expect(topicService.settleRunningOperation).toHaveBeenCalledWith(
-+          'topic-1',
-+          'server-op-1',
-+          'active',
-+        ),
-+      );
 @@ -1986 +1995,0 @@ describe('GatewayActionImpl', () => {
 -      vi.mocked(topicService.updateTopicMetadata).mockResolvedValue(undefined as never);
 @@ -1989,7 +1998,10 @@ describe('GatewayActionImpl', () => {
@@ -158,73 +126,9 @@ index 371ea7e44d..32a6e39400 100644
 +          succeeded,
 +          topicId: result.topicId,
 +        }),
-@@ -856,28 +863,6 @@ export class GatewayActionImpl {
--        if (result.topicId) {
--          // A clean completion the user isn't watching is owned by
--          // `markTopicUnread` (status: 'unread'). Every other case (viewing,
--          // error, abort) settles the running state back to 'active'. The server
--          // compares the operation id under the topic row lock so a late close
--          // from another tab cannot clear or settle a newer run.
--          const viewing = this.#get().activeTopicId === result.topicId;
--          topicService
--            .settleRunningOperation(
--              result.topicId,
--              result.operationId,
--              viewing || !succeeded ? 'active' : 'unread',
--            )
--            .catch(console.error);
--          // Also clear the local store copy — the server settle above does NOT
--          // touch the Zustand topic map that useGatewayReconnect (and the sidebar
--          // spinner) read. Mirror the same 'active' decision passed to the server
--          // call above; omit it for the unwatched-clean-completion case, which
--          // `markTopicUnread` owns. Ownership-guarded on its own (see
--          // clearLocalRunningOperation), so it is safe to call either way.
--          this.clearLocalRunningOperation({
--            agentId: resolvedMessageContext.agentId,
--            groupId: resolvedMessageContext.groupId,
--            operationId: result.operationId,
--            status: viewing || !succeeded ? 'active' : undefined,
--            topicId: result.topicId,
--          });
--        }
-+        void this.settleTopicOperation({
-+          context: resolvedMessageContext,
-+          operationId: result.operationId,
-+          succeeded,
-+          topicId: result.topicId,
-+        });
 @@ -1009,0 +999,2 @@ export class GatewayActionImpl {
 +      onRunTerminal: ({ succeeded }) =>
 +        this.settleTopicOperation({ context, operationId, succeeded, topicId }),
-@@ -1054,27 +1045 @@ export class GatewayActionImpl {
--        // Same supersede guard as executeGatewayAgent's onSessionComplete: a
--        // newer run may own this topic by now, and both writes below are
--        // unconditional stomps that would retire it mid-flight.
--        const superseded = this.#isSupersededRunningOperation({
--          agentId: context.agentId,
--          operationId,
--          topicId,
--        });
--
--        // See executeGatewayAgent's onSessionComplete: a clean background
--        // completion is left to markTopicUnread (status: 'unread').
--        const viewing = this.#get().activeTopicId === topicId;
--        if (!superseded && (viewing || !succeeded)) {
--          void this.#get().updateTopicStatus?.({
--            agentId: context.agentId,
--            status: 'active',
--            topicId,
--          });
--        }
--        // Clear the persisted marker useGatewayReconnect keys off so a dead op
--        // doesn't get reconnected on every reload / task-drawer open.
--        if (!superseded) {
--          topicService.updateTopicMetadata(topicId, { runningOperation: null }).catch(() => {});
--        }
--        // Mirror the clear into the local store — the server clear above leaves the
--        // Zustand topic map stale, which useGatewayReconnect keys off.
--        this.clearLocalRunningOperation({ agentId: context.agentId, operationId, topicId });
-+        void this.settleTopicOperation({ context, operationId, succeeded, topicId });
 @@ -1123,0 +1089,44 @@ export class GatewayActionImpl {
 +  private settleTopicOperation = async (params: {
 +    context: ConversationContext;
