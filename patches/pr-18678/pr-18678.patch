@@ -1,5 +1,5 @@
 diff --git a/src/store/chat/slices/agentRun/actions/__tests__/gateway.test.ts b/src/store/chat/slices/agentRun/actions/__tests__/gateway.test.ts
-index 54efb039472af743493614ee82469a78f1046aba..d8cf0a2a0ce155a59b569351a02b4ab6ec7d42c6 100644
+index dc591ad7..7a5a64e8 100644
 --- a/src/store/chat/slices/agentRun/actions/__tests__/gateway.test.ts
 +++ b/src/store/chat/slices/agentRun/actions/__tests__/gateway.test.ts
 @@ -27,7 +27,7 @@ vi.mock('@/services/message', () => ({
@@ -353,57 +353,7 @@ index 54efb039472af743493614ee82469a78f1046aba..d8cf0a2a0ce155a59b569351a02b4ab6
      // When the desktop runs against 本机 (effective runtime mode 'local'), the
      // client must forward this machine's own gateway deviceId so the server can
      // preset activeDeviceId and inject lobe-local-system into the first LLM
-@@ -2052,17 +1833,19 @@ describe('GatewayActionImpl', () => {
-         topicId: 'topic-1',
-       });
- 
--      vi.mocked(topicService.updateTopicMetadata)
--        .mockClear()
--        .mockResolvedValue(undefined as never);
-+      vi.mocked(topicService.settleRunningOperation).mockClear();
-       captured.onSessionComplete!({ authFailed: false, succeeded: true, terminalReceived: true });
- 
-       // The run lifecycle owns completion when a terminal event arrives, so the
-       // reconnect path must not double-complete its local op here.
-       expect(completeOperation).not.toHaveBeenCalled();
--      expect(topicService.updateTopicMetadata).toHaveBeenCalledWith('topic-1', {
--        runningOperation: null,
--      });
-+      await vi.waitFor(() =>
-+        expect(topicService.settleRunningOperation).toHaveBeenCalledWith(
-+          'topic-1',
-+          'server-op-1',
-+          'active',
-+        ),
-+      );
-     });
- 
-     // auth_failed (or a failed token refresh) is authoritative that the op is
-@@ -2078,15 +1861,17 @@ describe('GatewayActionImpl', () => {
-         topicId: 'topic-1',
-       });
- 
--      vi.mocked(topicService.updateTopicMetadata)
--        .mockClear()
--        .mockResolvedValue(undefined as never);
-+      vi.mocked(topicService.settleRunningOperation).mockClear();
-       captured.onSessionComplete!({ authFailed: true, succeeded: false, terminalReceived: false });
- 
-       expect(completeOperation).toHaveBeenCalledWith('gw-op-reconnect');
--      expect(topicService.updateTopicMetadata).toHaveBeenCalledWith('topic-1', {
--        runningOperation: null,
--      });
-+      await vi.waitFor(() =>
-+        expect(topicService.settleRunningOperation).toHaveBeenCalledWith(
-+          'topic-1',
-+          'server-op-1',
-+          'active',
-+        ),
-+      );
-     });
- 
-     // Seeds a topic whose local metadata still carries a runningOperation, wires up
-@@ -2208,16 +1993,18 @@ describe('GatewayActionImpl', () => {
+@@ -2258,16 +2039,18 @@ describe('GatewayActionImpl', () => {
        });
  
        internalDispatchTopic.mockClear();
@@ -431,7 +381,7 @@ index 54efb039472af743493614ee82469a78f1046aba..d8cf0a2a0ce155a59b569351a02b4ab6
  
      // An ambiguous close (no terminal event, no auth failure) must NOT clear the
 diff --git a/src/store/chat/slices/agentRun/actions/__tests__/gatewayEventHandler.test.ts b/src/store/chat/slices/agentRun/actions/__tests__/gatewayEventHandler.test.ts
-index e89eacff2ad8d57bb52d02ae2b3d8f50d3cb934a..f0099dde56c644eda1c1260e8e485d5af9119ceb 100644
+index e89eacff..f0099dde 100644
 --- a/src/store/chat/slices/agentRun/actions/__tests__/gatewayEventHandler.test.ts
 +++ b/src/store/chat/slices/agentRun/actions/__tests__/gatewayEventHandler.test.ts
 @@ -78,7 +78,11 @@ function createMockStore() {
@@ -492,7 +442,7 @@ index e89eacff2ad8d57bb52d02ae2b3d8f50d3cb934a..f0099dde56c644eda1c1260e8e485d5a
      // the shared run lifecycle, and gateway.ts onSessionComplete no longer
      // double-completes (it only completes as the terminal-missing fallback). The
 diff --git a/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts b/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
-index a8a8949808163450e99ba596c35a0cb92ab02ebd..2cda7e8b1a9051158264b6abc5f4943eb77ae8fd 100644
+index 45d8c2f6..c3fb8602 100644
 --- a/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
 +++ b/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
 @@ -7,7 +7,6 @@ import {
@@ -503,32 +453,7 @@ index a8a8949808163450e99ba596c35a0cb92ab02ebd..2cda7e8b1a9051158264b6abc5f4943e
    ConversationContext,
    ExecAgentResult,
    MessageMetadata,
-@@ -437,8 +436,6 @@ export class GatewayActionImpl {
-     parentMessageId?: string;
-     /** Server operation whose visible output ended before this fresh turn. */
-     replacesOperationId?: string;
--    /** Existing assistant row to overwrite while preserving its tree position. */
--    replaceAssistantMessageId?: string;
-     /**
-      * Caller-owned operation that should be completed once the gateway side
-      * has finished phase-1 init (network round-trip + child
-@@ -505,7 +502,6 @@ export class GatewayActionImpl {
-       optimisticTopic,
-       parentMessageId,
-       parentOperationId,
--      replaceAssistantMessageId,
-       replacesOperationId,
-       resumeApproval,
-       resumeApprovals,
-@@ -629,7 +625,6 @@ export class GatewayActionImpl {
-         mentionedAgents,
-         parentMessageId,
-         prompt: message,
--        replaceAssistantMessageId,
-         resumeApproval,
-         resumeApprovals,
-         resumeToolResult,
-@@ -819,6 +814,13 @@ export class GatewayActionImpl {
+@@ -824,6 +823,13 @@ export class GatewayActionImpl {
        // the same WS that gatewayConnections is keyed on.
        gatewayOperationId: result.operationId,
        operationId: gatewayOpId,
@@ -542,48 +467,7 @@ index a8a8949808163450e99ba596c35a0cb92ab02ebd..2cda7e8b1a9051158264b6abc5f4943e
        // Shared run lifecycle: drives the terminal completeRun / afterRunComplete
        // for the gateway transport (op completion + unread + queue drain +
        // notification) at `agent_runtime_end` / `error`.
-@@ -854,34 +856,12 @@ export class GatewayActionImpl {
-         // lifecycle on `agent_runtime_end` / `error`. Only complete here as the
-         // terminal-missing fallback so the op never sticks `running`.
-         if (!terminalReceived) this.#get().completeOperation(gatewayOpId);
--        if (result.topicId) {
--          // A clean completion the user isn't watching is owned by
--          // `markTopicUnread` (status: 'unread'). Every other case (viewing,
--          // error, abort) settles the running state back to 'active'. The server
--          // compares the operation id under the topic row lock so a late close
--          // from another tab cannot clear or settle a newer run.
--          const viewing = this.#get().activeTopicId === result.topicId;
--          topicService
--            .settleRunningOperation(
--              result.topicId,
--              result.operationId,
--              viewing || !succeeded ? 'active' : 'unread',
--            )
--            .catch(console.error);
--          // Also clear the local store copy — the server settle above does NOT
--          // touch the Zustand topic map that useGatewayReconnect (and the sidebar
--          // spinner) read. Mirror the same 'active' decision passed to the server
--          // call above; omit it for the unwatched-clean-completion case, which
--          // `markTopicUnread` owns. Ownership-guarded on its own (see
--          // clearLocalRunningOperation), so it is safe to call either way.
--          this.clearLocalRunningOperation({
--            agentId: resolvedMessageContext.agentId,
--            groupId: resolvedMessageContext.groupId,
--            operationId: result.operationId,
--            status: viewing || !succeeded ? 'active' : undefined,
--            topicId: result.topicId,
--          });
--        }
-+        void this.settleTopicOperation({
-+          context: resolvedMessageContext,
-+          operationId: result.operationId,
-+          succeeded,
-+          topicId: result.topicId,
-+        });
-         onComplete?.();
-       },
-       operationId: result.operationId,
-@@ -1012,6 +992,8 @@ export class GatewayActionImpl {
+@@ -1022,6 +1028,8 @@ export class GatewayActionImpl {
        // the same WS that gatewayConnections is keyed on.
        gatewayOperationId: operationId,
        operationId: gatewayOpId,
@@ -592,42 +476,7 @@ index a8a8949808163450e99ba596c35a0cb92ab02ebd..2cda7e8b1a9051158264b6abc5f4943e
        runLifecycle: buildRunLifecycle(this.#get, {
          context,
          parentMessageId: assistantMessageId,
-@@ -1056,33 +1038,7 @@ export class GatewayActionImpl {
-         // the local op never sticks `running`.
-         if (authFailed) this.#get().completeOperation(gatewayOpId);
- 
--        // Same supersede guard as executeGatewayAgent's onSessionComplete: a
--        // newer run may own this topic by now, and both writes below are
--        // unconditional stomps that would retire it mid-flight.
--        const superseded = this.#isSupersededRunningOperation({
--          agentId: context.agentId,
--          operationId,
--          topicId,
--        });
--
--        // See executeGatewayAgent's onSessionComplete: a clean background
--        // completion is left to markTopicUnread (status: 'unread').
--        const viewing = this.#get().activeTopicId === topicId;
--        if (!superseded && (viewing || !succeeded)) {
--          void this.#get().updateTopicStatus?.({
--            agentId: context.agentId,
--            status: 'active',
--            topicId,
--          });
--        }
--        // Clear the persisted marker useGatewayReconnect keys off so a dead op
--        // doesn't get reconnected on every reload / task-drawer open.
--        if (!superseded) {
--          topicService.updateTopicMetadata(topicId, { runningOperation: null }).catch(() => {});
--        }
--        // Mirror the clear into the local store — the server clear above leaves the
--        // Zustand topic map stale, which useGatewayReconnect keys off.
--        this.clearLocalRunningOperation({ agentId: context.agentId, operationId, topicId });
-+        void this.settleTopicOperation({ context, operationId, succeeded, topicId });
-       },
-       operationId,
-       resumeOnConnect: true,
-@@ -1126,6 +1082,50 @@ export class GatewayActionImpl {
+@@ -1158,6 +1166,50 @@ export class GatewayActionImpl {
        });
    };
  
@@ -678,7 +527,7 @@ index a8a8949808163450e99ba596c35a0cb92ab02ebd..2cda7e8b1a9051158264b6abc5f4943e
    /**
     * Clear the client-store copy of `topic.metadata.runningOperation`.
     *
-@@ -1147,58 +1147,19 @@ export class GatewayActionImpl {
+@@ -1179,58 +1231,19 @@ export class GatewayActionImpl {
     * user switched agent/group, when the active-bucket `getTopicById` would miss the topic
     * and leave its marker stale.
     */
@@ -738,7 +587,7 @@ index a8a8949808163450e99ba596c35a0cb92ab02ebd..2cda7e8b1a9051158264b6abc5f4943e
      if (existingTopic?.metadata?.runningOperation?.operationId !== operationId) return;
  
      state.internal_dispatchTopic({
-@@ -1208,15 +1169,6 @@ export class GatewayActionImpl {
+@@ -1240,15 +1253,6 @@ export class GatewayActionImpl {
        type: 'updateTopic',
        value: { metadata: { ...existingTopic.metadata, runningOperation: null } },
      });
@@ -755,10 +604,10 @@ index a8a8949808163450e99ba596c35a0cb92ab02ebd..2cda7e8b1a9051158264b6abc5f4943e
  
    private internal_cleanupGatewayConnection = (operationId: string): void => {
 diff --git a/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts b/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts
-index cd50e607e10370a6db2458cb7b7a4ed8003c9b85..99d8bbbd77832f8e877b08ef84463b60875bead2 100644
+index e5a67ff6..071d6d41 100644
 --- a/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts
 +++ b/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts
-@@ -385,6 +385,12 @@ export const createGatewayEventHandler = (
+@@ -387,6 +387,12 @@ export const createGatewayEventHandler = (
       */
      gatewayOperationId?: string;
      operationId: string;
@@ -771,7 +620,7 @@ index cd50e607e10370a6db2458cb7b7a4ed8003c9b85..99d8bbbd77832f8e877b08ef84463b60
      /**
       * Shared run lifecycle for this run, assembled by the caller (gateway.ts).
       * Only the gateway transport supplies it — it drives the terminal lifecycle
-@@ -406,7 +412,7 @@ export const createGatewayEventHandler = (
+@@ -408,7 +414,7 @@ export const createGatewayEventHandler = (
      runtimeType?: 'gateway' | 'hetero';
    },
  ) => {
@@ -780,7 +629,7 @@ index cd50e607e10370a6db2458cb7b7a4ed8003c9b85..99d8bbbd77832f8e877b08ef84463b60
    const gatewayOperationId = params.gatewayOperationId ?? operationId;
    const runtimeType = params.runtimeType ?? 'gateway';
  
-@@ -1179,6 +1185,7 @@ export const createGatewayEventHandler = (
+@@ -1262,6 +1268,7 @@ export const createGatewayEventHandler = (
                ...lifecycleEventBase,
                status,
              });
@@ -788,7 +637,7 @@ index cd50e607e10370a6db2458cb7b7a4ed8003c9b85..99d8bbbd77832f8e877b08ef84463b60
              if (!requeued && status === 'completed') {
                // Notification body, resolved most-authoritative first:
                //
-@@ -1259,6 +1266,7 @@ export const createGatewayEventHandler = (
+@@ -1342,6 +1349,7 @@ export const createGatewayEventHandler = (
            // legacy completeOperation for any other caller for safety.
            if (runtimeType === 'gateway' && runLifecycle) {
              await runLifecycle.completeRun({ ...lifecycleEventBase, status: 'failed' });
