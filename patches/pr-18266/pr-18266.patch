@@ -35,14 +35,13 @@ index b28de426..fadd1bfe 100644
        resumeApproval,
        resumeApprovals,
        resumeToolResult,
-@@ -2066,6 +2069,7 @@ export const aiAgentRouter = router({
+@@ -2066,5 +2066,6 @@ export const aiAgentRouter = router({
          messageIds: [
            ...existingMessageIds,
            parentMessageId,
 +          replaceAssistantMessageId,
-           resumeApproval?.parentMessageId,
-           // Every batch target is authorized too — a caller must not be able to
-           // slip a message it doesn't own into the list behind an owned anchor.
+           // A new subtopic branches off an existing message — authorize that
+           // anchor too, or a caller could fork a thread off someone else's turn.
 @@ -2231,6 +2235,7 @@ export const aiAgentRouter = router({
          mentionedAgents,
          parentMessageId,
