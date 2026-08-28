@@ -1,96 +1,32 @@
-diff --git a/src/store/chat/slices/agentRun/actions/__tests__/gateway.test.ts b/src/store/chat/slices/agentRun/actions/__tests__/gateway.test.ts
-index 042cd5767b..d8cf0a2a0c 100644
---- a/src/store/chat/slices/agentRun/actions/__tests__/gateway.test.ts
-+++ b/src/store/chat/slices/agentRun/actions/__tests__/gateway.test.ts
-@@ -30 +30 @@ vi.mock('@/services/topic', () => ({
--    settleRunningOperation: vi.fn().mockResolvedValue(undefined),
-+    settleRunningOperation: vi.fn().mockResolvedValue({ status: 'settled' }),
-@@ -171 +171,3 @@ describe('GatewayActionImpl', () => {
--    vi.mocked(topicService.settleRunningOperation).mockResolvedValue(undefined as never);
-+    vi.mocked(topicService.settleRunningOperation).mockResolvedValue({
-+      status: 'settled',
-+    } as never);
-@@ -1246,2 +1247,0 @@ describe('GatewayActionImpl', () => {
--      vi.mocked(topicService.updateTopicMetadata).mockResolvedValue(undefined as never);
--
-@@ -1250,7 +1250,10 @@ describe('GatewayActionImpl', () => {
--      expect(internalDispatchTopic).toHaveBeenCalledWith({
--        agentId: 'agent-1',
--        groupId: undefined,
--        id: 'topic-1',
--        type: 'updateTopic',
--        value: { metadata: { model: 'gpt-4', runningOperation: null } },
--      });
-+      await vi.waitFor(() =>
-+        expect(internalDispatchTopic).toHaveBeenCalledWith({
-+          agentId: 'agent-1',
-+          groupId: undefined,
-+          id: 'topic-1',
-+          scope: undefined,
-+          type: 'updateTopic',
-+          value: { metadata: { model: 'gpt-4', runningOperation: null }, status: 'active' },
-+        }),
-+      );
-@@ -1333,2 +1335,0 @@ describe('GatewayActionImpl', () => {
--      vi.mocked(topicService.updateTopicMetadata).mockResolvedValue(undefined as never);
--
-@@ -1341,7 +1342,10 @@ describe('GatewayActionImpl', () => {
--      expect(internalDispatchTopic).toHaveBeenCalledWith({
--        agentId: 'agent-1',
--        groupId: undefined,
--        id: 'topic-1',
--        type: 'updateTopic',
--        value: { metadata: { model: 'gpt-4', runningOperation: null } },
--      });
-+      await vi.waitFor(() =>
-+        expect(internalDispatchTopic).toHaveBeenCalledWith({
-+          agentId: 'agent-1',
-+          groupId: undefined,
-+          id: 'topic-1',
-+          scope: undefined,
-+          type: 'updateTopic',
-+          value: { metadata: { model: 'gpt-4', runningOperation: null }, status: 'active' },
-+        }),
-+      );
-@@ -1428 +1432,3 @@ describe('GatewayActionImpl', () => {
--      vi.mocked(topicService.settleRunningOperation).mockResolvedValue(undefined as never);
-+      vi.mocked(topicService.settleRunningOperation).mockResolvedValue({
-+        status: 'conflict',
-+      } as never);
-@@ -1986 +1995,0 @@ describe('GatewayActionImpl', () => {
--      vi.mocked(topicService.updateTopicMetadata).mockResolvedValue(undefined as never);
-@@ -1989,7 +1998,10 @@ describe('GatewayActionImpl', () => {
--      expect(internalDispatchTopic).toHaveBeenCalledWith({
--        agentId: 'agent-1',
--        groupId: undefined,
--        id: 'topic-1',
--        type: 'updateTopic',
--        value: { metadata: { model: 'gpt-4', runningOperation: null } },
--      });
-+      await vi.waitFor(() =>
-+        expect(internalDispatchTopic).toHaveBeenCalledWith({
-+          agentId: 'agent-1',
-+          groupId: undefined,
-+          id: 'topic-1',
-+          scope: undefined,
-+          type: 'updateTopic',
-+          value: { metadata: { model: 'gpt-4', runningOperation: null }, status: 'active' },
-+        }),
-+      );
 diff --git a/src/store/chat/slices/agentRun/actions/__tests__/gatewayEventHandler.test.ts b/src/store/chat/slices/agentRun/actions/__tests__/gatewayEventHandler.test.ts
-index e89eacff2a..f0099dde56 100644
+index e89eacff2ad8d57bb52d02ae2b3d8f50d3cb934a..f0099dde56c644eda1c1260e8e485d5af9119ceb 100644
 --- a/src/store/chat/slices/agentRun/actions/__tests__/gatewayEventHandler.test.ts
 +++ b/src/store/chat/slices/agentRun/actions/__tests__/gatewayEventHandler.test.ts
-@@ -81 +81,5 @@ function createHandler(
+@@ -78,7 +78,11 @@ function createMockStore() {
+ 
+ function createHandler(
+   store: ReturnType<typeof createMockStore>,
 -  overrides?: { assistantMessageId?: string; gatewayOperationId?: string },
 +  overrides?: {
 +    assistantMessageId?: string;
 +    gatewayOperationId?: string;
 +    onRunTerminal?: (event: { succeeded: boolean }) => Promise<void>;
 +  },
-@@ -90,0 +95 @@ function createHandler(
+ ) {
+   const get = vi.fn(() => store) as any;
+   const assistantMessageId = overrides?.assistantMessageId ?? 'msg-initial';
+@@ -88,6 +92,7 @@ function createHandler(
+     context,
+     gatewayOperationId: overrides?.gatewayOperationId,
+     operationId: 'op-1',
 +    onRunTerminal: overrides?.onRunTerminal,
-@@ -1533,0 +1539,11 @@ describe('createGatewayEventHandler', () => {
+     // The gateway transport injects the shared run lifecycle (built once per run
+     // in gateway.ts). Build the real one here so the terminal completeRun /
+     // afterRunComplete path under test runs against the mock store.
+@@ -1531,6 +1536,17 @@ describe('createGatewayEventHandler', () => {
+       );
+     });
+ 
 +    it('settles the topic on agent_runtime_end without waiting for the Gateway session to close', async () => {
 +      const store = createMockStore();
 +      const onRunTerminal = vi.fn().mockResolvedValue(undefined);
@@ -102,7 +38,13 @@ index e89eacff2a..f0099dde56 100644
 +      expect(onRunTerminal).toHaveBeenCalledWith({ succeeded: true });
 +    });
 +
-@@ -1547,0 +1564,11 @@ describe('createGatewayEventHandler', () => {
+     it.each(['interrupted', 'waiting_for_async_tool'])(
+       'agent_runtime_end with reason "%s" completes the op but does NOT mark unread (cancel/park)',
+       async (reason) => {
+@@ -1545,6 +1561,17 @@ describe('createGatewayEventHandler', () => {
+       },
+     );
+ 
 +    it('settles an error terminal as unsuccessful without waiting for session close', async () => {
 +      const store = createMockStore();
 +      const onRunTerminal = vi.fn().mockResolvedValue(undefined);
@@ -114,11 +56,17 @@ index e89eacff2a..f0099dde56 100644
 +      expect(onRunTerminal).toHaveBeenCalledWith({ succeeded: false });
 +    });
 +
+     // the agent_runtime_end handler completes the op once via
+     // the shared run lifecycle, and gateway.ts onSessionComplete no longer
+     // double-completes (it only completes as the terminal-missing fallback). The
 diff --git a/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts b/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
-index 371ea7e44d..32a6e39400 100644
+index 4e4fa09f3edeefb51987edbccf97e86c5d3bfb29..8c998ce9c2202a046b984f7119452851de4e1218 100644
 --- a/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
 +++ b/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
-@@ -820,0 +821,7 @@ export class GatewayActionImpl {
+@@ -825,6 +825,13 @@ export class GatewayActionImpl {
+       // the same WS that gatewayConnections is keyed on.
+       gatewayOperationId: result.operationId,
+       operationId: gatewayOpId,
 +      onRunTerminal: ({ succeeded }) =>
 +        this.settleTopicOperation({
 +          context: resolvedMessageContext,
@@ -126,10 +74,22 @@ index 371ea7e44d..32a6e39400 100644
 +          succeeded,
 +          topicId: result.topicId,
 +        }),
-@@ -1026,0 +1026,2 @@ export class GatewayActionImpl {
+       // Shared run lifecycle: drives the terminal completeRun / afterRunComplete
+       // for the gateway transport (op completion + unread + queue drain +
+       // notification) at `agent_runtime_end` / `error`.
+@@ -1023,6 +1030,8 @@ export class GatewayActionImpl {
+       // the same WS that gatewayConnections is keyed on.
+       gatewayOperationId: operationId,
+       operationId: gatewayOpId,
 +      onRunTerminal: ({ succeeded }) =>
 +        this.settleTopicOperation({ context, operationId, succeeded, topicId }),
-@@ -1129,0 +1129,43 @@ export class GatewayActionImpl {
+       runLifecycle: buildRunLifecycle(this.#get, {
+         context,
+         parentMessageId: assistantMessageId,
+@@ -1124,6 +1133,46 @@ export class GatewayActionImpl {
+     });
+   };
+ 
 +  private settleTopicOperation = async (params: {
 +    context: ConversationContext;
 +    operationId: string;
@@ -149,11 +109,7 @@ index 371ea7e44d..32a6e39400 100644
 +    const state = this.#get();
 +    const scope =
 +      context.scope === 'group' || context.scope === 'group_agent' ? context.scope : undefined;
-+    const key = topicMapKey({
-+      agentId: context.agentId,
-+      groupId: context.groupId,
-+      scope,
-+    });
++    const key = topicMapKey({ agentId: context.agentId, groupId: context.groupId, scope });
 +    const topic = state.topicDataMap[key]?.items?.find((item) => item.id === topicId);
 +    const localOwner = topic?.metadata?.runningOperation?.operationId;
 +    if (!topic || (localOwner && localOwner !== operationId)) return;
@@ -173,21 +129,49 @@ index 371ea7e44d..32a6e39400 100644
 +      },
 +    });
 +  };
++
+   /**
+    * Build the `createMemberHandler` factory for a run's event router, with a
+    * single memoized group-tree hydration shared across all of that run's member
 diff --git a/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts b/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts
-index cd50e607e1..99d8bbbd77 100644
+index e5a67ff6b5ca79fefa6edb2e903ffb27b04adb92..071d6d41957032080307db81331b3af406a3a2e7 100644
 --- a/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts
 +++ b/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts
-@@ -387,0 +388,6 @@ export const createGatewayEventHandler = (
+@@ -387,6 +387,12 @@ export const createGatewayEventHandler = (
+      */
+     gatewayOperationId?: string;
+     operationId: string;
 +    /**
 +     * Settle the persisted topic row as soon as the runtime terminal arrives.
 +     * The Gateway session may stay connected after `agent_runtime_end`, so
 +     * waiting for `onSessionComplete` can leave the topic stuck `running`.
 +     */
 +    onRunTerminal?: (event: { succeeded: boolean }) => Promise<void>;
-@@ -409 +415 @@ export const createGatewayEventHandler = (
+     /**
+      * Shared run lifecycle for this run, assembled by the caller (gateway.ts).
+      * Only the gateway transport supplies it — it drives the terminal lifecycle
+@@ -408,7 +414,7 @@ export const createGatewayEventHandler = (
+     runtimeType?: 'gateway' | 'hetero';
+   },
+ ) => {
 -  const { context, operationId, runLifecycle } = params;
 +  const { context, onRunTerminal, operationId, runLifecycle } = params;
-@@ -1181,0 +1188 @@ export const createGatewayEventHandler = (
+   const gatewayOperationId = params.gatewayOperationId ?? operationId;
+   const runtimeType = params.runtimeType ?? 'gateway';
+ 
+@@ -1262,6 +1268,7 @@ export const createGatewayEventHandler = (
+               ...lifecycleEventBase,
+               status,
+             });
 +            await onRunTerminal?.({ succeeded: status === 'completed' });
-@@ -1261,0 +1269 @@ export const createGatewayEventHandler = (
+             if (!requeued && status === 'completed') {
+               // Notification body, resolved most-authoritative first:
+               //
+@@ -1342,6 +1349,7 @@ export const createGatewayEventHandler = (
+           // legacy completeOperation for any other caller for safety.
+           if (runtimeType === 'gateway' && runLifecycle) {
+             await runLifecycle.completeRun({ ...lifecycleEventBase, status: 'failed' });
 +            await onRunTerminal?.({ succeeded: false });
+           } else {
+             get().completeOperation(operationId);
+           }
