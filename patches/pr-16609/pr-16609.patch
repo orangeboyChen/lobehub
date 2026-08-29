@@ -21,27 +21,6 @@ index da4e156d4..30aa29e1e 100644
  vi.mock('react-i18next', () => ({
    useTranslation: () => ({
      t: (_key: string, options?: { defaultValue?: string } | string) =>
-@@ -69,15 +74,19 @@ vi.mock('antd', () => ({
- // app sets up globally but the unit env doesn't.
- vi.mock('@lobehub/ui/base-ui', () => ({
-   Button: ({
-+    'aria-label': ariaLabel,
-     children,
-     disabled,
-+    title,
-     onClick,
-   }: {
-+    'aria-label'?: string;
-     children?: ReactNode;
-     disabled?: boolean;
-+    title?: string;
-     onClick?: () => void;
-   }) => (
--    <button disabled={disabled} type="button" onClick={onClick}>
-+    <button aria-label={ariaLabel} disabled={disabled} title={title} type="button" onClick={onClick}>
-       {children}
-     </button>
-   ),
 @@ -112,6 +121,7 @@ vi.mock('./ToolPermissionGroup', () => ({
  describe('ConnectorDetail', () => {
    beforeEach(() => {
