@@ -1,5 +1,5 @@
 diff --git a/src/store/chat/slices/agentRun/actions/__tests__/gateway.test.ts b/src/store/chat/slices/agentRun/actions/__tests__/gateway.test.ts
-index dc591ad7..7a5a64e8 100644
+index de58277f84..bddd6950a6 100644
 --- a/src/store/chat/slices/agentRun/actions/__tests__/gateway.test.ts
 +++ b/src/store/chat/slices/agentRun/actions/__tests__/gateway.test.ts
 @@ -27,7 +27,7 @@ vi.mock('@/services/message', () => ({
@@ -353,7 +353,7 @@ index dc591ad7..7a5a64e8 100644
      // When the desktop runs against 本机 (effective runtime mode 'local'), the
      // client must forward this machine's own gateway deviceId so the server can
      // preset activeDeviceId and inject lobe-local-system into the first LLM
-@@ -2258,16 +2039,18 @@ describe('GatewayActionImpl', () => {
+@@ -2261,16 +2042,18 @@ describe('GatewayActionImpl', () => {
        });
  
        internalDispatchTopic.mockClear();
@@ -381,7 +381,7 @@ index dc591ad7..7a5a64e8 100644
  
      // An ambiguous close (no terminal event, no auth failure) must NOT clear the
 diff --git a/src/store/chat/slices/agentRun/actions/__tests__/gatewayEventHandler.test.ts b/src/store/chat/slices/agentRun/actions/__tests__/gatewayEventHandler.test.ts
-index e89eacff..f0099dde 100644
+index e89eacff2a..f0099dde56 100644
 --- a/src/store/chat/slices/agentRun/actions/__tests__/gatewayEventHandler.test.ts
 +++ b/src/store/chat/slices/agentRun/actions/__tests__/gatewayEventHandler.test.ts
 @@ -78,7 +78,11 @@ function createMockStore() {
@@ -442,18 +442,44 @@ index e89eacff..f0099dde 100644
      // the shared run lifecycle, and gateway.ts onSessionComplete no longer
      // double-completes (it only completes as the terminal-missing fallback). The
 diff --git a/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts b/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
-index 45d8c2f6..c3fb8602 100644
+index 07dad443c1..7724445056 100644
 --- a/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
 +++ b/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
-@@ -7,7 +7,6 @@ import {
- import { isRemoteHeterogeneousType } from '@lobechat/heterogeneous-agents';
- import type {
-   ChatTopicMetadata,
--  ChatTopicStatus,
-   ConversationContext,
-   ExecAgentResult,
-   MessageMetadata,
-@@ -824,6 +823,13 @@ export class GatewayActionImpl {
+@@ -31,7 +31,7 @@ import { consumePendingTopicRepos, getPendingTopicRepos } from '@/store/chat/pen
+ import { topicSelectors } from '@/store/chat/selectors';
+ import type { ChatStore } from '@/store/chat/store';
+ import { messageMapKey } from '@/store/chat/utils/messageMapKey';
+-import { topicMapKey } from '@/store/chat/utils/topicMapKey';
++import { topicMapKey, type TopicMapScope } from '@/store/chat/utils/topicMapKey';
+ import { getFileStoreState } from '@/store/file/store';
+ import type { StoreSetter } from '@/store/types';
+ import { useUserStore } from '@/store/user';
+@@ -347,6 +347,24 @@ export class GatewayActionImpl {
+     client.connect();
+   };
+ 
++  /** Whether a different run currently owns the topic marker. */
++  #isSupersededRunningOperation = (params: {
++    agentId?: string;
++    groupId?: string;
++    operationId: string;
++    topicId: string;
++  }): boolean => {
++    const { agentId, groupId, operationId, topicId } = params;
++    const state = this.#get();
++    const key = topicMapKey({
++      agentId: agentId ?? state.activeAgentId,
++      groupId: groupId ?? state.activeGroupId,
++    });
++    const owner = state.topicDataMap[key]?.items?.find((t) => t.id === topicId)?.metadata
++      ?.runningOperation?.operationId;
++    return !!owner && owner !== operationId;
++  };
++
+   /**
+    * Disconnect from the Gateway for a specific operation.
+    */
+@@ -869,6 +887,13 @@ export class GatewayActionImpl {
        // the same WS that gatewayConnections is keyed on.
        gatewayOperationId: result.operationId,
        operationId: gatewayOpId,
@@ -467,7 +493,18 @@ index 45d8c2f6..c3fb8602 100644
        // Shared run lifecycle: drives the terminal completeRun / afterRunComplete
        // for the gateway transport (op completion + unread + queue drain +
        // notification) at `agent_runtime_end` / `error`.
-@@ -1022,6 +1028,8 @@ export class GatewayActionImpl {
+@@ -932,6 +957,10 @@ export class GatewayActionImpl {
+           this.clearLocalRunningOperation({
+             agentId: resolvedMessageContext.agentId,
+             groupId: resolvedMessageContext.groupId,
++            scope:
++              resolvedMessageContext.scope === 'group' || resolvedMessageContext.scope === 'group_agent'
++                ? resolvedMessageContext.scope
++                : undefined,
+             operationId: result.operationId,
+             status: viewing || !succeeded ? 'active' : undefined,
+             topicId: result.topicId,
+@@ -1067,6 +1096,8 @@ export class GatewayActionImpl {
        // the same WS that gatewayConnections is keyed on.
        gatewayOperationId: operationId,
        operationId: gatewayOpId,
@@ -476,7 +513,16 @@ index 45d8c2f6..c3fb8602 100644
        runLifecycle: buildRunLifecycle(this.#get, {
          context,
          parentMessageId: assistantMessageId,
-@@ -1158,6 +1166,50 @@ export class GatewayActionImpl {
+@@ -1157,6 +1188,8 @@ export class GatewayActionImpl {
+         this.clearLocalRunningOperation({
+           agentId: context.agentId,
+           operationId,
++          scope:
++            context.scope === 'group' || context.scope === 'group_agent' ? context.scope : undefined,
+           status: viewing || !succeeded ? 'active' : undefined,
+           topicId,
+         });
+@@ -1203,6 +1236,57 @@ export class GatewayActionImpl {
        });
    };
  
@@ -522,12 +568,19 @@ index 45d8c2f6..c3fb8602 100644
 +        status,
 +      },
 +    });
++    state.internal_pinTopicStatus?.({
++      agentId: context.agentId,
++      groupId: context.groupId,
++      scope,
++      status,
++      topicId,
++    });
 +  };
 +
    /**
     * Clear the client-store copy of `topic.metadata.runningOperation`.
     *
-@@ -1179,58 +1231,19 @@ export class GatewayActionImpl {
+@@ -1224,73 +1308,35 @@ export class GatewayActionImpl {
     * user switched agent/group, when the active-bucket `getTopicById` would miss the topic
     * and leave its marker stale.
     */
@@ -569,15 +622,17 @@ index 45d8c2f6..c3fb8602 100644
 -     * the metadata clear. Omit for the "clean completion, not watching" case —
 -     * that one is owned by `markTopicUnread` elsewhere.
 -     */
--    status?: ChatTopicStatus;
++    scope?: TopicMapScope;
+     status?: ChatTopicStatus;
      topicId: string;
    }): void => {
 -    const { topicId, operationId, agentId, groupId, status } = params;
-+    const { topicId, operationId, agentId, groupId } = params;
++    const { topicId, operationId, agentId, groupId, scope, status } = params;
      const state = this.#get();
      const key = topicMapKey({
        agentId: agentId ?? state.activeAgentId,
        groupId: groupId ?? state.activeGroupId,
++      scope,
      });
      const existingTopic = state.topicDataMap[key]?.items?.find((t) => t.id === topicId);
 -    // Same ownership guard the removed client-side `superseded` check used to
@@ -587,9 +642,16 @@ index 45d8c2f6..c3fb8602 100644
      if (existingTopic?.metadata?.runningOperation?.operationId !== operationId) return;
  
      state.internal_dispatchTopic({
-@@ -1240,15 +1253,6 @@ export class GatewayActionImpl {
+       agentId,
+       groupId,
++      scope,
+       id: topicId,
        type: 'updateTopic',
-       value: { metadata: { ...existingTopic.metadata, runningOperation: null } },
+-      value: { metadata: { ...existingTopic.metadata, runningOperation: null } },
++      value: {
++        metadata: { ...existingTopic.metadata, runningOperation: null },
++        ...(status ? { status } : {}),
++      },
      });
 -
 -    // Routed through `internal_pinTopicStatus`, not a bare dispatch: it also
@@ -597,14 +659,11 @@ index 45d8c2f6..c3fb8602 100644
 -    // behind this (e.g. within the 15s window of the 'running' pin set at
 -    // run start) reconciles to this status instead of reapplying the stale
 -    // 'running' one and stranding the spinner again.
--    if (status) {
--      state.internal_pinTopicStatus?.({ agentId, groupId, status, topicId });
--    }
-   };
- 
-   private internal_cleanupGatewayConnection = (operationId: string): void => {
+     if (status) {
+       state.internal_pinTopicStatus?.({ agentId, groupId, status, topicId });
+     }
 diff --git a/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts b/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts
-index e5a67ff6..071d6d41 100644
+index e5a67ff6b5..071d6d4195 100644
 --- a/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts
 +++ b/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts
 @@ -387,6 +387,12 @@ export const createGatewayEventHandler = (
