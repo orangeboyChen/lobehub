@@ -17,7 +17,6 @@ The upstream image needs a small patch set for iOS viewport behavior, input zoom
   - [#18239](https://github.com/lobehub/lobehub/pull/18239): show agents without sessions in the SPA sidebar
   - [#18449](https://github.com/lobehub/lobehub/pull/18449): use group avatars for supervisor surfaces
   - [#18266](https://github.com/lobehub/lobehub/pull/18266): preserve the original group agent when retrying a message
-  - [#18666](https://github.com/lobehub/lobehub/pull/18666): settle Gateway topic status atomically when server runtimes finish
   - [#18678](https://github.com/lobehub/lobehub/pull/18678): synchronize desktop topic rows when Gateway runtime terminal events arrive
 
 ## Trigger
