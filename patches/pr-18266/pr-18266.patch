@@ -2,30 +2,63 @@ diff --git a/apps/server/src/modules/AgentRuntime/executorHelpers.ts b/apps/serv
 index ede9ed8006..454195b5d0 100644
 --- a/apps/server/src/modules/AgentRuntime/executorHelpers.ts
 +++ b/apps/server/src/modules/AgentRuntime/executorHelpers.ts
-@@ -351,2 +351,3 @@ export const buildServerAgentMemberRunner = (
+@@ -348,8 +348,9 @@ export const buildServerAgentMemberRunner = (
+ 
+   return {
+     run: async ({ members, mode, onComplete, disableTools, timeout }) => {
 -      const agentMap = (state.metadata?.agentGroup as { agentMap?: Record<string, { name: string }> }
 -        | undefined)?.agentMap;
 +      const agentMap = (
 +        state.metadata?.agentGroup as { agentMap?: Record<string, { name: string }> } | undefined
 +      )?.agentMap;
+       const resolvedMembers = members.map((member) => ({
+         ...member,
+         agentId: resolveGroupMemberId(member.agentId, agentMap),
 diff --git a/apps/server/src/routers/lambda/aiAgent.ts b/apps/server/src/routers/lambda/aiAgent.ts
 index f1f31cd748..21fd934896 100644
 --- a/apps/server/src/routers/lambda/aiAgent.ts
 +++ b/apps/server/src/routers/lambda/aiAgent.ts
-@@ -946,0 +947,2 @@ const ExecAgentSchema = z
+@@ -944,6 +944,8 @@ const ExecAgentSchema = z
+     parentMessageId: z.string().optional(),
+     /** Existing gateway operation this fresh turn atomically supersedes. */
+     replacesOperationId: z.string().optional(),
 +    /** Existing assistant row to overwrite while preserving its tree position. */
 +    replaceAssistantMessageId: z.string().optional(),
-@@ -2052,0 +2055 @@ export const aiAgentRouter = router({
+     /** The user input/prompt */
+     prompt: z.string(),
+     /**
+@@ -2050,6 +2052,7 @@ export const aiAgentRouter = router({
+       fileIds,
+       mentionedAgents,
+       parentMessageId,
 +      replaceAssistantMessageId,
-@@ -2076,0 +2080 @@ export const aiAgentRouter = router({
+       resumeApproval,
+       resumeApprovals,
+       resumeToolResult,
+@@ -2074,6 +2077,7 @@ export const aiAgentRouter = router({
+         messageIds: [
+           ...existingMessageIds,
+           parentMessageId,
 +          replaceAssistantMessageId,
-@@ -2244,0 +2249 @@ export const aiAgentRouter = router({
+           // A new subtopic branches off an existing message — authorize that
+           // anchor too, or a caller could fork a thread off someone else's turn.
+           appContext?.newThread?.sourceMessageId,
+@@ -2242,6 +2246,7 @@ export const aiAgentRouter = router({
+         mentionedAgents,
+         parentMessageId,
+         prompt,
 +        replaceAssistantMessageId,
+         // When parentMessageId is provided, this is a regeneration/continue or a
+         // human-approval resume — either way, skip user message creation.
+         resume: !!parentMessageId,
 diff --git a/apps/server/src/services/aiAgent/__tests__/execAgent.resume.test.ts b/apps/server/src/services/aiAgent/__tests__/execAgent.resume.test.ts
 index 75823a235b..52de514a69 100644
 --- a/apps/server/src/services/aiAgent/__tests__/execAgent.resume.test.ts
 +++ b/apps/server/src/services/aiAgent/__tests__/execAgent.resume.test.ts
-@@ -6,8 +6,15 @@ import { AiAgentService } from '../index';
+@@ -3,14 +3,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
+ 
+ import { AiAgentService } from '../index';
+ 
 -const { mockCreateOperation, mockFindById, mockMessageCreate, mockMessageQuery, mockQueryTree } =
 -  vi.hoisted(() => ({
 -    mockCreateOperation: vi.fn(),
@@ -49,10 +82,22 @@ index 75823a235b..52de514a69 100644
 +  mockMessageUpdate: vi.fn(),
 +  mockQueryTree: vi.fn(),
 +}));
-@@ -29 +36 @@ vi.mock('@/database/models/message', () => ({
+ 
+ vi.mock('@/libs/trusted-client', () => ({
+   generateTrustedClientToken: vi.fn().mockReturnValue(undefined),
+@@ -26,7 +33,7 @@ vi.mock('@/database/models/message', () => ({
+     findById: mockFindById,
+     query: mockMessageQuery,
+     queryTopicMessageTree: mockQueryTree,
 -    update: vi.fn().mockResolvedValue({}),
 +    update: mockMessageUpdate,
-@@ -38,0 +46,7 @@ vi.mock('@/database/models/agent', () => ({
+   })),
+ }));
+ 
+@@ -36,6 +43,13 @@ vi.mock('@/database/models/agent', () => ({
+   })),
+ }));
+ 
 +vi.mock('@/database/models/chatGroup', () => ({
 +  ChatGroupModel: vi.fn().mockImplementation(() => ({
 +    findById: vi.fn().mockResolvedValue(undefined),
@@ -60,9 +105,21 @@ index 75823a235b..52de514a69 100644
 +  })),
 +}));
 +
-@@ -166,0 +181 @@ describe('AiAgentService.execAgent - resume mode', () => {
+ vi.mock('@/server/services/agent', () => ({
+   AgentService: vi.fn().mockImplementation(() => ({
+     getAgentConfig: vi.fn().mockResolvedValue({
+@@ -164,6 +178,7 @@ describe('AiAgentService.execAgent - resume mode', () => {
+     ]);
+ 
+     mockMessageCreate.mockResolvedValue({ id: 'assistant-msg-new' });
 +    mockMessageUpdate.mockResolvedValue({ success: true });
-@@ -226,0 +242,134 @@ describe('AiAgentService.execAgent - resume mode', () => {
+     mockQueryTree.mockResolvedValue([]);
+ 
+     service = new AiAgentService({} as any, 'user-1');
+@@ -224,6 +239,140 @@ describe('AiAgentService.execAgent - resume mode', () => {
+     );
+   });
+ 
 +  it.each([null, 'thread-1'])(
 +    'reuses an existing member assistant in thread %s without removing its council siblings',
 +    async (threadId) => {
@@ -197,19 +254,43 @@ index 75823a235b..52de514a69 100644
 +    ).rejects.toThrow('replaceAssistantMessageId does not belong to the requested group');
 +  });
 +
+   it('should reject missing appContext in resume mode', async () => {
+     await expect(
+       service.execAgent({
 diff --git a/apps/server/src/services/aiAgent/index.ts b/apps/server/src/services/aiAgent/index.ts
-index 333a137654..368be0f182 100644
+index bb74f6f219..12c79ecbbb 100644
 --- a/apps/server/src/services/aiAgent/index.ts
 +++ b/apps/server/src/services/aiAgent/index.ts
-@@ -1586,0 +1587 @@ export class AiAgentService {
+@@ -1584,6 +1584,7 @@ export class AiAgentService {
+       provider: providerOverride,
+       stream,
+       title,
 +      replaceAssistantMessageId,
-@@ -1939,0 +1941 @@ export class AiAgentService {
+       trigger,
+       cronJobId,
+       taskId,
+@@ -1937,6 +1938,7 @@ export class AiAgentService {
+     if (appContext?.isSubAgent) {
+       activePluginIds = activePluginIds.filter((id) => id !== LobeAgentIdentifier);
+     }
 +    let replacementAssistantMessage: Awaited<ReturnType<MessageModel['findById']>>;
-@@ -1955 +1957,2 @@ export class AiAgentService {
+ 
+     agentConfig.plugins = activePluginIds;
+ 
+@@ -1966,7 +1968,8 @@ export class AiAgentService {
+         ? [resumeApproval]
+         : [];
+ 
 -    const effectiveResume = resume || approvalDecisions.length > 0 || !!resumeToolResult;
 +    const effectiveResume =
 +      resume || approvalDecisions.length > 0 || !!resumeToolResult || !!replaceAssistantMessageId;
-@@ -1997,0 +2001,27 @@ export class AiAgentService {
+ 
+     // Both resume and suppressUserMessage run the turn off existing history
+     // instead of appending a new user message — share the message-construction
+@@ -1995,6 +1998,33 @@ export class AiAgentService {
+ 
+       if (resumeParentMessage.topicId !== appContext.topicId) {
+         throw new Error('appContext.topicId does not match parent message');
 +    if (replaceAssistantMessageId) {
 +      if (!parentMessageId || !appContext?.topicId) {
 +        throw new Error(
@@ -237,7 +318,13 @@ index 333a137654..368be0f182 100644
 +      }
 +    }
 +
-@@ -3697,0 +3728,12 @@ export class AiAgentService {
+       }
+ 
+       if (
+@@ -3695,6 +3725,18 @@ export class AiAgentService {
+       // grouped messages and `query` returns a synthetic `compressedGroup` node
+       // that carries neither `parentId` nor (for compaction) the group's
+       // `parentMessageId`, so ancestry can't be walked from `query` output alone.
 +      if (historyMessagesCache && replaceAssistantMessageId && appContext?.topicId) {
 +        const tree = await this.messageModel.queryTopicMessageTree({
 +          threadId: appContext.threadId,
@@ -250,3 +337,6 @@ index 333a137654..368be0f182 100644
 +        );
 +      }
 +
+       // We load the raw message tree (including hidden/compacted messages) and
+       // compute the anchor's descendants from it, then drop both regular
+       // descendant messages and any group node whose members fall in that branch.
