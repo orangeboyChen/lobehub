@@ -1,11 +1,3 @@
-diff --git a/apps/server/src/routers/lambda/recent.ts b/apps/server/src/routers/lambda/recent.ts
-index 7042af85c5..aa7da30d80 100644
---- a/apps/server/src/routers/lambda/recent.ts
-+++ b/apps/server/src/routers/lambda/recent.ts
-@@ -13,0 +14 @@ export interface RecentItem {
-+  groupId?: string | null;
-@@ -88,0 +90 @@ export const recentRouter = router({
-+          groupId: item.groupId,
 diff --git a/packages/database/src/models/__tests__/recent.test.ts b/packages/database/src/models/__tests__/recent.test.ts
 index c5274ca041..a149e4c404 100644
 --- a/packages/database/src/models/__tests__/recent.test.ts

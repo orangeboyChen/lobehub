@@ -355,7 +355,7 @@ index df33bdcb2f178ba3dd6a754079055107bc6a0db1..282d74660b19103a4c3793369dbc0ae1
          // safely re-enter without creating a second assistant turn.
          continuationAssistantId ?? clientIds?.assistantMessageId,
 -      ));
-+      )));
++      ));
 +    if (replacementAssistantMessage) {
 +      await this.messageModel.update(replacementAssistantMessage.id, {
 +        content: LOADING_FLAT,
