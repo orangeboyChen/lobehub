@@ -2,7 +2,6 @@ patches/bug/ios-viewport.patch
 patches/pr-18239/pr-18239.patch
 patches/pr-18449/pr-18449.patch
 patches/pr-18266/pr-18266.patch
-patches/pr-18666/pr-18666.patch
 patches/pr-18678/pr-18678.patch
 patches/bug/lobehub-skill.patch
 patches/bug/docker-canvas-native-packages.patch

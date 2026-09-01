@@ -53,17 +53,13 @@ jobs:
             git apply --unidiff-zero "$patch"
           done
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Build Docker image without pushing
         working-directory: source
         run: |
           set -euo pipefail
 
-          docker buildx build \
+          docker build \
             --platform linux/amd64 \
             --build-arg SHA="$(git rev-parse --short HEAD)" \
             --tag lobehub:patch-validation \
-            --load \
             .
