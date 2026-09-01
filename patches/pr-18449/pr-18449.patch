@@ -1,30 +1,99 @@
+diff --git a/apps/server/src/routers/lambda/recent.ts b/apps/server/src/routers/lambda/recent.ts
+index 67255779cb..5ca0a5ec7e 100644
+--- a/apps/server/src/routers/lambda/recent.ts
++++ b/apps/server/src/routers/lambda/recent.ts
+@@ -68,6 +68,7 @@ export const recentRouter = router({
+         return {
+           agentId: item.routeId,
+           description: item.description,
++          groupId: item.groupId,
+           icon: item.type,
+           id: item.id,
+           lastAssistantMessage: item.lastAssistantMessage,
 diff --git a/packages/database/src/models/__tests__/recent.test.ts b/packages/database/src/models/__tests__/recent.test.ts
 index c5274ca041..a149e4c404 100644
 --- a/packages/database/src/models/__tests__/recent.test.ts
 +++ b/packages/database/src/models/__tests__/recent.test.ts
-@@ -103,0 +104 @@ describe('RecentModel', () => {
+@@ -101,6 +101,7 @@ describe('RecentModel', () => {
+         const result = await recentModel.queryRecent();
+         expect(result.map((r) => r.id)).toEqual(['topic-group', 'topic-inbox']);
+         expect(result[0]).toMatchObject({
 +          groupId: 'group-1',
+           id: 'topic-group',
+           type: 'topic',
+           routeId: null,
 diff --git a/packages/database/src/models/recent.ts b/packages/database/src/models/recent.ts
 index 6823c1db1d..b8e05ff566 100644
 --- a/packages/database/src/models/recent.ts
 +++ b/packages/database/src/models/recent.ts
-@@ -11,0 +12 @@ export interface RecentDbItem {
+@@ -9,6 +9,7 @@ import { buildWorkspaceWhere } from '../utils/workspace';
+ 
+ export interface RecentDbItem {
+   description?: string | null;
 +  groupId: string | null;
-@@ -86,0 +88 @@ export class RecentModel {
+   id: string;
+   lastAssistantMessage?: string | null;
+   metadata?: any;
+@@ -84,6 +85,7 @@ export class RecentModel {
+         description: withTopicPreview
+           ? topics.description
+           : sql<string | null>`NULL`.as('description'),
 +        groupId: sql<string | null>`${topics.groupId}`.as('group_id'),
-@@ -117,0 +120 @@ export class RecentModel {
+         id: topics.id,
+         metadata: sql<any>`${topics.metadata}`.as('metadata'),
+         routeGroupId: sql<string | null>`${topics.groupId}`.as('route_group_id'),
+@@ -115,6 +117,7 @@ export class RecentModel {
+     const documentArm = this.db
+       .select({
+         description: sql<string | null>`NULL`.as('description'),
 +        groupId: sql<string | null>`NULL`.as('group_id'),
-@@ -146,0 +150 @@ export class RecentModel {
+         id: documents.id,
+         metadata: sql<any>`NULL`.as('metadata'),
+         routeGroupId: sql<string | null>`NULL`.as('route_group_id'),
+@@ -144,6 +147,7 @@ export class RecentModel {
+     const taskArm = this.db
+       .select({
+         description: sql<string | null>`NULL`.as('description'),
 +        groupId: sql<string | null>`NULL`.as('group_id'),
-@@ -182,0 +187 @@ export class RecentModel {
+         id: tasks.id,
+         metadata: sql<any>`NULL`.as('metadata'),
+         routeGroupId: sql<string | null>`NULL`.as('route_group_id'),
+@@ -180,6 +184,7 @@ export class RecentModel {
+       const preview = previewByTopicId.get(row.id) ?? null;
+       return {
+         description: row.description,
 +        groupId: row.groupId,
+         id: row.id,
+         lastAssistantMessage:
+           preview && preview.length > LAST_MESSAGE_PREVIEW_LENGTH
+diff --git a/packages/types/src/recent.ts b/packages/types/src/recent.ts
+index 30cc6fb456..86091a61ff 100644
+--- a/packages/types/src/recent.ts
++++ b/packages/types/src/recent.ts
+@@ -4,6 +4,7 @@ import type { ChatTopicMetadata } from './topic';
+ export interface RecentItem {
+   agentId?: string | null;
+   description?: string | null;
++  groupId?: string | null;
+   icon: string;
+   id: string;
+   lastAssistantMessage?: string | null;
 diff --git a/src/features/AgentTasks/shared/useAgentDisplayMeta.ts b/src/features/AgentTasks/shared/useAgentDisplayMeta.ts
 index 918829beec..5f1d02a96a 100644
 --- a/src/features/AgentTasks/shared/useAgentDisplayMeta.ts
 +++ b/src/features/AgentTasks/shared/useAgentDisplayMeta.ts
-@@ -8,0 +9 @@ import { agentSelectors, builtinAgentSelectors } from '@/store/agent/selectors';
+@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
+ import { DEFAULT_INBOX_AVATAR } from '@/const/meta';
+ import { useAgentStore } from '@/store/agent';
+ import { agentSelectors, builtinAgentSelectors } from '@/store/agent/selectors';
 +import { useAgentGroupStore } from '@/store/agentGroup';
-@@ -37,0 +39,7 @@ export const useAgentDisplayMeta = (
+ import { useHomeStore } from '@/store/home';
+ import { homeAgentListSelectors } from '@/store/home/selectors';
+ 
+@@ -35,6 +36,13 @@ export const useAgentDisplayMeta = (
+   const meta = useAgentStore((s) =>
+     agentId ? agentSelectors.getAgentMetaById(agentId)(s) : undefined,
+   );
 +  const groupBySupervisorId = useAgentGroupStore((s) =>
 +    agentId
 +      ? Object.values(s.groupMap).find(
@@ -32,36 +101,63 @@ index 918829beec..5f1d02a96a 100644
 +        )
 +      : undefined,
 +  );
-@@ -45,0 +54 @@ export const useAgentDisplayMeta = (
+   const sidebarAgent = useHomeStore(homeAgentListSelectors.getAgentById(agentId ?? ''));
+ 
+   if (!agentId) return undefined;
+@@ -43,6 +51,7 @@ export const useAgentDisplayMeta = (
+   const sidebarAvatar = typeof sidebarAgent?.avatar === 'string' ? sidebarAgent.avatar : undefined;
+   const hasResolvedMeta =
+     isInbox ||
 +    !!groupBySupervisorId?.avatar ||
-@@ -54 +63,5 @@ export const useAgentDisplayMeta = (
+     !!meta?.avatar ||
+     !!meta?.backgroundColor ||
+     !!agentDisplayName(meta) ||
+@@ -51,10 +60,18 @@ export const useAgentDisplayMeta = (
+   if (!fallbackToDefault && !hasResolvedMeta) return undefined;
+ 
+   return {
 -    avatar: meta?.avatar || sidebarAvatar || (isInbox ? DEFAULT_INBOX_AVATAR : DEFAULT_AVATAR),
 +    avatar:
 +      groupBySupervisorId?.avatar ||
 +      meta?.avatar ||
 +      sidebarAvatar ||
 +      (isInbox ? DEFAULT_INBOX_AVATAR : DEFAULT_AVATAR),
-@@ -56 +69,4 @@ export const useAgentDisplayMeta = (
+     backgroundColor:
 -      meta?.backgroundColor || sidebarAgent?.backgroundColor || cssVar.colorBgContainer,
 +      groupBySupervisorId?.backgroundColor ||
 +      meta?.backgroundColor ||
 +      sidebarAgent?.backgroundColor ||
 +      cssVar.colorBgContainer,
-@@ -57,0 +74 @@ export const useAgentDisplayMeta = (
+     title:
 +      groupBySupervisorId?.title ||
+       agentDisplayName(meta) ||
+       agentDisplayName(sidebarAgent) ||
+       (isInbox ? t('inbox.title', { ns: 'chat' }) : t('defaultSession', { ns: 'common' })),
 diff --git a/src/features/Home/HomeModeContent.tsx b/src/features/Home/HomeModeContent.tsx
-index 0ab7d986bf..0439002d42 100644
+index 47d22559fa..2104cf624a 100644
 --- a/src/features/Home/HomeModeContent.tsx
 +++ b/src/features/Home/HomeModeContent.tsx
-@@ -13,0 +14,2 @@ import AsyncError from '@/components/AsyncError';
+@@ -11,6 +11,8 @@ import { useTranslation } from 'react-i18next';
+ 
+ import { useWorkspaceMemberProfiles } from '@/business/client/hooks/useWorkspaceMemberProfiles';
+ import AsyncError from '@/components/AsyncError';
 +import { type SidebarAgentItem } from '@/database/repositories/home';
 +import AgentGroupAvatar from '@/features/AgentGroupAvatar';
-@@ -25,0 +28 @@ import WorkspaceLink from '@/features/Workspace/WorkspaceLink';
+ import AssigneeAvatar from '@/features/AgentTasks/features/AssigneeAvatar';
+ import TaskStatusIcon from '@/features/AgentTasks/features/TaskStatusIcon';
+ import TaskTriggerTag from '@/features/AgentTasks/features/TaskTriggerTag';
+@@ -23,6 +25,7 @@ import { splitBriefs } from '@/features/HomeInbox/splitBriefs';
+ import { useHomeInboxTopics } from '@/features/HomeInbox/useHomeInboxTopics';
+ import Recommendations from '@/features/Recommendations';
+ import WorkspaceLink from '@/features/Workspace/WorkspaceLink';
 +import { useFetchAgentList } from '@/hooks/useFetchAgentList';
-@@ -34,0 +38,2 @@ import { systemStatusSelectors } from '@/store/global/selectors';
-+import { useHomeStore } from '@/store/home';
-+import { homeAgentListSelectors } from '@/store/home/slices/agentList/selectors';
-@@ -142,0 +148,11 @@ export const resolveRecentsBadgeCount = (fetched: number, shown: number): number
+ import { useClientDataSWR } from '@/libs/swr';
+ import { recentKeys } from '@/libs/swr/keys';
+ import { useCacheScope } from '@/libs/swr/useCacheScope';
+@@ -139,6 +142,17 @@ const FLEX_MIN_WIDTH_0 = { minWidth: 0 };
+ export const resolveRecentsBadgeCount = (fetched: number, shown: number): number | undefined =>
+   Math.min(fetched, shown) || undefined;
+ 
 +export const resolveRecentGroupAvatar = (avatar: SidebarAgentItem['avatar']) => {
 +  const customAvatar = typeof avatar === 'string' ? avatar : undefined;
 +  const memberAvatars = Array.isArray(avatar) ? avatar : [];
@@ -73,7 +169,13 @@ index 0ab7d986bf..0439002d42 100644
 +  };
 +};
 +
-@@ -202,0 +219,8 @@ const RecentTopicRow = memo<{ showAuthor?: boolean; topic: RecentItem }>(
+ /**
+  * The one line a task row shows under its name. `instruction` is what the task
+  * was actually asked to do, so it is the line worth reading; `description` is
+@@ -199,6 +213,14 @@ const Row = memo<RowProps>(({ description, href, icon, title, titleExtra, traili
+ const RecentTopicRow = memo<{ showAuthor?: boolean; topic: RecentItem }>(
+   ({ showAuthor, topic }) => {
+     const agent = useAgentDisplayMeta(topic.agentId);
 +    const group = useHomeStore(homeAgentListSelectors.getAgentById(topic.groupId ?? ''));
 +    const {
 +      customAvatar: groupAvatar,
@@ -82,7 +184,13 @@ index 0ab7d986bf..0439002d42 100644
 +    } = resolveRecentGroupAvatar(group?.avatar);
 +    const avatar = agent?.avatar;
 +    const backgroundColor = agent?.backgroundColor;
-@@ -217 +241,8 @@ const RecentTopicRow = memo<{ showAuthor?: boolean; topic: RecentItem }>(
+     const raw = topic.description?.trim() || topic.lastAssistantMessage?.trim();
+     // The snippet is raw markdown (a user note or the last assistant reply);
+     // rendered as one plain line, its syntax markers are just noise.
+@@ -213,10 +235,17 @@ const RecentTopicRow = memo<{ showAuthor?: boolean; topic: RecentItem }>(
+         href={topic.routePath}
+         title={topic.title}
+         icon={
 -          agent ? (
 +          hasGroupAvatar ? (
 +            <AgentGroupAvatar
@@ -92,13 +200,22 @@ index 0ab7d986bf..0439002d42 100644
 +              size={22}
 +            />
 +          ) : avatar ? (
-@@ -219,2 +250,2 @@ const RecentTopicRow = memo<{ showAuthor?: boolean; topic: RecentItem }>(
+             <Avatar
 -              avatar={agent.avatar}
 -              background={agent.backgroundColor}
 +              avatar={avatar}
 +              background={backgroundColor}
-@@ -478,0 +510 @@ const HomeModeContent = memo<HomeModeContentProps>(({ inlineRail, mode, onSugges
+               className={styles.topicAvatar}
+               shape={'circle'}
+               size={22}
+@@ -475,6 +504,7 @@ const HomeModeContent = memo<HomeModeContentProps>(({ inlineRail, mode, onSuggestionSelect }) => {
+   const tasksHidden = hiddenWidgets.includes('tasks');
+   const scheduledTasksHidden = isHomeWidgetHidden('scheduledTasks', hiddenWidgets);
+   const cacheScope = useCacheScope();
 +  useFetchAgentList();
+ 
+   // One page-level mine/team scope, shared by the inbox sections and Recent
+   // topics. In personal mode the member map is empty, `isTeam` stays false and
 diff --git a/src/features/Home/__tests__/recentGroupAvatar.test.ts b/src/features/Home/__tests__/recentGroupAvatar.test.ts
 new file mode 100644
 index 0000000000..9971d9123c
@@ -137,19 +254,31 @@ index 0000000000..9971d9123c
 +  });
 +});
 diff --git a/src/features/Portal/GroupThread/Header/index.tsx b/src/features/Portal/GroupThread/Header/index.tsx
-index 2bfefbb0f7..c4f8c368fb 100644
+index cfaba84558..dfcd53837b 100644
 --- a/src/features/Portal/GroupThread/Header/index.tsx
 +++ b/src/features/Portal/GroupThread/Header/index.tsx
-@@ -21,0 +22,3 @@ const Header = memo(() => {
+@@ -20,9 +20,13 @@ const Header = memo(() => {
+     clearPortalStack();
+   };
+   const activeThreadAgentId = useAgentGroupStore((s) => s.activeThreadAgentId);
 +  const groupMeta = useAgentGroupStore((s) =>
 +    s.activeGroupId ? s.groupMap[s.activeGroupId] : undefined,
 +  );
-@@ -24,0 +28 @@ const Header = memo(() => {
+ 
+   const agents = useSessionStore(sessionSelectors.currentGroupAgents);
+   const currentAgent = agents?.find((agent) => agent.id === activeThreadAgentId);
 +  const isSupervisor = groupMeta?.supervisorAgentId === currentAgent?.id;
-@@ -34,2 +37,0 @@ const Header = memo(() => {
+ 
+   return (
+     <NavHeader
+@@ -32,10 +36,18 @@ const Header = memo(() => {
+       left={
+         <Flexbox horizontal align={'center'} gap={8}>
+           <Avatar
 -            avatar={currentAgent?.avatar || DEFAULT_AVATAR}
 -            background={currentAgent?.backgroundColor ?? undefined}
-@@ -37,0 +40,10 @@ const Header = memo(() => {
+             shape={'square'}
+             size={20}
 +            avatar={
 +              isSupervisor
 +                ? groupMeta?.avatar || DEFAULT_AVATAR
@@ -160,26 +289,53 @@ index 2bfefbb0f7..c4f8c368fb 100644
 +                ? (groupMeta?.backgroundColor ?? undefined)
 +                : (currentAgent?.backgroundColor ?? undefined)
 +            }
+           />
+           <div style={{ fontWeight: 600 }}>
+             {agentDisplayName(currentAgent, t('defaultSession', { ns: 'common' }))}
 diff --git a/src/routes/(main)/group/profile/features/Header/index.tsx b/src/routes/(main)/group/profile/features/Header/index.tsx
 index 98238da485..1be873456a 100644
 --- a/src/routes/(main)/group/profile/features/Header/index.tsx
 +++ b/src/routes/(main)/group/profile/features/Header/index.tsx
-@@ -58,0 +59 @@ const Header = memo(() => {
+@@ -56,6 +56,7 @@ const Header = memo(() => {
+ 
+   const { gid } = useParams<{ gid: string }>();
+   const members = useAgentGroupStore((s) => agentGroupSelectors.getGroupAgents(gid ?? '')(s));
 +  const groupMeta = useAgentGroupStore((s) => agentGroupSelectors.getGroupMeta(gid ?? '')(s));
-@@ -84,2 +85,2 @@ const Header = memo(() => {
+   const activeGroupId = useAgentGroupStore(agentGroupSelectors.activeGroupId);
+   const addAgentsToGroup = useAgentGroupStore((s) => s.addAgentsToGroup);
+   const createAgentInGroup = useAgentGroupStore((s) => s.createAgentInGroup);
+@@ -81,8 +82,8 @@ const Header = memo(() => {
+     // Add agent tabs
+     for (const agent of members) {
+       items.push({
 -        avatar: agent.isSupervisor ? undefined : agent.avatar || undefined,
 -        icon: agent.isSupervisor ? <Crown size={16} /> : undefined,
 +        avatar: agent.isSupervisor ? groupMeta.avatar : agent.avatar || undefined,
 +        icon: agent.isSupervisor && !groupMeta.avatar ? <Crown size={16} /> : undefined,
-@@ -93 +94 @@ const Header = memo(() => {
+         id: agent.id,
+         isExternal: !agent.isSupervisor && !agent.virtual,
+         title: agent.isSupervisor ? t('group.profile.supervisor') : agent.title || 'Untitled Agent',
+@@ -90,7 +91,7 @@ const Header = memo(() => {
+     }
+ 
+     return items;
 -  }, [members, t]);
 +  }, [groupMeta.avatar, members, t]);
+ 
+   const handleAddMembers = async (agentIds: string[]) => {
+     if (!activeGroupId) return;
 diff --git a/src/store/session/slices/session/action.ts b/src/store/session/slices/session/action.ts
-index f899867db8..76ff21c920 100644
+index 75a1bc51f1..6ae90b531e 100644
 --- a/src/store/session/slices/session/action.ts
 +++ b/src/store/session/slices/session/action.ts
-@@ -231,2 +231,2 @@ export class SessionActionImpl {
+@@ -228,8 +228,8 @@ export class SessionActionImpl {
+             const chatGroupStore = getChatGroupStoreState();
+             const chatGroups = groupSessions.map((session) => ({
+               accessedAt: session.updatedAt,
 -              avatar: null,
 -              backgroundColor: null,
 +              avatar: session.meta?.avatar ?? null,
 +              backgroundColor: session.meta?.backgroundColor ?? null,
+               clientId: null,
+               config: null,
+               content: null,
