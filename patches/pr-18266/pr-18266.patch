@@ -258,39 +258,21 @@ index 75823a235b..52de514a69 100644
      await expect(
        service.execAgent({
 diff --git a/apps/server/src/services/aiAgent/index.ts b/apps/server/src/services/aiAgent/index.ts
-index bb74f6f219..12c79ecbbb 100644
+index 9319077e..bd3801c5 100644
 --- a/apps/server/src/services/aiAgent/index.ts
 +++ b/apps/server/src/services/aiAgent/index.ts
-@@ -1584,6 +1584,7 @@ export class AiAgentService {
-       provider: providerOverride,
-       stream,
-       title,
-+      replaceAssistantMessageId,
-       trigger,
-       cronJobId,
-       taskId,
-@@ -1937,6 +1938,7 @@ export class AiAgentService {
-     if (appContext?.isSubAgent) {
-       activePluginIds = activePluginIds.filter((id) => id !== LobeAgentIdentifier);
-     }
+@@ -752,6 +752,7 @@ export class AiAgentService {
+     );
+ 
+     let resumeParentMessage: Awaited<ReturnType<MessageModel['findById']>>;
 +    let replacementAssistantMessage: Awaited<ReturnType<MessageModel['findById']>>;
  
-     agentConfig.plugins = activePluginIds;
+     // `resumeApproval` implies the same "load parent message + skip user
+     // message creation" semantics as `resume`. Callers that go through the
+@@ -810,6 +811,33 @@ export class AiAgentService {
+       }
+     }
  
-@@ -1966,7 +1968,8 @@ export class AiAgentService {
-         ? [resumeApproval]
-         : [];
- 
--    const effectiveResume = resume || approvalDecisions.length > 0 || !!resumeToolResult;
-+    const effectiveResume =
-+      resume || approvalDecisions.length > 0 || !!resumeToolResult || !!replaceAssistantMessageId;
- 
-     // Both resume and suppressUserMessage run the turn off existing history
-     // instead of appending a new user message — share the message-construction
-@@ -1995,6 +1998,33 @@ export class AiAgentService {
- 
-       if (resumeParentMessage.topicId !== appContext.topicId) {
-         throw new Error('appContext.topicId does not match parent message');
 +    if (replaceAssistantMessageId) {
 +      if (!parentMessageId || !appContext?.topicId) {
 +        throw new Error(
@@ -318,25 +300,125 @@ index bb74f6f219..12c79ecbbb 100644
 +      }
 +    }
 +
-       }
+     // Stages 2.6–2.7 — claim the human decision(s) before anything below reads
+     // message history (see `pipeline/approvalResume`).
+     const {
+@@ -904,6 +932,7 @@ export class AiAgentService {
+         parentMessageId,
+         prompt,
+         providerOverride,
++        replaceAssistantMessageId: replacementAssistantMessage?.id,
+         requestedDeviceId,
+         resolvedAgentId,
+         resume,
+@@ -1027,6 +1056,7 @@ export class AiAgentService {
+         effectiveResume,
+         existingMessageIds,
+         parentMessageId,
++        replaceAssistantMessageId,
+         resumeParentMessage,
+         selfMessageIds,
+       },
+diff --git a/apps/server/src/services/aiAgent/pipeline/operationPrep.ts b/apps/server/src/services/aiAgent/pipeline/operationPrep.ts
+index 000e51d1..27c85ca3 100644
+--- a/apps/server/src/services/aiAgent/pipeline/operationPrep.ts
++++ b/apps/server/src/services/aiAgent/pipeline/operationPrep.ts
+@@ -40,6 +40,7 @@ export interface HistoryLoaderInput {
+   effectiveResume: boolean;
+   existingMessageIds: string[];
+   parentMessageId?: string;
++  replaceAssistantMessageId?: string;
+   resumeParentMessage: Awaited<ReturnType<MessageModel['findById']>>;
+   selfMessageIds: Set<string>;
+ }
+@@ -58,6 +59,7 @@ export const createHistoryMessagesLoader = (
+     effectiveResume,
+     existingMessageIds,
+     parentMessageId,
++    replaceAssistantMessageId,
+     resumeParentMessage,
+     selfMessageIds,
+   } = input;
+@@ -123,15 +125,19 @@ export const createHistoryMessagesLoader = (
+     if (
+       historyMessagesCache &&
+       effectiveResume &&
+-      parentMessageId &&
+-      resumeParentMessage?.role === 'user' &&
++      (replaceAssistantMessageId ||
++        (parentMessageId && resumeParentMessage?.role === 'user')) &&
+       appContext?.topicId
+     ) {
+       const tree = await deps.messageModel.queryTopicMessageTree({
+         threadId: appContext.threadId,
+         topicId: appContext.topicId,
+       });
+-      historyMessagesCache = pruneRegeneratedBranch(historyMessagesCache, tree, parentMessageId);
++      historyMessagesCache = pruneRegeneratedBranch(
++        historyMessagesCache,
++        tree,
++        replaceAssistantMessageId ?? parentMessageId!,
++      );
+     }
  
-       if (
-@@ -3695,6 +3725,18 @@ export class AiAgentService {
-       // grouped messages and `query` returns a synthetic `compressedGroup` node
-       // that carries neither `parentId` nor (for compaction) the group's
-       // `parentMessageId`, so ancestry can't be walked from `query` output alone.
-+      if (historyMessagesCache && replaceAssistantMessageId && appContext?.topicId) {
-+        const tree = await this.messageModel.queryTopicMessageTree({
-+          threadId: appContext.threadId,
-+          topicId: appContext.topicId,
-+        });
-+        historyMessagesCache = pruneRegeneratedBranch(
-+          historyMessagesCache,
-+          tree,
-+          replaceAssistantMessageId,
-+        );
-+      }
+     return historyMessagesCache;
+diff --git a/apps/server/src/services/aiAgent/pipeline/turnSetup.ts b/apps/server/src/services/aiAgent/pipeline/turnSetup.ts
+index da360390..0bfeeca6 100644
+--- a/apps/server/src/services/aiAgent/pipeline/turnSetup.ts
++++ b/apps/server/src/services/aiAgent/pipeline/turnSetup.ts
+@@ -244,6 +244,8 @@ export interface TurnSetupInput {
+   parentMessageId?: string;
+   prompt: string;
+   providerOverride?: string;
++  /** Existing assistant placeholder to reset in place for a member retry. */
++  replaceAssistantMessageId?: string;
+   requestedDeviceId?: string;
+   resolvedAgentId: string;
+   /** Raw resume flag — a resume run must land on an existing topic. */
+@@ -313,6 +315,7 @@ export const setupTurn = async (
+     parentMessageId,
+     prompt,
+     providerOverride,
++    replaceAssistantMessageId,
+     requestedDeviceId,
+     resolvedAgentId,
+     resume,
+@@ -585,6 +588,9 @@ export const setupTurn = async (
+   const existingContinuationAssistant = continuationAssistantId
+     ? await deps.messageModel.findById(continuationAssistantId)
+     : undefined;
++  const replacementAssistant = replaceAssistantMessageId
++    ? await deps.messageModel.findById(replaceAssistantMessageId)
++    : undefined;
+ 
+   if (
+     existingContinuationAssistant &&
+@@ -600,8 +606,28 @@ export const setupTurn = async (
+     );
+   }
+ 
++  if (!existingContinuationAssistant && replaceAssistantMessageId && !replacementAssistant) {
++    throw new Error(`Replacement assistant message not found: ${replaceAssistantMessageId}`);
++  }
 +
-       // We load the raw message tree (including hidden/compacted messages) and
-       // compute the anchor's descendants from it, then drop both regular
-       // descendant messages and any group node whose members fall in that branch.
++  if (replacementAssistant) {
++    await deps.messageModel.update(replacementAssistant.id, {
++      content: LOADING_FLAT,
++      error: null,
++      metadata: {
++        ...replacementAssistant.metadata,
++        ...orchestrationMetadata,
++        ...(appContext?.orchestrationRole === 'member' ? { subAgentId: assistantAgentId } : {}),
++      },
++      model: isHeteroAgent ? undefined : model,
++      provider: isHeteroAgent ? heteroType : provider,
++      tools: null,
++    });
++  }
++
+   const assistantMessageRecord =
+     existingContinuationAssistant ??
++    replacementAssistant ??
+     (await deps.messageModel.create(
+       {
+         agentId: assistantAgentId,
