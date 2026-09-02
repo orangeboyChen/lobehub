@@ -146,7 +146,7 @@ index 47d22559fa..2104cf624a 100644
  import AssigneeAvatar from '@/features/AgentTasks/features/AssigneeAvatar';
  import TaskStatusIcon from '@/features/AgentTasks/features/TaskStatusIcon';
  import TaskTriggerTag from '@/features/AgentTasks/features/TaskTriggerTag';
-@@ -23,6 +25,7 @@ import { splitBriefs } from '@/features/HomeInbox/splitBriefs';
+@@ -23,6 +25,9 @@ import { splitBriefs } from '@/features/HomeInbox/splitBriefs';
  import { useHomeInboxTopics } from '@/features/HomeInbox/useHomeInboxTopics';
  import Recommendations from '@/features/Recommendations';
  import WorkspaceLink from '@/features/Workspace/WorkspaceLink';
@@ -154,6 +154,8 @@ index 47d22559fa..2104cf624a 100644
  import { useClientDataSWR } from '@/libs/swr';
  import { recentKeys } from '@/libs/swr/keys';
  import { useCacheScope } from '@/libs/swr/useCacheScope';
++import { useHomeStore } from '@/store/home';
++import { homeAgentListSelectors } from '@/store/home/selectors';
 @@ -139,6 +142,17 @@ const FLEX_MIN_WIDTH_0 = { minWidth: 0 };
  export const resolveRecentsBadgeCount = (fetched: number, shown: number): number | undefined =>
    Math.min(fetched, shown) || undefined;
