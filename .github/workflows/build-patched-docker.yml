@@ -73,6 +73,7 @@ jobs:
     name: Repair Failed Patches
     needs:
       - patch-validation
+      - prepare
       - build
     if: always() && (needs.patch-validation.result == 'failure' || needs.build.result == 'failure')
     runs-on: ubuntu-latest
@@ -94,11 +95,43 @@ jobs:
             git switch --track "origin/$branch"
           fi
 
-      - name: Checkout upstream canary
+      - name: Select repair target
+        id: repair-target
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          BUILD_MATRIX: ${{ needs.prepare.outputs.matrix }}
+        run: |
+          set -euo pipefail
+
+          if [ "$BUILD_RESULT" = 'failure' ]; then
+            ref="$(jq -r '.[0].commit' <<<"$BUILD_MATRIX")"
+            [ -n "$ref" ] && [ "$ref" != 'null' ] || {
+              echo 'Unable to resolve the failed build release commit' >&2
+              exit 1
+            }
+            mode='failed-release-build'
+          else
+            ref='canary'
+            mode='canary-patch-validation'
+          fi
+
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+
+      - name: Collect failed build logs
+        if: needs.build.result == 'failure'
+        working-directory: automation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run view "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --log-failed \
+            > .codex-build-failure.log || true
+
+      - name: Checkout repair target
         uses: actions/checkout@v6
         with:
           repository: ${{ env.UPSTREAM_REPOSITORY }}
-          ref: canary
+          ref: ${{ steps.repair-target.outputs.ref }}
           path: source
 
       - name: Find an existing repair pull request
@@ -155,10 +188,16 @@ jobs:
           permission-profile: ":workspace"
           prompt: |
             One or more paths listed in automation/patches/paths.txt is missing,
-            or a patch in automation/patches no longer applies to the current
-            upstream canary checkout in source/. Treat paths.txt as the only
+            or a patch in automation/patches no longer applies to the repair
+            target checked out in source/. Treat paths.txt as the only
             authoritative patch manifest. Repair the failed patch set so it
             preserves its original intent and applies cleanly in listed order.
+            The repair target mode is `${{ steps.repair-target.outputs.mode }}`
+            at `${{ steps.repair-target.outputs.ref }}`. If
+            `automation/.codex-build-failure.log` exists, read it before making
+            changes: it contains the failed Docker build output that this repair
+            must reproduce and address. Do not claim a Docker failure is fixed
+            solely because a patch applies on a different ref.
             Before changing any patch under patches/pr-*, read
             automation/.codex-upstream-pr-status.jsonl. This file is
             authoritative for the corresponding upstream pull request status.
@@ -198,7 +237,7 @@ jobs:
             - List every patch added, removed, or rewritten and its user-visible intent.
 
             ## Validation
-            - List the exact patch validation command and its result.
+            - List the exact patch validation command, repair target ref, and result.
 
             The Title line is used as the GitHub pull request title. Do not
             invent PR states, merge timestamps, changes, or validation results.
@@ -269,11 +308,12 @@ jobs:
             if [ -z "$pr_title" ]; then
               pr_title="$default_title"
             fi
-            printf '\n## Workflow validation\n\n- All listed patches applied successfully against upstream canary.\n' >> "$summary_file"
+            printf '\n## Workflow validation\n\n- All listed patches applied successfully against repair target %s.\n' \
+              "${{ steps.repair-target.outputs.ref }}" >> "$summary_file"
             pr_body_args=(--body-file "$summary_file")
           else
             pr_title="$default_title"
-            pr_body_args=(--body 'Codex repaired patches that no longer applied to upstream canary. The workflow revalidated the complete patch set before creating this PR.')
+            pr_body_args=(--body 'Codex repaired patches against the failed validation or release-build target. The workflow revalidated the complete patch set before creating this PR.')
           fi
 
           if [ -z "$existing_pr" ]; then
