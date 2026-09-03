@@ -71,8 +71,10 @@ jobs:
 
   repair-patches:
     name: Repair Failed Patches
-    needs: patch-validation
-    if: failure() && needs.patch-validation.result == 'failure'
+    needs:
+      - patch-validation
+      - build
+    if: always() && (needs.patch-validation.result == 'failure' || needs.build.result == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
