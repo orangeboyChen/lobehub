@@ -44,6 +44,7 @@ jobs:
             });
 
       - name: Delete repair branch after close
+        if: always()
         uses: actions/github-script@v8
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -117,13 +118,19 @@ jobs:
           path: source
 
       - name: Recreate repair branch from patch branch
+        id: repair-branch
         if: steps.context.outputs.reaction_id != ''
         working-directory: automation
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          git fetch origin "$REPAIR_BRANCH" || true
+          remote_sha="$(git ls-remote --heads origin "$REPAIR_BRANCH" | awk '{print $1}')"
+          [ -n "$remote_sha" ] || {
+            echo "Remote repair branch does not exist: $REPAIR_BRANCH" >&2
+            exit 1
+          }
+          echo "remote_sha=$remote_sha" >> "$GITHUB_OUTPUT"
           git switch -C "$REPAIR_BRANCH"
 
       - name: Find an existing repair pull request
@@ -200,26 +207,46 @@ jobs:
         working-directory: source
         run: |
           set -euo pipefail
-          while IFS= read -r patch_path; do
-            [ -n "$patch_path" ] || continue
+
+          git reset --hard HEAD
+          git clean -fdx
+
+          mapfile -t repaired_patch_paths < ../automation/patches/paths.txt
+          [ "${#repaired_patch_paths[@]}" -gt 0 ] || {
+            echo 'Repaired patch path list is empty' >&2
+            exit 1
+          }
+
+          for patch_path in "${repaired_patch_paths[@]}"; do
             patch="../automation/$patch_path"
-            test -f "$patch"
+            if [ ! -f "$patch" ]; then
+              echo "Listed patch is missing: ${patch}" >&2
+              exit 1
+            fi
             git apply --unidiff-zero --check "$patch"
             git apply --unidiff-zero "$patch"
-          done < ../automation/patches/paths.txt
+          done
 
       - name: Commit and force-push repair branch
         if: steps.context.outputs.reaction_id != '' && steps.configuration.outputs.enabled == 'true'
         working-directory: automation
         run: |
           set -euo pipefail
+          repair_files=(patches README.md README.zh.md)
+          if git diff --quiet -- "${repair_files[@]}"; then
+            echo 'Codex did not produce a patch change' >&2
+            exit 1
+          fi
+
           git config user.name codex
           git config user.email codex@users.noreply.github.com
-          git add patches README.md README.zh.md
+          git add "${repair_files[@]}"
           if ! git diff --cached --quiet; then
             git commit -m 'fix(patches): recreate upstream canary repair'
           fi
-          git push --force-with-lease origin HEAD:codex/repair-patches
+          git push \
+            --force-with-lease="refs/heads/$REPAIR_BRANCH:${{ steps.repair-branch.outputs.remote_sha }}" \
+            origin "HEAD:refs/heads/$REPAIR_BRANCH"
 
       - name: Update recreated pull request
         if: success() && steps.context.outputs.reaction_id != '' && steps.configuration.outputs.enabled == 'true'
