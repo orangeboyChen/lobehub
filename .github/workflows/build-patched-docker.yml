@@ -461,15 +461,6 @@ jobs:
             git apply --unidiff-zero "$patch"
           done
 
-      - name: Apply release dependency overrides
-        working-directory: source
-        run: |
-          set -euo pipefail
-          sed -i \
-            's/"@lobehub\/ui": "\^5\.32\.0"/"@lobehub\/ui": "5.32.0"/' \
-            package.json
-          grep -F '"@lobehub/ui": "5.32.0"' package.json
-
       - name: Resolve commit SHA
         id: vars
         working-directory: source

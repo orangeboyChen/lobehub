@@ -233,6 +233,7 @@ jobs:
           if [ -f "$summary_file" ]; then
             pr_title="$(sed -n 's/^Title: //p' "$summary_file" | head -n 1)"
             [ -n "$pr_title" ] || pr_title="$default_title"
+            printf '\n## Workflow validation\n\n- All listed patches applied successfully against repair target canary.\n' >> "$summary_file"
             pr_body_args=(--body-file "$summary_file")
           else
             pr_title="$default_title"
@@ -259,9 +260,18 @@ jobs:
             } catch (error) {
               if (error.status !== 404 && error.status !== 422) throw error;
             }
-            await github.rest.reactions.createForIssueComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: commentId,
-              content: '${{ job.status }}' === 'success' ? '+1' : '-1',
-            });
+            if ('${{ job.status }}' === 'success') {
+              await github.rest.reactions.createForIssueComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: commentId,
+                content: '+1',
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                body: '❌ Recreate failed.',
+              });
+            }
