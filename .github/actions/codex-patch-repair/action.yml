@@ -1,0 +1,44 @@
+name: Run Codex patch repair
+description: Run the shared patch-repair prompt against the prepared workspaces
+inputs:
+  openai-api-key:
+    required: true
+  responses-api-endpoint:
+    required: false
+  model:
+    required: false
+  repair-target-mode:
+    required: true
+  repair-target-ref:
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Load shared repair prompt
+      id: prompt
+      shell: bash
+      env:
+        REPAIR_TARGET_MODE: ${{ inputs.repair-target-mode }}
+        REPAIR_TARGET_REF: ${{ inputs.repair-target-ref }}
+      run: |
+        set -euo pipefail
+        prompt_file="$GITHUB_ACTION_PATH/../../prompts/patch-repair.md"
+        delimiter="codex_prompt_${RANDOM}_${RANDOM}"
+        {
+          echo "prompt<<$delimiter"
+          sed \
+            -e "s|__REPAIR_TARGET_MODE__|$REPAIR_TARGET_MODE|g" \
+            -e "s|__REPAIR_TARGET_REF__|$REPAIR_TARGET_REF|g" \
+            "$prompt_file"
+          echo "$delimiter"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Ask Codex to repair patches
+      uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56
+      with:
+        openai-api-key: ${{ inputs.openai-api-key }}
+        responses-api-endpoint: ${{ inputs.responses-api-endpoint }}
+        model: ${{ inputs.model }}
+        allow-bot-users: github-actions
+        permission-profile: ':workspace'
+        prompt: ${{ steps.prompt.outputs.prompt }}

@@ -163,84 +163,25 @@ jobs:
         working-directory: automation
         env:
           GH_TOKEN: ${{ github.token }}
+          UPSTREAM_REPOSITORY: ${{ env.UPSTREAM_REPOSITORY }}
         run: |
-          set -euo pipefail
+          ./.github/scripts/collect-upstream-pr-statuses.sh
 
-          status_file='.codex-upstream-pr-status.jsonl'
-          : > "$status_file"
-          for patch in patches/pr-*/*.patch; do
-            [ -f "$patch" ] || continue
-            pr_number="${patch#patches/pr-}"
-            pr_number="${pr_number%%/*}"
-            gh pr view "$pr_number" --repo "$UPSTREAM_REPOSITORY" \
-              --json number,state,mergedAt,url --jq '{number, state, mergedAt, url}' \
-              >> "$status_file"
-          done
+      - name: Prepare repair PR context
+        if: steps.configuration.outputs.enabled == 'true' && steps.existing-pr.outputs.exists != 'true'
+        working-directory: automation
+        run: |
+          printf '%s\n' '{"number":null,"title":null,"body":null,"state":null,"baseRefName":"'"$GITHUB_REF_NAME"'","headRefName":"codex/repair-patches","author":null,"url":null}' > .codex-repair-pr-context.json
 
       - name: Ask Codex to repair patches
         if: steps.configuration.outputs.enabled == 'true' && steps.existing-pr.outputs.exists != 'true'
-        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11
+        uses: ./automation/.github/actions/codex-patch-repair
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           responses-api-endpoint: ${{ secrets.CODEX_RESPONSES_API_ENDPOINT }}
           model: ${{ secrets.CODEX_MODEL }}
-          allow-bot-users: github-actions
-          permission-profile: ":workspace"
-          prompt: |
-            One or more paths listed in automation/patches/paths.txt is missing,
-            or a patch in automation/patches no longer applies to the repair
-            target checked out in source/. Treat paths.txt as the only
-            authoritative patch manifest. Repair the failed patch set so it
-            preserves its original intent and applies cleanly in listed order.
-            The repair target mode is `${{ steps.repair-target.outputs.mode }}`
-            at `${{ steps.repair-target.outputs.ref }}`. If
-            `automation/.codex-build-failure.log` exists, read it before making
-            changes: it contains the failed Docker build output that this repair
-            must reproduce and address. Do not claim a Docker failure is fixed
-            solely because a patch applies on a different ref.
-            Before changing any patch under patches/pr-*, read
-            automation/.codex-upstream-pr-status.jsonl. This file is
-            authoritative for the corresponding upstream pull request status.
-            Do not invoke gh, request network or sandbox escalation, or request
-            GitHub authentication. Determine whether the PR behavior is already
-            present in source/.
-            If that PR is merged or closed, you must delete its corresponding
-            patch file, remove its entry from both automation/README.md and
-            automation/README.zh.md, and remove exactly that patch path from
-            automation/patches/paths.txt. Do not leave a deleted patch listed
-            in paths.txt. Do not make any workflow changes. The only additional
-            file you may create is the temporary PR report described below.
-            Otherwise preserve
-            every intended
-            user-visible and functional behavior, translating it to the current
-            upstream canary implementation when necessary. Modify only files
-            under patches/, the two README files, and the matching paths.txt
-            entry when removing a merged or closed PR patch. Do not change
-            source/. Validate every remaining patch with
-            `git apply --unidiff-zero --check`, applying each successful patch
-            before checking the next one. Do not commit, push, or open a pull
-            request; the workflow will do that after validation.
-
-            Also create or replace automation/.codex-repair-pr.md as a temporary
-            pull request report. Do not add this file to the repair commit. Use
-            this exact structure and fill it with facts from the status file and
-            your changes:
-
-            Title: <short Conventional Commit title>
-
-            ## Upstream PR status
-            | PR | State | Merged at | Action |
-            | --- | --- | --- | --- |
-            | #... | ... | ... | ... |
-
-            ## Changes
-            - List every patch added, removed, or rewritten and its user-visible intent.
-
-            ## Validation
-            - List the exact patch validation command, repair target ref, and result.
-
-            The Title line is used as the GitHub pull request title. Do not
-            invent PR states, merge timestamps, changes, or validation results.
+          repair-target-mode: ${{ steps.repair-target.outputs.mode }}
+          repair-target-ref: ${{ steps.repair-target.outputs.ref }}
 
       - name: Validate repaired patches
         if: steps.configuration.outputs.enabled == 'true' && steps.existing-pr.outputs.exists != 'true'
@@ -519,21 +460,6 @@ jobs:
             git apply --unidiff-zero --check "$patch"
             git apply --unidiff-zero "$patch"
           done
-
-      - name: Apply release dependency overrides
-        working-directory: source
-        env:
-          VERSION: ${{ matrix.release.version }}
-        run: |
-          set -euo pipefail
-
-          if [ "$VERSION" = "2.2.15-canary.65" ]; then
-            sed -i \
-              's/"@lobehub\/ui": "\^5\.32\.0"/"@lobehub\/ui": "5.32.0"/' \
-              package.json
-
-            grep -F '"@lobehub/ui": "5.32.0"' package.json
-          fi
 
       - name: Resolve commit SHA
         id: vars
