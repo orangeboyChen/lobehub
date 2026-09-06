@@ -7,4 +7,3 @@ patches/bug/lobehub-skill.patch
 patches/bug/docker-canvas-native-packages.patch
 patches/bug/react-pdf-types-override.patch
 patches/pr-16609/pr-16609.patch
-patches/pr-16616/pr-16616.patch
