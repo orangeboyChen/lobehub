@@ -1,7 +1,6 @@
 diff --git a/pnpm-workspace.yaml b/pnpm-workspace.yaml
 --- a/pnpm-workspace.yaml
 +++ b/pnpm-workspace.yaml
-@@ -48,2 +48,3 @@ overrides:
+@@ -26,1 +26,2 @@ overrides:
    '@react-pdf/image': 3.0.4
 +  '@react-pdf/types': 2.11.2
-   '@types/react': 19.2.13
