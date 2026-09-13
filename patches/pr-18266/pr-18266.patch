@@ -706,17 +706,6 @@ index e15d2494..7a5db47c 100644
    /**
     * Existing topic operation this fresh turn atomically supersedes. The server
     * accepts the handoff only while the topic marker still belongs to this id.
-diff --git a/src/features/AgentDocumentsExplorer/DocumentExplorerTree.tsx b/src/features/AgentDocumentsExplorer/DocumentExplorerTree.tsx
-index 49c39d8e..e1df9a57 100644
---- a/src/features/AgentDocumentsExplorer/DocumentExplorerTree.tsx
-+++ b/src/features/AgentDocumentsExplorer/DocumentExplorerTree.tsx
-@@ -95,7 +95,6 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
- 
-     /* Consumed by DOCUMENT_TREE_ICON_CSS inside the shadow root. */
-     --explorer-tree-icon-fg: ${cssVar.colorTextDescription};
--
-   `,
- }));
  
 diff --git a/src/features/Conversation/Messages/CompressedGroup/index.tsx b/src/features/Conversation/Messages/CompressedGroup/index.tsx
 index cd6269ab..fee6d9a2 100644
@@ -747,7 +736,7 @@ index e640b800..d75fac9f 100644
 @@ -1,8 +1,14 @@
  'use client';
  
-+import { Tag } from '@lobehub/ui';
++import { Tag } from '@lobehub/ui/base-ui';
 +import isEqual from 'fast-deep-equal';
  import { memo } from 'react';
 +import { useTranslation } from 'react-i18next';
