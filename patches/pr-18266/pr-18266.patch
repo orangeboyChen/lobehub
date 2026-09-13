@@ -69,17 +69,29 @@ index 75823a23..52de514a 100644
  
  vi.mock('@/libs/trusted-client', () => ({
    generateTrustedClientToken: vi.fn().mockReturnValue(undefined),
-@@ -26,7 +33,7 @@ vi.mock('@/database/models/message', () => ({
-     findById: mockFindById,
-     query: mockMessageQuery,
-     queryTopicMessageTree: mockQueryTree,
--    update: vi.fn().mockResolvedValue({}),
-+    update: mockMessageUpdate,
-   })),
+@@ -21,14 +28,14 @@ vi.mock('@/database/models/message', () => ({
+ vi.mock('@/database/models/message', () => ({
+   MessageModel: vi.fn().mockImplementation(function () {
+     return {
+       create: mockMessageCreate,
+       getLatestNonToolMessageId: vi.fn().mockResolvedValue(undefined),
+       getLatestSpineMessageId: vi.fn().mockResolvedValue(undefined),
+       findById: mockFindById,
+       query: mockMessageQuery,
+       queryTopicMessageTree: mockQueryTree,
+-      update: vi.fn().mockResolvedValue({}),
++      update: mockMessageUpdate,
+     };
+   }),
  }));
  
-@@ -36,6 +43,13 @@ vi.mock('@/database/models/agent', () => ({
-   })),
+@@ -35,10 +42,17 @@ vi.mock('@/database/models/agent', () => ({
+ vi.mock('@/database/models/agent', () => ({
+   AgentModel: vi.fn().mockImplementation(function () {
+     return {
+       queryAgents: vi.fn().mockResolvedValue([]),
+     };
+   }),
  }));
  
 +vi.mock('@/database/models/chatGroup', () => ({
@@ -90,8 +102,7 @@ index 75823a23..52de514a 100644
 +}));
 +
  vi.mock('@/server/services/agent', () => ({
-   AgentService: vi.fn().mockImplementation(() => ({
-     getAgentConfig: vi.fn().mockResolvedValue({
+   AgentService: vi.fn().mockImplementation(function () {
 @@ -164,6 +178,7 @@ describe('AiAgentService.execAgent - resume mode', () => {
      ]);
  
@@ -1431,18 +1442,21 @@ index e864995d..358a8ee3 100644
      const nextBranchIndex = childrenCount;
  
      // Switch to the new branch so the UI shows the incoming response immediately
-@@ -418,16 +763,16 @@ const regenerateUserMessageFromSource = async (
+@@ -418,17 +763,18 @@ const regenerateUserMessageFromSource = async (
      const postSwitchOp = operationSelectors.getOperationById(operationId)(useChatStore.getState());
      if (postSwitchOp && postSwitchOp.status !== 'running') return;
  
 -    await ensureEffectiveAgencyAccess(context.agentId);
 -    const { agencyConfig, isWorkspaceAgent, workspaceScoped } = getEffectiveAgencyConfig(
 -      context.agentId,
+-      context.topicId,
 -    );
 +    const executionAgentId = getRetryExecutionAgentId(context);
 +    await ensureEffectiveAgencyAccess(executionAgentId);
-+    const { agencyConfig, isWorkspaceAgent, workspaceScoped } =
-+      getEffectiveAgencyConfig(executionAgentId);
++    const { agencyConfig, isWorkspaceAgent, workspaceScoped } = getEffectiveAgencyConfig(
++      executionAgentId,
++      context.topicId,
++    );
      const heterogeneousProvider = agencyConfig?.heterogeneousProvider;
      const runtimeType = selectRuntimeType({
        boundDeviceId: agencyConfig?.boundDeviceId,
@@ -1473,7 +1487,7 @@ index e864995d..358a8ee3 100644
          heterogeneousProvider,
          // Forward the original user message's images so regenerate re-runs
          // the CLI with the same vision input as the first attempt. Without
-@@ -899,23 +1245,26 @@ export const generationSlice: StateCreator<
+@@ -899,24 +1245,27 @@ export const generationSlice: StateCreator<
      // tool/provider error on a grouped reply is not resumable this way.
      if (!isHeterogeneousAgentStatusGuideError(erroredStep.error?.body)) return;
  
@@ -1484,7 +1498,9 @@ index e864995d..358a8ee3 100644
 +    await ensureEffectiveAgencyAccess(executionContext.agentId);
      const { agencyConfig, isWorkspaceAgent, workspaceScoped } = getEffectiveAgencyConfig(
 -      context.agentId,
+-      context.topicId,
 +      executionContext.agentId,
++      context.topicId,
      );
      const heterogeneousProvider = agencyConfig?.heterogeneousProvider;
      const runtimeType = selectRuntimeType({
