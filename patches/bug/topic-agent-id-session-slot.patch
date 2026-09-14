@@ -1,0 +1,153 @@
+diff --git a/apps/server/src/routers/lambda/_helpers/resolveContext.test.ts b/apps/server/src/routers/lambda/_helpers/resolveContext.test.ts
+index 81f86e097b..5220ab0267 100644
+--- a/apps/server/src/routers/lambda/_helpers/resolveContext.test.ts
++++ b/apps/server/src/routers/lambda/_helpers/resolveContext.test.ts
+@@ -15,6 +15,11 @@ const { mockBuildWorkspaceWhere } = vi.hoisted(() => ({
+ 
+ // Mock the database module
+ vi.mock('@/database/schemas', () => ({
++  agents: {
++    id: 'id',
++    userId: 'user_id',
++    workspaceId: 'workspace_id',
++  },
+   agentsToSessions: {
+     agentId: 'agent_id',
+     sessionId: 'session_id',
+@@ -261,7 +266,9 @@ describe('resolveContext', () => {
+ 
+       expect(result.agentId).toBeNull();
+       expect(result.sessionId).toBe('legacy-session');
+-      expect(mockDb.select).toHaveBeenCalledTimes(1);
++      // The extra query only re-reads the id as an agent before giving up on
++      // it; it must not promote a session that belongs to no agent.
++      expect(mockDb.select).toHaveBeenCalledTimes(2);
+     });
+ 
+     it('replaces a stale agent id with the agent linked to the fallback session', async () => {
+@@ -280,6 +287,57 @@ describe('resolveContext', () => {
+       expect(result.sessionId).toBe('fallback-session');
+       expect(mockDb.select).toHaveBeenCalledTimes(2);
+     });
++
++    it('moves an agent id sent in the sessionId slot to agentId, keeping its session', async () => {
++      const mockDb = createMockDb();
++      // No session row answers to `agt-1`; it is a linked agent instead.
++      mockDb._mocks.mockLimit
++        .mockResolvedValueOnce([])
++        .mockResolvedValueOnce([{ id: 'agt-1' }])
++        .mockResolvedValueOnce([{ sessionId: 'session-1' }]);
++
++      const result = await resolveContextWithAgentId({ sessionId: 'agt-1' }, mockDb, mockUserId);
++
++      // The agent id must not survive in `sessionId`: `topics.session_id` is a
++      // foreign key to `sessions`, and writing an agent id there fails the insert.
++      expect(result).toEqual({
++        agentId: 'agt-1',
++        groupId: null,
++        sessionId: 'session-1',
++        threadId: null,
++        topicId: null,
++      });
++    });
++
++    it('leaves sessionId empty for an agent that has no session row', async () => {
++      const mockDb = createMockDb();
++      mockDb._mocks.mockLimit
++        .mockResolvedValueOnce([])
++        .mockResolvedValueOnce([{ id: 'agt-1' }])
++        .mockResolvedValueOnce([]);
++
++      const result = await resolveContextWithAgentId({ sessionId: 'agt-1' }, mockDb, mockUserId);
++
++      // Agent-native topics are keyed off `agent_id`, so a session-less agent
++      // stores null rather than an unresolvable id in the FK'd column.
++      expect(result.agentId).toBe('agt-1');
++      expect(result.sessionId).toBeNull();
++    });
++
++    it('leaves a legacy session untouched when it belongs to no agent', async () => {
++      const mockDb = createMockDb();
++      mockDb._mocks.mockLimit.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
++
++      const result = await resolveContextWithAgentId(
++        { sessionId: 'legacy-group-session' },
++        mockDb,
++        mockUserId,
++      );
++
++      expect(result.agentId).toBeNull();
++      expect(result.sessionId).toBe('legacy-group-session');
++      expect(mockDb.select).toHaveBeenCalledTimes(2);
++    });
+   });
+ 
+   describe('batchResolveAgentIdFromSessions', () => {
+diff --git a/apps/server/src/routers/lambda/_helpers/resolveContext.ts b/apps/server/src/routers/lambda/_helpers/resolveContext.ts
+index a9764889c4..d5c9ebf8ad 100644
+--- a/apps/server/src/routers/lambda/_helpers/resolveContext.ts
++++ b/apps/server/src/routers/lambda/_helpers/resolveContext.ts
+@@ -1,6 +1,6 @@
+ import { and, eq, inArray } from 'drizzle-orm';
+ 
+-import { agentsToSessions } from '@/database/schemas';
++import { agents, agentsToSessions } from '@/database/schemas';
+ import { type LobeChatDatabase } from '@/database/type';
+ import { buildWorkspaceWhere } from '@/database/utils/workspace';
+ 
+@@ -109,7 +109,54 @@ export const resolveContextWithAgentId = async (
+   // stale id into a foreign-keyed write.
+   const agentId = await resolveAgentIdFromSession(resolved.sessionId, db, userId, workspaceId);
+ 
+-  return { ...resolved, agentId: agentId ?? resolved.agentId };
++  if (agentId) return { ...resolved, agentId };
++
++  // The `sessionId` slot carried something no session row answers to. Some
++  // callers have always sent the AGENT id here (`sessionId: agentId`), which
++  // used to be harmless while every agent still had a linked session row to
++  // reverse-resolve through. Agents created after that link stopped being
++  // written have no row at all, so the id reaches `topics.session_id`
++  // verbatim and the insert fails on its `sessions` foreign key.
++  //
++  // Re-read it as an agent id before giving up. Anything that is not an agent
++  // the caller owns (a legacy group session, or a plain unknown id) keeps the
++  // old contract, so this costs one extra query only on that path.
++  if (!(await isKnownAgentId(resolved.sessionId, db, userId, workspaceId))) return resolved;
++
++  const [link] = await db
++    .select({ sessionId: agentsToSessions.sessionId })
++    .from(agentsToSessions)
++    .where(
++      and(
++        eq(agentsToSessions.agentId, resolved.sessionId),
++        buildWorkspaceWhere({ userId, workspaceId }, agentsToSessions),
++      ),
++    )
++    .limit(1);
++
++  // Agent-native topics key off `agent_id`; `session_id` is the legacy column
++  // and nullable, so an agent with no session link simply leaves it empty
++  // instead of writing an agent id into a foreign-keyed column.
++  return { ...resolved, agentId: resolved.sessionId, sessionId: link?.sessionId ?? null };
++};
++
++/**
++ * Whether `id` is an agent the caller owns. Only consulted on the fallback path
++ * above, so the common (session-backed) case keeps its query count.
++ */
++const isKnownAgentId = async (
++  id: string,
++  db: LobeChatDatabase,
++  userId: string,
++  workspaceId?: string,
++): Promise<boolean> => {
++  const [row] = await db
++    .select({ id: agents.id })
++    .from(agents)
++    .where(and(eq(agents.id, id), buildWorkspaceWhere({ userId, workspaceId }, agents)))
++    .limit(1);
++
++  return !!row;
+ };
+ 
+ /**

@@ -10,7 +10,7 @@
 
 ## 当前 patch 清单
 
-- 本地修复：`ios-viewport`、`lobehub-skill`、`docker-canvas-native-packages`
+- 本地修复：`ios-viewport`、`lobehub-skill`、`docker-canvas-native-packages`、`topic-agent-id-session-slot`
 - 上游 PR：
   - [#16609](https://github.com/lobehub/lobehub/pull/16609)：让 connector 详情页头部支持响应式布局
   - [#18239](https://github.com/lobehub/lobehub/pull/18239)：在 SPA 侧边栏显示没有会话的 Agent
