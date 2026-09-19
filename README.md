@@ -11,6 +11,8 @@ The upstream image needs a small patch set for iOS viewport behavior, input zoom
 ## Active patch set
 
 - Local fixes: `ios-viewport`, `lobehub-skill`, `docker-canvas-native-packages`
+- Local features:
+  - `bark-push-notification`: fill in the OSS notification slots so a self-hosted deployment writes inbox rows and pushes to iOS through Bark, configured with `BARK_*` environment variables
 - Upstream PRs:
   - [#16609](https://github.com/lobehub/lobehub/pull/16609): make the connector detail header responsive
   - [#18239](https://github.com/lobehub/lobehub/pull/18239): show agents without sessions in the SPA sidebar

@@ -11,6 +11,8 @@
 ## 当前 patch 清单
 
 - 本地修复：`ios-viewport`、`lobehub-skill`、`docker-canvas-native-packages`
+- 本地功能：
+  - `bark-push-notification`：补齐 OSS 的通知槽，让自托管部署写入 inbox 记录并通过 Bark 推送到 iOS，使用 `BARK_*` 环境变量配置
 - 上游 PR：
   - [#16609](https://github.com/lobehub/lobehub/pull/16609)：让 connector 详情页头部支持响应式布局
   - [#18239](https://github.com/lobehub/lobehub/pull/18239)：在 SPA 侧边栏显示没有会话的 Agent
