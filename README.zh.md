@@ -10,7 +10,8 @@
 
 ## 当前 patch 清单
 
-- 本地修复：`ios-viewport`、`lobehub-skill`、`docker-canvas-native-packages`
+- 本地修复：`ios-viewport`、`lobehub-skill`、`docker-canvas-native-packages`、`ask-user-question-submit`
+  - `ask-user-question-submit`：`AskUserQuestion` 卡片点 Submit（或 Skip）后永久停在 loading，刷新页面也不消失。这类卡片不带持久化认领 id，唯一可依据的是内存里的 operation map —— 刷新即空 —— 而路由不出去时代码是静默 return，表单又只在提交被拒时才退出 loading，于是永远转圈。现在卡片会写入能扛住刷新的依据，路由不出去改为显式抛错，in-flight 标记只留在内存、不落库，因此刷新后始终可以重试。
 - 本地功能：
   - `bark-push-notification`：补齐 OSS 的通知槽，让自托管部署写入 inbox 记录并通过 Bark 推送到 iOS。设备侧用 `BARK_KEY` 配置（自建 relay 再配 `BARK_SERVER_URL`）；通知长什么样由代码按场景决定，不是部署开关：
     - agent 头像作为通知图标、agent 名字作为折叠分组，同一个 agent 的推送会叠在一起
