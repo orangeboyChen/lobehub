@@ -10,7 +10,8 @@ The upstream image needs a small patch set for iOS viewport behavior, input zoom
 
 ## Active patch set
 
-- Local fixes: `ios-viewport`, `lobehub-skill`, `docker-canvas-native-packages`
+- Local fixes: `ios-viewport`, `lobehub-skill`, `docker-canvas-native-packages`, `ask-user-question-submit`
+  - `ask-user-question-submit`: an `AskUserQuestion` card stayed in `loading` forever after Submit (or Skip) was clicked, and reloading the page did not clear it. Such a card carries no durable claim ids, so its only provenance was the in-memory operation map — empty after a reload — and the unroutable path returned silently, which the form cannot recover from because it leaves its loading state only on a rejected submit. Cards now stamp the provenance that survives a reload, unroutable submits fail loudly instead of silently, and the in-flight marker stays out of the database so a reload can always retry.
 - Local features:
   - `bark-push-notification`: fill in the OSS notification slots so a self-hosted deployment writes inbox rows and pushes to iOS through Bark. Configure the device with `BARK_KEY` (and `BARK_SERVER_URL` for a self-hosted relay); how a notification presents itself is decided per scenario in code, not by the deployment:
     - the agent's avatar becomes the notification icon and its name the collapse group, so one agent's pushes stack together
