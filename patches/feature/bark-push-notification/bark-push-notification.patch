@@ -38,10 +38,18 @@ index 2b596fc730..19146e144c 100644
 +# A silent deployment usually means BARK_USER_ID does not match the account that
 +# triggered the run — run with DEBUG=lobe-notification to see why a push was skipped.
 diff --git a/apps/server/src/services/agentRuntime/CompletionLifecycle.ts b/apps/server/src/services/agentRuntime/CompletionLifecycle.ts
-index 8d5de20eea..426e9c344e 100644
+index e1193041d9..a9dcdc9efd 100644
 --- a/apps/server/src/services/agentRuntime/CompletionLifecycle.ts
 +++ b/apps/server/src/services/agentRuntime/CompletionLifecycle.ts
-@@ -746,7 +746,6 @@ export class CompletionLifecycle {
+@@ -7,6 +7,7 @@ import debug from 'debug';
+ 
+ import { notifyAgentInterventionRequired } from '@/business/server/agent-run/agentInterventionReview';
+ import { notifyAgentRunCompleted } from '@/business/server/agent-run/notifyAgentRunCompleted';
++import { notifyAgentRunFailed } from '@/business/server/agent-run/notifyAgentRunFailed';
+ import {
+   AgentOperationModel,
+   type ChildUsageRollup,
+@@ -747,7 +748,6 @@ export class CompletionLifecycle {
  
      await notifyAgentRunCompleted({
        agentId: event.agentId || undefined,
@@ -49,6 +57,78 @@ index 8d5de20eea..426e9c344e 100644
        lastAssistantContent: event.lastAssistantContent,
        operationId,
        topicId: event.topicId,
+@@ -758,6 +758,38 @@ export class CompletionLifecycle {
+     });
+   }
+ 
++  /**
++   * The mirror of {@link recallUserOnCompletion} for the `error` terminal.
++   *
++   * Only a genuine failure belongs here — see `notifyAgentRunFailed` for why
++   * `interrupted`, `waiting_for_human` and `lease_expired` stay silent.
++   */
++  private async recallUserOnFailure(
++    operationId: string,
++    event: { agentId?: string; errorMessage?: string; errorType?: string; topicId?: string },
++    runOrigin: { trigger?: unknown; userId?: string } | undefined,
++  ): Promise<void> {
++    const { isChildRun, trigger } = await this.resolveRunRecallFacts(operationId, runOrigin);
++    if (isChildRun) {
++      log('[%s] Skipping failure push for internal child run', operationId);
++      return;
++    }
++    if (trigger !== undefined && !USER_RECALLABLE_TRIGGERS.has(trigger)) {
++      log('[%s] Skipping failure push for non-interactive trigger %s', operationId, trigger);
++      return;
++    }
++
++    await notifyAgentRunFailed({
++      agentId: event.agentId || undefined,
++      errorMessage: event.errorMessage,
++      errorType: event.errorType,
++      operationId,
++      topicId: event.topicId,
++      userId: runOrigin?.userId || this.userId,
++      workspaceId: this.workspaceId,
++    });
++  }
++
+   /**
+    * Register the operation's Works: entity files edited this round
+    * (pptx/xlsx/docx/pdf, …) as `file` Works — one version per operation,
+@@ -955,15 +987,25 @@ export class CompletionLifecycle {
+       // repeatedly running the shared agent, and the notification would deep-link
+       // into a visitor topic (`topics.senderId`) that is deliberately excluded
+       // from creator-facing surfaces.
+-      if (
+-        isSuccessLikeCompletionReason(reason) &&
++      const isUserFacingRun =
+         runOrigin.lineage?.isSubAgent !== true &&
+         runOrigin.lineage?.orchestrationRole !== 'member' &&
+-        !isAgentShareRun(state)
+-      ) {
+-        void this.recallUserOnCompletion(operationId, event, runOrigin).catch((error) =>
+-          log('[%s] Completion notification failed (non-fatal): %O', operationId, error),
+-        );
++        !isAgentShareRun(state);
++
++      if (isUserFacingRun) {
++        if (isSuccessLikeCompletionReason(reason))
++          void this.recallUserOnCompletion(operationId, event, runOrigin).catch((error) =>
++            log('[%s] Completion notification failed (non-fatal): %O', operationId, error),
++          );
++        // `error` is the only non-success terminal worth a push: `interrupted`
++        // is the user cancelling, `waiting_for_human` already has its own
++        // intervention notification, and `lease_expired` /
++        // `waiting_for_async_tool` are infrastructure waits that would buzz the
++        // phone for something the user did not ask about.
++        else if (reason === 'error')
++          void this.recallUserOnFailure(operationId, event, runOrigin).catch((error) =>
++            log('[%s] Failure notification failed (non-fatal): %O', operationId, error),
++          );
+       }
+ 
+       // Delivery checker: on a successful completion, run the confirmed verify
 diff --git a/apps/server/src/services/notification/__tests__/bark.test.ts b/apps/server/src/services/notification/__tests__/bark.test.ts
 new file mode 100644
 index 0000000000..33e8c4be99
@@ -524,10 +604,10 @@ index 0000000000..3c4951c10f
 +});
 diff --git a/apps/server/src/services/notification/__tests__/notifyUser.test.ts b/apps/server/src/services/notification/__tests__/notifyUser.test.ts
 new file mode 100644
-index 0000000000..37bd2f164e
+index 0000000000..39d3f7cf95
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/notifyUser.test.ts
-@@ -0,0 +1,495 @@
+@@ -0,0 +1,500 @@
 +// @vitest-environment node
 +import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 +
@@ -996,7 +1076,10 @@ index 0000000000..37bd2f164e
 +
 +    // Someone has to answer before the run continues, so this one pierces
 +    // silent mode and keeps sounding.
-+    expect(pushBody(fetchMock)).toMatchObject({ call: '1', level: 'critical' });
++    // Someone has to answer before the run continues, so this one keeps ringing
++    // — but even then it stops at timeSensitive: overriding silent mode is not
++    // a claim an agent notification gets to make.
++    expect(pushBody(fetchMock)).toMatchObject({ call: '1', level: 'timeSensitive' });
 +  });
 +
 +  it('escalates a scheduled failure through the interruption levels', async () => {
@@ -1016,9 +1099,11 @@ index 0000000000..37bd2f164e
 +    // A failed tick surfaces during Focus; a blown fuse that paused the task
 +    // ignores silent mode because nothing will retry on its own; a generation
 +    // the user is watching the canvas for just lands in the list.
++    // A failed tick and a fuse-stop both surface during Focus; neither is
++    // allowed past timeSensitive.
 +    expect(fetchMock.mock.calls.map((call) => JSON.parse(call[1].body).level)).toEqual([
 +      'timeSensitive',
-+      'critical',
++      'timeSensitive',
 +      'passive',
 +    ]);
 +  });
@@ -1131,15 +1216,16 @@ index 0000000000..9b2253ad12
 +});
 diff --git a/apps/server/src/services/notification/__tests__/slots.test.ts b/apps/server/src/services/notification/__tests__/slots.test.ts
 new file mode 100644
-index 0000000000..93faf62900
+index 0000000000..3a512a8ceb
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/slots.test.ts
-@@ -0,0 +1,215 @@
+@@ -0,0 +1,258 @@
 +// @vitest-environment node
 +import { beforeEach, describe, expect, it, vi } from 'vitest';
 +
 +import { notifyAgentInterventionRequired } from '@/business/server/agent-run/agentInterventionReview';
 +import { notifyAgentRunCompleted } from '@/business/server/agent-run/notifyAgentRunCompleted';
++import { notifyAgentRunFailed } from '@/business/server/agent-run/notifyAgentRunFailed';
 +import { notifyImageCompleted } from '@/business/server/image-generation/notifyImageCompleted';
 +import {
 +  notifyScheduledTaskCompleted,
@@ -1172,7 +1258,9 @@ index 0000000000..93faf62900
 +    expect(params).toMatchObject({
 +      actionUrl: '/agent/a1/t1',
 +      category: 'agent',
-+      content: 'Here is the **summary**.',
++      // Flattened at the source, not just on the way out: the inbox stores
++      // this string and renders it raw.
++      content: 'Here is the summary.',
 +      dedupeKey: 'agent_run_completed:op-1',
 +      metadata: { agent: { id: 'a1' } },
 +      title: 'Agent task completed',
@@ -1350,6 +1438,46 @@ index 0000000000..93faf62900
 +    expect(lastCall()[1]).toEqual({ fatalOnPersistenceError: true });
 +  });
 +});
++
++describe('notifyAgentRunFailed', () => {
++  it('leads with the structured error type', async () => {
++    await notifyAgentRunFailed({
++      agentId: 'a1',
++      errorType: 'provider_outage',
++      operationId: 'op-9',
++      topicId: 't1',
++      userId: 'u1',
++    });
++
++    const [params] = lastCall();
++    expect(params).toMatchObject({
++      category: 'agent',
++      content: 'The run failed: provider_outage',
++      dedupeKey: 'agent_run_failed:op-9',
++      metadata: { agent: { id: 'a1' } },
++      title: 'Agent run failed',
++      type: 'agent_run_failed',
++    });
++    expect(params.actionUrl).toBe('/agent/a1/t1');
++  });
++
++  it('strips markdown out of a raw error message', async () => {
++    // A provider error can come back as markdown; it lands on a lock screen.
++    await notifyAgentRunFailed({
++      errorMessage: 'Rate limit **exceeded** — see [docs](https://x.com/a)',
++      operationId: 'op-10',
++      userId: 'u1',
++    });
++
++    expect(lastCall()[0].content).toBe('The run failed: Rate limit exceeded — see docs');
++  });
++
++  it('falls back when the run carried no error at all', async () => {
++    await notifyAgentRunFailed({ operationId: 'op-11', userId: 'u1' });
++
++    expect(lastCall()[0].content).toBe('The run failed: unknown error');
++  });
++});
 diff --git a/packages/business-server/package.json b/packages/business-server/package.json
 index 20d659af0b..5877272c48 100644
 --- a/packages/business-server/package.json
@@ -1484,6 +1612,63 @@ index ef570beac5..5c0cb69c35 100644
 +    metadata: params.agentId ? { agent: { id: params.agentId } } : undefined,
 +    title,
 +    type: NOTIFICATION_TYPE.agentRunCompleted,
++    userId: params.userId,
++    workspaceId: params.workspaceId,
++  });
++}
+diff --git a/packages/business-server/src/agent-run/notifyAgentRunFailed.ts b/packages/business-server/src/agent-run/notifyAgentRunFailed.ts
+new file mode 100644
+index 0000000000..03d9a3b3ca
+--- /dev/null
++++ b/packages/business-server/src/agent-run/notifyAgentRunFailed.ts
+@@ -0,0 +1,51 @@
++import { notifyUser } from '../notification';
++import { NOTIFICATION_CATEGORY, NOTIFICATION_TYPE } from '../notification/categories';
++import { renderCopy } from '../notification/copy';
++import { buildConversationPath, previewText, stripMarkdown } from '../notification/format';
++
++export interface NotifyAgentRunFailedParams {
++  agentId?: string;
++  /** Fallback label when the run carried no structured error type. */
++  errorMessage?: string;
++  /**
++   * Stable error taxonomy type (`network`, `quota`, `provider_outage`, …).
++   * Never the raw error text — that stays in briefs and logs.
++   */
++  errorType?: string;
++  operationId: string;
++  topicId?: string;
++  userId: string;
++  workspaceId?: string;
++}
++
++/**
++ * Tell the user a run they were waiting on did not make it.
++ *
++ * The success side is `notifyAgentRunCompleted`; this is its mirror for the
++ * `error` terminal. Only a genuine failure belongs here — a cancellation
++ * (`interrupted`) is the user's own doing, a run parked on `waiting_for_human`
++ * already has its own intervention notification, and `lease_expired` is an
++ * infrastructure timeout that would otherwise buzz the phone on every restart.
++ *
++ * The same recall gates apply as on completion: sub-agents, group members and
++ * share-visitor runs never reach this slot, and only interactive triggers
++ * (plain chat turns plus the two deferred ones) do.
++ */
++export async function notifyAgentRunFailed(params: NotifyAgentRunFailedParams): Promise<void> {
++  // A raw provider error can carry markdown, and it lands on a lock screen.
++  const error =
++    params.errorType || previewText(stripMarkdown(params.errorMessage ?? ''), 'unknown error', 120);
++
++  await notifyUser({
++    actionUrl: buildConversationPath({ agentId: params.agentId, topicId: params.topicId }),
++    category: NOTIFICATION_CATEGORY.agent,
++    content: renderCopy('agent_run_failed', { error }),
++    // Keyed by operation so a lifecycle retry cannot push the same failure twice.
++    dedupeKey: `agent_run_failed:${params.operationId}`,
++    metadata: params.agentId ? { agent: { id: params.agentId } } : undefined,
++    title: renderCopy('agent_run_failed_title'),
++    type: NOTIFICATION_TYPE.agentRunFailed,
 +    userId: params.userId,
 +    workspaceId: params.workspaceId,
 +  });
@@ -1773,10 +1958,10 @@ index 0000000000..91b99294a0
 +};
 diff --git a/packages/business-server/src/notification/categories.ts b/packages/business-server/src/notification/categories.ts
 new file mode 100644
-index 0000000000..71f017bbd3
+index 0000000000..64686e2a42
 --- /dev/null
 +++ b/packages/business-server/src/notification/categories.ts
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,30 @@
 +/**
 + * `(category, type)` pairs used for inbox grouping and for the per-scenario
 + * switches under `notification.push.items[category][type]`.
@@ -1799,6 +1984,7 @@ index 0000000000..71f017bbd3
 +
 +export const NOTIFICATION_TYPE = {
 +  agentRunCompleted: 'agent_run_completed',
++  agentRunFailed: 'agent_run_failed',
 +  cronJobCompleted: 'agent_cron_job_completed',
 +  cronJobFailed: 'agent_cron_job_failed',
 +  cronJobFailedPaused: 'agent_cron_job_failed_paused',
@@ -1868,10 +2054,10 @@ index 0000000000..14cccfcbfc
 +  });
 diff --git a/packages/business-server/src/notification/format.ts b/packages/business-server/src/notification/format.ts
 new file mode 100644
-index 0000000000..b18eb615b1
+index 0000000000..7316390d5b
 --- /dev/null
 +++ b/packages/business-server/src/notification/format.ts
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,95 @@
 +import { getAppConfig } from '@/envs/app';
 +
 +/** Hard cap for a single-line field; returns undefined for blank input. */
@@ -1909,9 +2095,16 @@ index 0000000000..b18eb615b1
 +    .replaceAll(/\s+/g, ' ')
 +    .trim();
 +
-+/** Collapse whitespace so a multi-line reply does not blow up a push payload. */
++/**
++ * One line of plain text for a notification.
++ *
++ * Every slot routes its user-authored text through here — an assistant reply,
++ * a task name, a provider error — and none of it may reach a notification as
++ * markdown: the inbox renders it raw and a phone banner has no renderer at
++ * all. Flatten first, then cap, so the budget is spent on words.
++ */
 +export const previewText = (text?: string, fallback = '', maxLength = 200): string =>
-+  clampText(text, maxLength) ?? fallback;
++  clampText(text ? stripMarkdown(text) : undefined, maxLength) ?? fallback;
 +
 +/**
 + * Relative SPA path for a conversation.
@@ -1962,10 +2155,10 @@ index 0000000000..b18eb615b1
 +};
 diff --git a/packages/business-server/src/notification/index.ts b/packages/business-server/src/notification/index.ts
 new file mode 100644
-index 0000000000..90c622d82a
+index 0000000000..16cda61508
 --- /dev/null
 +++ b/packages/business-server/src/notification/index.ts
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,146 @@
 +import type { NotificationMetadata } from '@lobechat/types';
 +import debug from 'debug';
 +
@@ -2091,12 +2284,10 @@ index 0000000000..90c622d82a
 +      icon: agent.iconUrl,
 +      level: presentation.level,
 +      subtitle: params.context ? stripMarkdown(params.context) : undefined,
-+      // The phone shows title + body, and the inbox renders neither of its
-+      // `title` strings as visible text — it shows the agent's avatar next to
-+      // the content. So the push leads with the agent that ran, which is what
-+      // tells the reader who is talking; the canonical copy only survives as
-+      // the fallback for a notification with no resolvable agent.
-+      title: agent.name ?? params.title,
++      // The row keeps its markdown so the inbox can render it; the phone gets
++      // one line of plain text — including the title, since an agent name is
++      // user-authored and a stray `**` there would reach the lock screen too.
++      title: stripMarkdown(agent.name ?? params.title),
 +      url: buildPublicUrl(params.actionUrl),
 +    });
 +
@@ -2116,10 +2307,10 @@ index 0000000000..90c622d82a
 +};
 diff --git a/packages/business-server/src/notification/levels.ts b/packages/business-server/src/notification/levels.ts
 new file mode 100644
-index 0000000000..3f54f597c3
+index 0000000000..22ded83615
 --- /dev/null
 +++ b/packages/business-server/src/notification/levels.ts
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,65 @@
 +import { NOTIFICATION_CATEGORY, NOTIFICATION_TYPE } from './categories';
 +
 +export type BarkLevel = 'active' | 'critical' | 'passive' | 'timeSensitive';
@@ -2138,26 +2329,37 @@ index 0000000000..3f54f597c3
 + * whether silent mode is ignored. Picking one per scenario is the whole point
 + * of having them, so the mapping lives here rather than in config:
 + *
-+ * - `critical` — a human has to act now: silent and Do Not Disturb are ignored.
-+ * - `timeSensitive` — something broke; surfaces even during Focus.
 + * - `active` — ordinary completion; lights the screen.
 + * - `passive` — lands in the notification list without waking the phone.
++ *
++ * `critical` is deliberately unused. It ignores silent mode and Do Not
++ * Disturb, which is a privilege an agent-run notification should never claim —
++ * nothing here is a fire alarm, and a self-hoster who muted their phone at
++ * night did not mute it for a cron job. `timeSensitive` is the ceiling: it
++ * pierces Focus without overriding the user's own silence.
 + */
 +const PRESENTATION: Record<string, BarkPresentation> = {
 +  // A parked intervention is the only case where the run is stopped until a
-+  // person answers — ring properly instead of dropping a silent banner.
++  // person answers, so it also keeps ringing — but it still does not get to
++  // override silent mode.
 +  [`${NOTIFICATION_CATEGORY.agent}/${NOTIFICATION_TYPE.interventionRequired}`]: {
 +    call: true,
-+    level: 'critical',
++    level: 'timeSensitive',
 +  },
 +  // The fuse blew and the task is paused: nothing will retry on its own.
 +  [`${NOTIFICATION_CATEGORY.schedule}/${NOTIFICATION_TYPE.cronJobFailedPaused}`]: {
-+    level: 'critical',
++    level: 'timeSensitive',
 +  },
 +  [`${NOTIFICATION_CATEGORY.schedule}/${NOTIFICATION_TYPE.cronJobFailed}`]: {
 +    level: 'timeSensitive',
 +  },
 +  [`${NOTIFICATION_CATEGORY.agent}/${NOTIFICATION_TYPE.agentRunCompleted}`]: { level: 'active' },
++  // A failed run is the same shape as a failed tick: the user asked for
++  // something and did not get it, so it surfaces through Focus without
++  // demanding an answer the way a parked intervention does.
++  [`${NOTIFICATION_CATEGORY.agent}/${NOTIFICATION_TYPE.agentRunFailed}`]: {
++    level: 'timeSensitive',
++  },
 +  [`${NOTIFICATION_CATEGORY.schedule}/${NOTIFICATION_TYPE.cronJobCompleted}`]: { level: 'active' },
 +  // Generations are something the user is already watching the canvas for; a
 +  // phone that lights up adds nothing over the row in the inbox.
@@ -2407,6 +2609,19 @@ index 0000000000..9ab7ec0c5e
 +    },
 +  });
 +};
+diff --git a/packages/locales/src/default/notification.ts b/packages/locales/src/default/notification.ts
+index 55ddbbe4d6..86cf9914d2 100644
+--- a/packages/locales/src/default/notification.ts
++++ b/packages/locales/src/default/notification.ts
+@@ -14,6 +14,8 @@ export default {
+   'agent_intervention_required_title': '{{agent}} needs your review',
+   'agent_run_completed': '{{preview}}',
+   'agent_run_completed_title': 'Agent task completed',
++  'agent_run_failed': 'The run failed: {{error}}',
++  'agent_run_failed_title': 'Agent run failed',
+   'agent_transfer_reassigned':
+     'A workspace owner transferred your agent "{{agentTitle}}" to {{recipientLabel}}.',
+   'agent_transfer_reassigned_title': 'Agent reassigned',
 diff --git a/src/app/(backend)/webapi/agent/avatar/[id]/renderAgentAvatarPng.ts b/src/app/(backend)/webapi/agent/avatar/[id]/renderAgentAvatarPng.ts
 new file mode 100644
 index 0000000000..4b64fe92a2
