@@ -7,6 +7,7 @@ import {
   type ConversationContext,
   type MessageMetadata,
   resolveAgentAgencyConfig,
+  type ToolIntervention,
   type UIChatMessage,
 } from '@lobechat/types';
 import { t } from 'i18next';
@@ -1604,6 +1605,56 @@ export class ConversationControlActionImpl {
    *     bridge resolves with `cancelReason` and CC sees an isError result
    *     (it'll fall back to plain-text questioning)
    */
+  /**
+   * Stamp the in-flight phase on a pending intervention, on both local
+   * projections (the tool row's `pluginIntervention` and the parent assistant's
+   * `tools[].intervention`).
+   *
+   * Local only — deliberately not persisted. `gatewayEventHandler` already
+   * treats `resolving` as a non-durable subscriber hint for the same reason:
+   * once it is written, `Intervention` disables every action on the card, and if
+   * the producer never ACKs that is permanent and survives a reload — the exact
+   * stuck-forever symptom this change exists to remove. In memory it still
+   * disables the card across remounts within the session, while a reload returns
+   * it to `pending` and submittable. A retry cannot double-apply: the durable
+   * claim and the legacy transport are both idempotent by `resolutionRequestId`.
+   */
+  #markInterventionResolving = (
+    context: OptimisticUpdateContext,
+    params: {
+      originalIntervention?: ToolIntervention;
+      toolCallId: string;
+      toolMessage: UIChatMessage;
+      toolMessageId: string;
+    },
+  ): void => {
+    const { originalIntervention, toolCallId, toolMessage, toolMessageId } = params;
+    const resolvingIntervention = {
+      ...originalIntervention,
+      resolving: true,
+      status: 'pending' as const,
+    };
+    this.#get().internal_dispatchMessage(
+      {
+        id: toolMessageId,
+        type: 'updateMessage',
+        value: { pluginIntervention: resolvingIntervention },
+      },
+      context,
+    );
+    if (toolMessage.parentId) {
+      this.#get().internal_dispatchMessage(
+        {
+          id: toolMessage.parentId,
+          tool_call_id: toolCallId,
+          type: 'updateMessageTools',
+          value: { intervention: resolvingIntervention },
+        },
+        context,
+      );
+    }
+  };
+
   submitHeteroIntervention = async (
     toolMessageId: string,
     actionType: 'submit' | 'skip' | 'cancel',
@@ -1638,8 +1689,8 @@ export class ConversationControlActionImpl {
       toolMessage.pluginState as
         { heterogeneousIntervention?: { interactionKind?: unknown } } | undefined
     )?.heterogeneousIntervention;
-    // server-authored (`pluginState.heterogeneousIntervention`); a card raised
-    // from a client-side bridge event carries none of it, which left
+    // `interactionKind` is server-authored (`pluginState.heterogeneousIntervention`);
+    // a card raised from a client-side bridge event carries none of it, which left
     // `toHeterogeneousSourceAction` with no branch to match on a submit and
     // returned `undefined` — closing the durable claim to the only action that
     // needs it most.
@@ -1673,33 +1724,14 @@ export class ConversationControlActionImpl {
       if (this.#discardAlreadyResolvedSource(sourceResolution)) return;
 
       if (sourceResolution.handled) {
-        const sourceOptimisticContext: OptimisticUpdateContext = { context: effectiveContext };
-        const resolvingIntervention = {
-          ...originalIntervention,
-          resolving: true,
-          status: 'pending' as const,
-        };
-        this.#get().internal_dispatchMessage(
-          {
-            id: toolMessageId,
-            type: 'updateMessage',
-            value: { pluginIntervention: resolvingIntervention },
-          },
-          sourceOptimisticContext,
+        this.#markInterventionResolving(
+          { context: effectiveContext },
+          { originalIntervention, toolCallId, toolMessage, toolMessageId },
         );
-        if (toolMessage.parentId) {
-          this.#get().internal_dispatchMessage(
-            {
-              id: toolMessage.parentId,
-              tool_call_id: toolCallId,
-              type: 'updateMessageTools',
-              value: { intervention: resolvingIntervention },
-            },
-            sourceOptimisticContext,
-          );
-        }
         if (actionType === 'submit') {
-          await this.setInterventionAnswers(toolMessageId, payload ?? {}, sourceOptimisticContext);
+          await this.setInterventionAnswers(toolMessageId, payload ?? {}, {
+            context: effectiveContext,
+          });
         }
         return;
       }
@@ -1717,10 +1749,11 @@ export class ConversationControlActionImpl {
     //
     // Fall back to the persisted `operationId` (stamped by
     // `applyInterventionRequest`) only for cards that never carried a durable
-    // batch: for those the legacy transport is the only route, and this is the
-    // one piece of provenance that survives a reload. A card that DID have a
-    // batch but whose durable source was unavailable is genuinely unroutable,
-    // so it falls through and fails loudly rather than guessing a transport.
+    // batch. A card that did have a batch but whose durable source reported
+    // `handled: false` is deliberately NOT routed here: it carries a sealed
+    // batch identity the source endpoint declined to claim, so bypassing it
+    // would answer a batch the durable path owns. It falls through and fails
+    // loudly instead.
     const persistedOperationId = originalIntervention?.batchId
       ? undefined
       : originalIntervention?.operationId;
@@ -1766,43 +1799,13 @@ export class ConversationControlActionImpl {
       (!operationAlive && originalIntervention?.localDesktop === true);
 
     if (!isLocalDesktopHetero) {
-      // Publishing the user intent is not completion. Keep the interaction
-      // pending but mark its in-flight phase so a remount cannot present an
-      // optimistic terminal state before the producer has consumed it.
-      //
-      // Local projection only — deliberately not persisted. `gatewayEventHandler`
-      // already treats `resolving` as a non-durable subscriber hint for the same
-      // reason: once it is written, `Intervention` disables every action on the
-      // card, and if the producer never ACKs that is permanent and survives a
-      // reload — the exact stuck-forever symptom this change exists to remove.
-      // In memory it still disables the card across remounts within the session,
-      // while a reload returns it to `pending` and submittable. A retry cannot
-      // double-apply: the durable claim and the legacy transport are both
-      // idempotent by `resolutionRequestId`.
-      const resolvingIntervention = {
-        ...originalIntervention,
-        resolving: true,
-        status: 'pending' as const,
-      };
-      this.#get().internal_dispatchMessage(
-        {
-          id: toolMessageId,
-          type: 'updateMessage',
-          value: { pluginIntervention: resolvingIntervention },
-        },
+      // Publishing the user intent is not completion: mark the in-flight phase
+      // so a remount cannot present an optimistic terminal state before the
+      // producer has consumed it.
+      this.#markInterventionResolving(
         { context: effectiveContext },
+        { originalIntervention, toolCallId, toolMessage, toolMessageId },
       );
-      if (toolMessage.parentId) {
-        this.#get().internal_dispatchMessage(
-          {
-            id: toolMessage.parentId,
-            tool_call_id: toolCallId,
-            type: 'updateMessageTools',
-            value: { intervention: resolvingIntervention },
-          },
-          { context: effectiveContext },
-        );
-      }
       if (actionType === 'submit') {
         await this.setInterventionAnswers(toolMessageId, payload ?? {}, optimisticContext);
       }
