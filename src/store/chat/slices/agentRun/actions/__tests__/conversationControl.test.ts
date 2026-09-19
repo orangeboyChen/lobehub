@@ -3205,6 +3205,61 @@ describe('ConversationControl actions', () => {
       );
     });
 
+    // Regression: the operation object is in-memory, so a reload erases it
+    // exactly when a pending card is still on screen. Without the persisted
+    // `localDesktop` marker, an op-less card took the remote branch and
+    // published the answer to a stream that an Electron-hosted producer never
+    // long-polls — the answer was lost and nothing threw.
+    it('sends a reloaded local-desktop card over IPC instead of the remote stream', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const agentId = 'reloaded-local-agent';
+      const topicId = 'reloaded-local-topic';
+      const chatKey = messageMapKey({ agentId, topicId });
+      const toolMessage = createMockMessage({
+        id: 'tool-msg-reloaded-local',
+        pluginIntervention: {
+          localDesktop: true,
+          operationId: 'persisted-local-operation',
+          status: 'pending',
+        },
+        role: 'tool',
+        tool_call_id: 'call-reloaded-local',
+      } as any);
+
+      act(() => {
+        useChatStore.setState({
+          activeAgentId: agentId,
+          activeTopicId: topicId,
+          dbMessagesMap: { [chatKey]: [toolMessage] },
+          messageOperationMap: {},
+          messagesMap: { [chatKey]: [toolMessage] },
+          operations: {},
+        });
+      });
+
+      vi.spyOn(result.current, 'optimisticUpdateMessagePlugin').mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'optimisticUpdateMessageContent').mockResolvedValue(undefined);
+      vi.spyOn(messageService, 'updateMessagePluginState').mockResolvedValue({
+        messages: [],
+        success: true,
+      });
+      const localSubmit = vi
+        .spyOn(heterogeneousAgentService, 'submitIntervention')
+        .mockResolvedValue(undefined as any);
+      const legacyRemoteSubmit = vi.mocked(lambdaClient.aiAgent.submitHeteroIntervention.mutate);
+
+      await act(async () => {
+        await result.current.submitHeteroIntervention('tool-msg-reloaded-local', 'submit', {
+          'Which color?': 'Blue',
+        });
+      });
+
+      expect(localSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ operationId: 'persisted-local-operation' }),
+      );
+      expect(legacyRemoteSubmit).not.toHaveBeenCalled();
+    });
+
     // Regression: `interactionKind` is server-authored. On a card that never
     // received it, submit produced no source action at all, so the durable
     // claim was skipped and the answer never left the client.

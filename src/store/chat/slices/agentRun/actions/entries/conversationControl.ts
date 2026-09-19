@@ -1748,7 +1748,14 @@ export class ConversationControlActionImpl {
       );
     }
     const optimisticContext: OptimisticUpdateContext = operationAlive ? { operationId } : {};
-    const isLocalDesktopHetero = operation?.type === 'execHeterogeneousAgent';
+    // The operation is what says which transport owns the producer — and it is
+    // in-memory, so a reload erases it exactly when a pending card is still on
+    // screen. Without the persisted marker below, an op-less card would always
+    // take the remote branch and publish to a Redis stream that an
+    // Electron-hosted producer never long-polls, losing the answer silently.
+    const isLocalDesktopHetero =
+      operation?.type === 'execHeterogeneousAgent' ||
+      (!operationAlive && originalIntervention?.localDesktop === true);
 
     if (!isLocalDesktopHetero) {
       // Publishing the user intent is not completion. Keep the interaction

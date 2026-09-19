@@ -401,4 +401,39 @@ describe('useAskUserForm additional notes', () => {
     hook.unmount();
     vi.useRealTimers();
   });
+
+  // Regression: the fallback used to be single-shot only because a failed
+  // submit left `submitting` permanently true. Now that a rejected submit
+  // releases the flag — and with it the `submitWith` identity the effect
+  // depends on — an unroutable card would re-fire the fallback forever,
+  // hammering a submit that can never succeed.
+  it('fires the timeout fallback once even when the submit is rejected', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-22T00:00:00Z'));
+    const onInteractionAction = vi.fn().mockRejectedValue(new Error('unroutable'));
+    const hook = renderHook(() =>
+      useAskUserForm({
+        args: singleQuestionArgs,
+        countdownMs: 1000,
+        onInteractionAction,
+        persistedDraft: undefined,
+        writeDraft: vi.fn(),
+      }),
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+
+    expect(onInteractionAction).toHaveBeenCalledExactlyOnceWith({
+      payload: { 'How broad?': 'Narrow' },
+      type: 'submit',
+    });
+
+    hook.unmount();
+    vi.useRealTimers();
+  });
 });
