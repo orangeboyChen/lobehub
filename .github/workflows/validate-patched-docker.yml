@@ -29,11 +29,36 @@ jobs:
         with:
           path: automation
 
-      - name: Checkout upstream canary
+      - name: Resolve build target
+        id: target
+        run: |
+          set -euo pipefail
+
+          # The image is built from the newest upstream release tag, not from
+          # canary — so that tag is the tree a patch has to apply to. Validating
+          # against canary instead misses a patch that only fits the newer tree
+          # and reports green while the build fails.
+          tag="$(
+            git ls-remote --tags --refs "https://github.com/${UPSTREAM_REPOSITORY}.git" 'refs/tags/v*' |
+              awk '{print $2}' |
+              sed 's#refs/tags/##' |
+              grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-canary\.[0-9]+)?$' |
+              sort -V |
+              tail -n 1
+          )"
+          if [ -z "$tag" ]; then
+            echo "No upstream release tag to validate against" >&2
+            exit 1
+          fi
+
+          echo "Validating against the build target ${tag}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout upstream build target
         uses: actions/checkout@v6
         with:
           repository: ${{ env.UPSTREAM_REPOSITORY }}
-          ref: canary
+          ref: ${{ steps.target.outputs.tag }}
           path: source
 
       - name: Apply local patches

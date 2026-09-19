@@ -37,7 +37,13 @@ env:
 
 jobs:
   patch-validation:
-    name: Validate Patches Against Upstream Canary
+    name: Validate Patches Against Build Target
+    needs: prepare
+    # Wait for the tag the build will actually use. Validating against canary
+    # reported green while the build failed: the patch set is applied to the
+    # release tag, and a patch that only fits the newer canary tree does not
+    # apply there. Nothing to build means nothing to validate.
+    if: needs.prepare.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout automation repository
@@ -45,11 +51,11 @@ jobs:
         with:
           path: automation
 
-      - name: Checkout upstream canary
+      - name: Checkout upstream build target
         uses: actions/checkout@v6
         with:
           repository: ${{ env.UPSTREAM_REPOSITORY }}
-          ref: canary
+          ref: ${{ fromJson(needs.prepare.outputs.matrix)[0].commit }}
           path: source
 
       - name: Validate local patches
@@ -103,16 +109,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "$BUILD_RESULT" = 'failure' ]; then
-            ref="$(jq -r '.[0].commit' <<<"$BUILD_MATRIX")"
-            [ -n "$ref" ] && [ "$ref" != 'null' ] || {
-              echo 'Unable to resolve the failed build release commit' >&2
-              exit 1
-            }
-            mode='failed-release-build'
-          else
+          # Both branches repair against the tree the image is built from. The
+          # validation job targets that tree too, so a patch produced against
+          # canary would be "fixed" into a shape that still does not apply where
+          # the build runs. Canary is only the fallback when nothing resolved.
+          ref="$(jq -r '.[0].commit' <<<"$BUILD_MATRIX")"
+          if [ -z "$ref" ] || [ "$ref" = 'null' ]; then
             ref='canary'
             mode='canary-patch-validation'
+          elif [ "$BUILD_RESULT" = 'failure' ]; then
+            mode='failed-release-build'
+          else
+            mode='build-target-patch-validation'
           fi
 
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
