@@ -3,6 +3,7 @@ import { type AgentRuntimeContext } from '@lobechat/agent-runtime';
 import { isHeterogeneousAgentModelId, MESSAGE_CANCEL_FLAT } from '@lobechat/const';
 import {
   type ChatTopicStatus,
+  classifyToolInterventionPresentation,
   type ConversationContext,
   type MessageMetadata,
   resolveAgentAgencyConfig,
@@ -1610,13 +1611,19 @@ export class ConversationControlActionImpl {
     context?: ConversationContext,
   ): Promise<void> => {
     const toolMessage = dbMessageSelectors.getDbMessageById(toolMessageId)(this.#get());
-    if (!toolMessage) return;
+    // Every early exit below means the answer cannot reach the producer. Return
+    // silently and the form's `submitting` flag (released only on a rejected
+    // submit) spins forever with nothing in the DB to explain it — the reported
+    // "click Submit, stuck in loading, refresh doesn't help". Fail loudly so the
+    // form recovers and the reason is on the record.
+    if (!toolMessage)
+      throw new Error(`[submitHeteroIntervention] unknown tool message ${toolMessageId}`);
 
     const toolCallId = toolMessage.tool_call_id;
-    if (!toolCallId) {
-      console.warn('[submitHeteroIntervention] tool message has no tool_call_id', toolMessageId);
-      return;
-    }
+    if (!toolCallId)
+      throw new Error(
+        `[submitHeteroIntervention] tool message ${toolMessageId} has no tool_call_id`,
+      );
 
     const effectiveContext: ConversationContext = context ?? {
       agentId: this.#get().activeAgentId,
@@ -1629,11 +1636,20 @@ export class ConversationControlActionImpl {
       toolMessage.pluginState as
         { heterogeneousIntervention?: { interactionKind?: unknown } } | undefined
     )?.heterogeneousIntervention;
-    const sourceAction = toHeterogeneousSourceAction(
-      actionType,
-      interventionState?.interactionKind,
-      payload ?? {},
-    );
+    // `interactionKind` is server-authored (`pluginState.heterogeneousIntervention`);
+    // a card raised from a client-side bridge event carries none of it, which
+    // left `toHeterogeneousSourceAction` with no branch to match on a submit and
+    // returned `undefined` — closing the durable claim to the only action that
+    // needs it most. Derive it from the tool identity instead, using the same
+    // classifier the server uses (`agentInterventionNotification`) so the two
+    // cannot disagree about what an `askUserQuestion` card is.
+    const interactionKind =
+      interventionState?.interactionKind ??
+      classifyToolInterventionPresentation(
+        toolMessage.plugin?.identifier ?? '',
+        toolMessage.plugin?.apiName,
+      ).interactionKind;
+    const sourceAction = toHeterogeneousSourceAction(actionType, interactionKind, payload ?? {});
 
     // A persisted v2 card carries everything the server needs to locate and
     // authorize the intervention. Resolve it before consulting ephemeral
@@ -1688,13 +1704,27 @@ export class ConversationControlActionImpl {
     // until the durable path is unavailable or reports `handled: false`; it is
     // provenance for local desktop IPC / legacy fallback, never server auth.
     const { messageOperationMap } = this.#get();
+    // `messageOperationMap` is in-memory only — it is empty after a refresh or
+    // cold start, which is exactly when a pending card is still on screen.
+    //
+    // Fall back to the persisted `operationId` (stamped by
+    // `applyInterventionRequest`) only for cards that never carried a durable
+    // batch: for those the legacy transport is the only route, and this is the
+    // one piece of provenance that survives a reload. A card that DID have a
+    // batch but whose durable source was unavailable is genuinely unroutable,
+    // so it falls through and fails loudly rather than guessing a transport.
+    const persistedOperationId = originalIntervention?.batchId
+      ? undefined
+      : originalIntervention?.operationId;
     const candidateOperationId =
       (toolMessage.parentId && messageOperationMap?.[toolMessage.parentId]) ??
-      messageOperationMap?.[toolMessageId];
+      messageOperationMap?.[toolMessageId] ??
+      persistedOperationId;
 
     if (!candidateOperationId) {
-      console.warn('[submitHeteroIntervention] no operationId for', toolMessageId);
-      return;
+      throw new Error(
+        `[submitHeteroIntervention] no operation provenance for tool message ${toolMessageId}`,
+      );
     }
 
     // Resolve the runtime execution op before choosing IPC vs remote transport.
@@ -1726,7 +1756,10 @@ export class ConversationControlActionImpl {
       // an optimistic terminal state before the producer has consumed it.
       await this.#get().optimisticUpdateMessagePlugin(
         toolMessageId,
-        { intervention: { resolving: true, status: 'pending' } },
+        // Spread the current intervention: the server write replaces the whole
+        // column, so a bare `{ resolving, status }` would drop the persisted
+        // `operationId` / `batchId` and leave a reloaded card unroutable.
+        { intervention: { ...originalIntervention, resolving: true, status: 'pending' } },
         optimisticContext,
       );
       if (actionType === 'submit') {

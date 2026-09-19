@@ -3099,7 +3099,10 @@ describe('ConversationControl actions', () => {
       expect(persistAnswersSpy).not.toHaveBeenCalled();
     });
 
-    it('fails closed after an unavailable durable source when operation memory is empty', async () => {
+    // Failing closed means not claiming success — it still has to be audible.
+    // A silent return here is what left the form's Submit spinning forever,
+    // because `useAskUserForm` only releases `submitting` on a rejected submit.
+    it('fails loudly after an unavailable durable source when operation memory is empty', async () => {
       const { result } = renderHook(() => useChatStore());
       const agentId = 'remote-agent';
       const topicId = 'remote-topic';
@@ -3138,16 +3141,122 @@ describe('ConversationControl actions', () => {
         .spyOn(heterogeneousAgentService, 'submitIntervention')
         .mockResolvedValue(undefined as any);
 
-      await act(async () => {
-        await result.current.submitHeteroIntervention('tool-msg-source-unavailable', 'submit', {
-          Question: 'Answer',
-        });
-      });
+      await expect(
+        act(async () => {
+          await result.current.submitHeteroIntervention('tool-msg-source-unavailable', 'submit', {
+            Question: 'Answer',
+          });
+        }),
+      ).rejects.toThrow(/no operation provenance/);
 
       expect(sourceMutation).toHaveBeenCalledOnce();
       expect(pluginSpy).not.toHaveBeenCalled();
       expect(legacyRemoteSubmit).not.toHaveBeenCalled();
       expect(localSubmit).not.toHaveBeenCalled();
+    });
+
+    // Regression: a card raised from a client-side bridge event carries no
+    // `batchId` and no `pluginState.heterogeneousIntervention`, so the durable
+    // claim is closed to it and the only provenance is the persisted
+    // `pluginIntervention.operationId`. `messageOperationMap` is in-memory only
+    // and empty after a reload — without the persisted fallback this click
+    // routed nothing at all and the Submit button spun forever.
+    it('routes a reloaded card through the persisted operationId', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const agentId = 'reloaded-agent';
+      const topicId = 'reloaded-topic';
+      const chatKey = messageMapKey({ agentId, topicId });
+      const toolMessage = createMockMessage({
+        id: 'tool-msg-reloaded',
+        pluginIntervention: { operationId: 'persisted-operation', status: 'pending' },
+        role: 'tool',
+        tool_call_id: 'call-reloaded',
+      } as any);
+
+      act(() => {
+        useChatStore.setState({
+          activeAgentId: agentId,
+          activeTopicId: topicId,
+          dbMessagesMap: { [chatKey]: [toolMessage] },
+          messageOperationMap: {},
+          messagesMap: { [chatKey]: [toolMessage] },
+          operations: {},
+        });
+      });
+
+      const pluginSpy = vi
+        .spyOn(result.current, 'optimisticUpdateMessagePlugin')
+        .mockResolvedValue(undefined);
+      vi.spyOn(messageService, 'updateMessagePluginState').mockResolvedValue({
+        messages: [],
+        success: true,
+      });
+      const legacyRemoteSubmit = vi.mocked(lambdaClient.aiAgent.submitHeteroIntervention.mutate);
+
+      await act(async () => {
+        await result.current.submitHeteroIntervention('tool-msg-reloaded', 'submit', {
+          'Which color?': 'Blue',
+        });
+      });
+
+      expect(pluginSpy).toHaveBeenCalled();
+      expect(legacyRemoteSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ operationId: 'persisted-operation' }),
+      );
+    });
+
+    // Regression: `interactionKind` is server-authored. On a card that never
+    // received it, submit produced no source action at all, so the durable
+    // claim was skipped and the answer never left the client.
+    it('derives the question kind from the tool identity when pluginState has none', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const agentId = 'unlabelled-agent';
+      const topicId = 'unlabelled-topic';
+      const chatKey = messageMapKey({ agentId, topicId });
+      const toolMessage = createMockMessage({
+        id: 'tool-msg-unlabelled',
+        plugin: { apiName: 'askUserQuestion', identifier: 'claude-code' },
+        pluginIntervention: {
+          batchId: 'batch-unlabelled',
+          operationId: 'operation-unlabelled',
+          status: 'pending',
+        },
+        role: 'tool',
+        tool_call_id: 'call-unlabelled',
+      } as any);
+
+      act(() => {
+        useChatStore.setState({
+          activeAgentId: agentId,
+          activeTopicId: topicId,
+          dbMessagesMap: { [chatKey]: [toolMessage] },
+          messageOperationMap: {},
+          messagesMap: { [chatKey]: [toolMessage] },
+          operations: {},
+        });
+      });
+
+      const sourceMutation = vi.mocked(
+        lambdaClient.aiAgent.resolveAgentInterventionBySource.mutate,
+      );
+      sourceMutation.mockResolvedValueOnce({
+        contractVersion: 2,
+        state: 'claimed',
+        status: 'approved',
+        success: true,
+      });
+
+      await act(async () => {
+        await result.current.submitHeteroIntervention('tool-msg-unlabelled', 'submit', {
+          'Which color?': 'Blue',
+        });
+      });
+
+      expect(sourceMutation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: { result: { 'Which color?': 'Blue' }, type: 'submit_answers' },
+        }),
+      );
     });
 
     it('uses the in-memory runtime identity only for the handled-false local desktop fallback', async () => {

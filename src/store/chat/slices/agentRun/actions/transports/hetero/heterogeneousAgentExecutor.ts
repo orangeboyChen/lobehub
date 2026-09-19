@@ -968,7 +968,11 @@ export const executeHeterogeneousAgent = async (
     try {
       await get().optimisticUpdateMessagePlugin(
         toolMsgId,
-        { intervention: { status: 'pending' } },
+        // Carry `operationId`: it is the only provenance that survives a
+        // refresh, and `submitHeteroIntervention` falls back to it when the
+        // in-memory `messageOperationMap` is gone. Without it a reloaded card
+        // could not be routed at all and its Submit click did nothing.
+        { intervention: { operationId, status: 'pending' } },
         { operationId },
       );
       // Sidebar topic row swaps the running spinner for a hand icon
