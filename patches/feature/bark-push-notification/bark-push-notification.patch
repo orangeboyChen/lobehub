@@ -1216,10 +1216,10 @@ index 0000000000..9b2253ad12
 +});
 diff --git a/apps/server/src/services/notification/__tests__/slots.test.ts b/apps/server/src/services/notification/__tests__/slots.test.ts
 new file mode 100644
-index 0000000000..f2051605d3
+index 0000000000..3a512a8ceb
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/slots.test.ts
-@@ -0,0 +1,256 @@
+@@ -0,0 +1,258 @@
 +// @vitest-environment node
 +import { beforeEach, describe, expect, it, vi } from 'vitest';
 +
@@ -1258,7 +1258,9 @@ index 0000000000..f2051605d3
 +    expect(params).toMatchObject({
 +      actionUrl: '/agent/a1/t1',
 +      category: 'agent',
-+      content: 'Here is the **summary**.',
++      // Flattened at the source, not just on the way out: the inbox stores
++      // this string and renders it raw.
++      content: 'Here is the summary.',
 +      dedupeKey: 'agent_run_completed:op-1',
 +      metadata: { agent: { id: 'a1' } },
 +      title: 'Agent task completed',
@@ -2052,10 +2054,10 @@ index 0000000000..14cccfcbfc
 +  });
 diff --git a/packages/business-server/src/notification/format.ts b/packages/business-server/src/notification/format.ts
 new file mode 100644
-index 0000000000..b18eb615b1
+index 0000000000..7316390d5b
 --- /dev/null
 +++ b/packages/business-server/src/notification/format.ts
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,95 @@
 +import { getAppConfig } from '@/envs/app';
 +
 +/** Hard cap for a single-line field; returns undefined for blank input. */
@@ -2093,9 +2095,16 @@ index 0000000000..b18eb615b1
 +    .replaceAll(/\s+/g, ' ')
 +    .trim();
 +
-+/** Collapse whitespace so a multi-line reply does not blow up a push payload. */
++/**
++ * One line of plain text for a notification.
++ *
++ * Every slot routes its user-authored text through here — an assistant reply,
++ * a task name, a provider error — and none of it may reach a notification as
++ * markdown: the inbox renders it raw and a phone banner has no renderer at
++ * all. Flatten first, then cap, so the budget is spent on words.
++ */
 +export const previewText = (text?: string, fallback = '', maxLength = 200): string =>
-+  clampText(text, maxLength) ?? fallback;
++  clampText(text ? stripMarkdown(text) : undefined, maxLength) ?? fallback;
 +
 +/**
 + * Relative SPA path for a conversation.
