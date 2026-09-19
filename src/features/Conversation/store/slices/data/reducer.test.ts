@@ -266,6 +266,67 @@ describe('messagesReducer', () => {
       const newState = messagesReducer(initialState, payload);
       expect(newState).toBe(initialState);
     });
+
+    // Regression: `getPendingInterventions` gates on the tool row's top-level
+    // `pluginIntervention.status`, not on `plugin.intervention`. Approving an
+    // AskUserQuestion only patched `plugin`, so the row stayed pending and the
+    // form kept its Submit button in loading forever.
+    it('should mirror an intervention patch onto the tool row pluginIntervention', () => {
+      const stateWithToolMessage: UIChatMessage[] = [
+        {
+          id: 'toolMessage',
+          role: 'tool',
+          content: 'Awaiting an answer',
+          createdAt: 1629264000000,
+          updatedAt: 1629264000000,
+          plugin: {
+            apiName: 'askUserQuestion',
+            arguments: '{}',
+            identifier: 'lobe-user-interaction',
+            type: 'default',
+          },
+          pluginIntervention: { batchId: 'batch-1', operationId: 'op-1', status: 'pending' },
+          tool_call_id: 'abc',
+        } as UIChatMessage,
+      ];
+
+      const newState = messagesReducer(stateWithToolMessage, {
+        type: 'updateMessagePlugin',
+        id: 'toolMessage',
+        value: { intervention: { status: 'approved' } },
+      });
+
+      expect(newState.find((m) => m.id === 'toolMessage')?.pluginIntervention).toEqual({
+        batchId: 'batch-1',
+        operationId: 'op-1',
+        status: 'approved',
+      });
+    });
+
+    it('should leave pluginIntervention alone when no intervention is patched', () => {
+      const stateWithToolMessage: UIChatMessage[] = [
+        {
+          id: 'toolMessage',
+          role: 'tool',
+          content: 'Tool content',
+          createdAt: 1629264000000,
+          updatedAt: 1629264000000,
+          plugin: { apiName: 'calculator', arguments: '', identifier: 'tool1', type: 'default' },
+          pluginIntervention: { status: 'pending' },
+          tool_call_id: 'abc',
+        } as UIChatMessage,
+      ];
+
+      const newState = messagesReducer(stateWithToolMessage, {
+        type: 'updateMessagePlugin',
+        id: 'toolMessage',
+        value: { identifier: 'newPlugin' },
+      });
+
+      expect(newState.find((m) => m.id === 'toolMessage')?.pluginIntervention).toEqual({
+        status: 'pending',
+      });
+    });
   });
 
   describe('updateMessageTools', () => {

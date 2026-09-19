@@ -194,6 +194,16 @@ export const messagesReducer = (
         if (!message || message.role !== 'tool') return;
 
         message.plugin = merge(message.plugin, value);
+        // `plugin.intervention` and the top-level `pluginIntervention` are two
+        // projections of the same persisted column, and only the top-level one
+        // is read: the pending-intervention list gates on
+        // `pluginIntervention.status`, and the intervention card reads
+        // `pluginIntervention.resolving`. Patching `plugin` alone therefore left
+        // an approved AskUserQuestion card pending — it stayed mounted and its
+        // Submit button never left its loading state.
+        if (value.intervention) {
+          message.pluginIntervention = { ...message.pluginIntervention, ...value.intervention };
+        }
         message.updatedAt = Date.now();
       });
     }
