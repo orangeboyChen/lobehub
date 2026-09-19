@@ -1585,6 +1585,47 @@ export class ConversationControlActionImpl {
   };
 
   /**
+   * Stamp the in-flight phase on a pending intervention, on both local
+   * projections (the tool row's `pluginIntervention` and the parent assistant's
+   * `tools[].intervention`).
+   *
+   * Local only — deliberately not persisted. `gatewayEventHandler` already
+   * treats `resolving` as a non-durable subscriber hint for the same reason:
+   * once it is written, `Intervention` disables every action on the card, and if
+   * the producer never ACKs that is permanent and survives a reload — the exact
+   * stuck-forever symptom this change exists to remove. In memory it still
+   * disables the card across remounts within the session, while a reload returns
+   * it to `pending` and submittable. A retry cannot double-apply: the durable
+   * claim and the legacy transport are both idempotent by `resolutionRequestId`.
+   */
+  #markInterventionResolving = (
+    context: OptimisticUpdateContext,
+    toolMessage: UIChatMessage,
+    intervention?: ToolIntervention,
+  ): void => {
+    const resolvingIntervention = { ...intervention, resolving: true, status: 'pending' as const };
+    this.#get().internal_dispatchMessage(
+      {
+        id: toolMessage.id,
+        type: 'updateMessage',
+        value: { pluginIntervention: resolvingIntervention },
+      },
+      context,
+    );
+    if (toolMessage.parentId && toolMessage.tool_call_id) {
+      this.#get().internal_dispatchMessage(
+        {
+          id: toolMessage.parentId,
+          tool_call_id: toolMessage.tool_call_id,
+          type: 'updateMessageTools',
+          value: { intervention: resolvingIntervention },
+        },
+        context,
+      );
+    }
+  };
+
+  /**
    * Resolve a heterogeneous-runtime intervention (CC AskUserQuestion, …).
    *
    * Why this action exists separately from `submitToolInteraction`:
@@ -1605,56 +1646,6 @@ export class ConversationControlActionImpl {
    *     bridge resolves with `cancelReason` and CC sees an isError result
    *     (it'll fall back to plain-text questioning)
    */
-  /**
-   * Stamp the in-flight phase on a pending intervention, on both local
-   * projections (the tool row's `pluginIntervention` and the parent assistant's
-   * `tools[].intervention`).
-   *
-   * Local only — deliberately not persisted. `gatewayEventHandler` already
-   * treats `resolving` as a non-durable subscriber hint for the same reason:
-   * once it is written, `Intervention` disables every action on the card, and if
-   * the producer never ACKs that is permanent and survives a reload — the exact
-   * stuck-forever symptom this change exists to remove. In memory it still
-   * disables the card across remounts within the session, while a reload returns
-   * it to `pending` and submittable. A retry cannot double-apply: the durable
-   * claim and the legacy transport are both idempotent by `resolutionRequestId`.
-   */
-  #markInterventionResolving = (
-    context: OptimisticUpdateContext,
-    params: {
-      originalIntervention?: ToolIntervention;
-      toolCallId: string;
-      toolMessage: UIChatMessage;
-      toolMessageId: string;
-    },
-  ): void => {
-    const { originalIntervention, toolCallId, toolMessage, toolMessageId } = params;
-    const resolvingIntervention = {
-      ...originalIntervention,
-      resolving: true,
-      status: 'pending' as const,
-    };
-    this.#get().internal_dispatchMessage(
-      {
-        id: toolMessageId,
-        type: 'updateMessage',
-        value: { pluginIntervention: resolvingIntervention },
-      },
-      context,
-    );
-    if (toolMessage.parentId) {
-      this.#get().internal_dispatchMessage(
-        {
-          id: toolMessage.parentId,
-          tool_call_id: toolCallId,
-          type: 'updateMessageTools',
-          value: { intervention: resolvingIntervention },
-        },
-        context,
-      );
-    }
-  };
-
   submitHeteroIntervention = async (
     toolMessageId: string,
     actionType: 'submit' | 'skip' | 'cancel',
@@ -1726,7 +1717,8 @@ export class ConversationControlActionImpl {
       if (sourceResolution.handled) {
         this.#markInterventionResolving(
           { context: effectiveContext },
-          { originalIntervention, toolCallId, toolMessage, toolMessageId },
+          toolMessage,
+          originalIntervention,
         );
         if (actionType === 'submit') {
           await this.setInterventionAnswers(toolMessageId, payload ?? {}, {
@@ -1804,7 +1796,8 @@ export class ConversationControlActionImpl {
       // producer has consumed it.
       this.#markInterventionResolving(
         { context: effectiveContext },
-        { originalIntervention, toolCallId, toolMessage, toolMessageId },
+        toolMessage,
+        originalIntervention,
       );
       if (actionType === 'submit') {
         await this.setInterventionAnswers(toolMessageId, payload ?? {}, optimisticContext);
