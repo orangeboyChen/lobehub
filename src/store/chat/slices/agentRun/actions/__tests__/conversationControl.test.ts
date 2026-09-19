@@ -3187,6 +3187,7 @@ describe('ConversationControl actions', () => {
       const pluginSpy = vi
         .spyOn(result.current, 'optimisticUpdateMessagePlugin')
         .mockResolvedValue(undefined);
+      const dispatchSpy = vi.spyOn(result.current, 'internal_dispatchMessage');
       vi.spyOn(messageService, 'updateMessagePluginState').mockResolvedValue({
         messages: [],
         success: true,
@@ -3199,7 +3200,23 @@ describe('ConversationControl actions', () => {
         });
       });
 
-      expect(pluginSpy).toHaveBeenCalled();
+      // The in-flight marker is local only, so a reload cannot inherit a card
+      // that is permanently disabled with no producer left to ACK it.
+      expect(pluginSpy).not.toHaveBeenCalled();
+      expect(dispatchSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'tool-msg-reloaded',
+          type: 'updateMessage',
+          value: {
+            pluginIntervention: {
+              operationId: 'persisted-operation',
+              resolving: true,
+              status: 'pending',
+            },
+          },
+        }),
+        expect.anything(),
+      );
       expect(legacyRemoteSubmit).toHaveBeenCalledWith(
         expect.objectContaining({ operationId: 'persisted-operation' }),
       );
@@ -3708,6 +3725,7 @@ describe('ConversationControl actions', () => {
       const pluginSpy = vi
         .spyOn(result.current, 'optimisticUpdateMessagePlugin')
         .mockResolvedValue(undefined);
+      const dispatchSpy = vi.spyOn(result.current, 'internal_dispatchMessage');
       vi.spyOn(result.current, 'optimisticUpdateMessageContent').mockResolvedValue(undefined);
       const updateTopicStatusSpy = vi
         .spyOn(result.current, 'updateTopicStatus')
@@ -3726,10 +3744,17 @@ describe('ConversationControl actions', () => {
 
       // Remote publish is only transport acceptance: keep the form pending,
       // mark it resolving, and use the empty global-state fallback context.
-      expect(pluginSpy).toHaveBeenCalledWith(
-        'tool-msg-1',
-        { intervention: { resolving: true, status: 'pending' } },
-        {},
+      // `resolving` is a local projection only — persisting it would strand the
+      // card permanently if the producer never ACKs, and a reload could not
+      // clear it. See the in-flight comment in `submitHeteroIntervention`.
+      expect(pluginSpy).not.toHaveBeenCalled();
+      expect(dispatchSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'tool-msg-1',
+          type: 'updateMessage',
+          value: { pluginIntervention: { resolving: true, status: 'pending' } },
+        }),
+        expect.anything(),
       );
       expect(updateTopicStatusSpy).not.toHaveBeenCalled();
 
@@ -3773,7 +3798,8 @@ describe('ConversationControl actions', () => {
       });
       expect(pluginSpy).toHaveBeenLastCalledWith(
         'tool-msg-1',
-        { intervention: { status: 'pending' } },
+        // The restore must not persist the local-only `resolving` hint.
+        { intervention: { resolving: false, status: 'pending' } },
         {},
       );
     });
