@@ -51,7 +51,7 @@ index 8d5de20eea..426e9c344e 100644
        topicId: event.topicId,
 diff --git a/apps/server/src/services/notification/__tests__/bark.test.ts b/apps/server/src/services/notification/__tests__/bark.test.ts
 new file mode 100644
-index 0000000000..ee19e1d3ea
+index 0000000000..33e8c4be99
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/bark.test.ts
 @@ -0,0 +1,257 @@
@@ -178,7 +178,7 @@ index 0000000000..ee19e1d3ea
 +    // back to its own defaults instead of the caller's omissions.
 +    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
 +      body: 'body',
-+      call: 1,
++      call: '1',
 +      level: 'critical',
 +      title: 'title',
 +    });
@@ -406,10 +406,10 @@ index 0000000000..ea201ce7d3
 +});
 diff --git a/apps/server/src/services/notification/__tests__/format.test.ts b/apps/server/src/services/notification/__tests__/format.test.ts
 new file mode 100644
-index 0000000000..2336604794
+index 0000000000..3c4951c10f
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/format.test.ts
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,112 @@
 +// @vitest-environment node
 +import { beforeEach, describe, expect, it, vi } from 'vitest';
 +
@@ -418,6 +418,7 @@ index 0000000000..2336604794
 +  buildPublicUrl,
 +  clampText,
 +  previewText,
++  stripMarkdown,
 +} from '@/business/server/notification/format';
 +
 +const { mockAppUrl } = vi.hoisted(() => ({
@@ -495,12 +496,38 @@ index 0000000000..2336604794
 +    expect(buildPublicUrl(undefined)).toBeUndefined();
 +  });
 +});
++
++describe('stripMarkdown', () => {
++  it('leaves plain text alone', () => {
++    expect(stripMarkdown('Just a sentence.')).toBe('Just a sentence.');
++  });
++
++  it('drops emphasis markers but keeps the words', () => {
++    expect(stripMarkdown('**bold** and `code` and ~~gone~~')).toBe('bold and code and gone');
++  });
++
++  it('drops heading, list and quote markers', () => {
++    expect(stripMarkdown('## Title\n- one\n- two\n> quoted')).toBe('Title one two quoted');
++  });
++
++  it('keeps a link label and drops its url', () => {
++    expect(stripMarkdown('see [the docs](https://example.com/a)')).toBe('see the docs');
++  });
++
++  it('unwraps a fenced code block into a line', () => {
++    expect(stripMarkdown('before\n```ts\nconst a = 1;\n```\nafter')).toBe('before after');
++  });
++
++  it('collapses the result to a single line', () => {
++    expect(stripMarkdown('# a\n\n\nb   c')).toBe('a b c');
++  });
++});
 diff --git a/apps/server/src/services/notification/__tests__/notifyUser.test.ts b/apps/server/src/services/notification/__tests__/notifyUser.test.ts
 new file mode 100644
-index 0000000000..b865350448
+index 0000000000..37bd2f164e
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/notifyUser.test.ts
-@@ -0,0 +1,428 @@
+@@ -0,0 +1,495 @@
 +// @vitest-environment node
 +import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 +
@@ -818,6 +845,50 @@ index 0000000000..b865350448
 +    });
 +  });
 +
++  it('leads the push with the agent that ran, not the canonical copy', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++    mockGetAgentAvatarsByIds.mockResolvedValue([
++      { avatar: 'https://cdn.example.com/a1.png', id: 'a1', name: 'Researcher', title: null },
++    ]);
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, actionUrl: '/agent/a1/t1' });
++
++    // The inbox renders the row's `title` nowhere visible — it shows the agent
++    // beside the content — so "Agent run finished" on the phone tells the
++    // reader nothing they cannot already see.
++    expect(pushBody(fetchMock).title).toBe('Researcher');
++  });
++
++  it('falls back to the canonical title when no agent resolves', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++
++    const { notifyUser } = await load();
++
++    await notifyUser(baseParams);
++
++    expect(pushBody(fetchMock).title).toBe('Agent run finished');
++  });
++
++  it('strips markdown from the push but not from the row', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, content: '**Done** — see [it](https://x.com/a)' });
++
++    // The inbox renders markdown; a lock-screen banner shows the raw asterisks
++    // and brackets, so only the push is flattened.
++    expect(pushBody(fetchMock).body).toBe('Done — see it');
++    expect(mockCreate).toHaveBeenCalledWith(
++      expect.objectContaining({ content: '**Done** — see [it](https://x.com/a)' }),
++    );
++  });
++
 +  it('resolves a site-relative avatar against the public origin', async () => {
 +    const fetchMock = vi.fn().mockResolvedValue(okResponse());
 +    vi.stubGlobal('fetch', fetchMock);
@@ -846,10 +917,33 @@ index 0000000000..b865350448
 +
 +    await notifyUser({ ...baseParams, actionUrl: '/agent/a1/t1' });
 +
-+    // An emoji has no image for APNs to fetch, so the push carries the default
-+    // mark rather than arriving faceless.
-+    expect(pushBody(fetchMock).icon).toBe('https://app.example.com/avatars/agent-default.png');
++    // An emoji has no URL for APNs to fetch, so it is rasterised by the avatar
++    // endpoint instead of the push arriving faceless.
++    expect(pushBody(fetchMock).icon).toBe('https://app.example.com/webapi/agent/avatar/a1');
 +    expect(pushBody(fetchMock).group).toBe('Researcher');
++  });
++
++  it('sends a webp avatar through the flattening endpoint', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++    mockGetAgentAvatarsByIds.mockResolvedValue([
++      {
++        avatar:
++          'https://registry.npmmirror.com/@lobehub/icons-static-avatar/1.14.0/files/avatars/claudecode.webp',
++        id: 'a1',
++        name: 'Claude Code',
++        title: null,
++      },
++    ]);
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, actionUrl: '/agent/a1/t1' });
++
++    // What the static avatar package ships, and what a lock screen renders as
++    // nothing — hence the conversion hop.
++    expect(pushBody(fetchMock).icon).toBe('https://app.example.com/webapi/agent/avatar/a1');
++    expect(pushBody(fetchMock).group).toBe('Claude Code');
 +  });
 +
 +  it('falls back to a shared group when no agent can be resolved', async () => {
@@ -902,7 +996,7 @@ index 0000000000..b865350448
 +
 +    // Someone has to answer before the run continues, so this one pierces
 +    // silent mode and keeps sounding.
-+    expect(pushBody(fetchMock)).toMatchObject({ call: 1, level: 'critical' });
++    expect(pushBody(fetchMock)).toMatchObject({ call: '1', level: 'critical' });
 +  });
 +
 +  it('escalates a scheduled failure through the interruption levels', async () => {
@@ -1434,12 +1528,10 @@ index 9ce4cc2b45..48668f95f1 100644
 +}
 diff --git a/packages/business-server/src/notification/agentMeta.ts b/packages/business-server/src/notification/agentMeta.ts
 new file mode 100644
-index 0000000000..c279b143ce
+index 0000000000..f585b67585
 --- /dev/null
 +++ b/packages/business-server/src/notification/agentMeta.ts
-@@ -0,0 +1,81 @@
-+import { DEFAULT_AVATAR } from '@lobechat/const';
-+
+@@ -0,0 +1,89 @@
 +import { AgentModel } from '@/database/models/agent';
 +import type { LobeChatDatabase } from '@/database/type';
 +
@@ -1470,26 +1562,36 @@ index 0000000000..c279b143ce
 +};
 +
 +/**
-+ * An image URL APNs can actually fetch, or undefined.
++ * Formats iOS cannot decode into a notification icon.
 + *
-+ * Agent avatars are free text and three shapes occur: an absolute
-+ * `https://…` URL, a **site-relative path** (`/avatars/agent-default.png`,
-+ * which is what `DEFAULT_AVATAR` and most shipped agents use), and an emoji.
-+ * Only the first two can be an iOS notification icon, so a relative path is
-+ * resolved against `APP_URL` — the same origin the deep link uses, and the
-+ * same loopback rule, because APNs fetches the icon from its own network
-+ * where `http://localhost` resolves to nothing.
-+ *
-+ * An emoji has no image to point at, so it falls back to the default avatar
-+ * rather than leaving the push faceless.
++ * Webp is the one that actually bites: the browser shows it fine, and it is
++ * what the static avatar package ships, but the lock screen renders nothing.
 + */
-+const resolveIconUrl = (avatar: string | null | undefined): string | undefined => {
-+  const value = avatar?.trim();
-+  if (!value) return buildPublicUrl(DEFAULT_AVATAR);
-+  if (isAbsoluteUrl(value)) return value;
-+  if (value.startsWith('/')) return buildPublicUrl(value);
++const NEEDS_FLATTENING = /\.(?:webp|avif|svg|gif|heic|heif)(?:\?|$)/i;
 +
-+  return buildPublicUrl(DEFAULT_AVATAR);
++/**
++ * An image URL APNs can actually fetch and decode, or undefined.
++ *
++ * Agent avatars are free text and three shapes occur: an absolute `https://…`
++ * URL, a **site-relative path** (`/avatars/agent-default.png`, which is what
++ * the packaged default and most shipped agents use), and an emoji. The first two
++ * are sent straight through — a relative one resolved against `APP_URL`, the
++ * same origin and loopback rule the deep link uses, because APNs fetches the
++ * icon from its own network where `http://localhost` resolves to nothing.
++ *
++ * Everything else goes to the avatar endpoint, which flattens it into a png:
++ * a webp converted, an emoji rasterised. That way the push carries the
++ * agent's own mark instead of Bark's.
++ */
++const resolveIconUrl = (avatar: string | null | undefined, agentId: string): string | undefined => {
++  const value = avatar?.trim();
++
++  if (value && !NEEDS_FLATTENING.test(value)) {
++    if (isAbsoluteUrl(value)) return value;
++    if (value.startsWith('/')) return buildPublicUrl(value);
++  }
++
++  return buildPublicUrl(`/webapi/agent/avatar/${encodeURIComponent(agentId)}`);
 +};
 +
 +/**
@@ -1512,7 +1614,7 @@ index 0000000000..c279b143ce
 +    const label = agent.name || agent.title || undefined;
 +
 +    return {
-+      iconUrl: resolveIconUrl(agent.avatar),
++      iconUrl: resolveIconUrl(agent.avatar, agentId),
 +      name: label,
 +    };
 +  } catch {
@@ -1521,10 +1623,10 @@ index 0000000000..c279b143ce
 +};
 diff --git a/packages/business-server/src/notification/bark.ts b/packages/business-server/src/notification/bark.ts
 new file mode 100644
-index 0000000000..7080f61f70
+index 0000000000..91b99294a0
 --- /dev/null
 +++ b/packages/business-server/src/notification/bark.ts
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,144 @@
 +import { pushConfig } from './config';
 +import type { BarkLevel } from './levels';
 +
@@ -1629,7 +1731,9 @@ index 0000000000..7080f61f70
 +      // the hints this message actually set.
 +      body: JSON.stringify({
 +        body: message.body,
-+        call: message.call ? 1 : undefined,
++        // The docs type this as a string whose only value is "1"; a JSON
++        // number is not read back as an enabled flag.
++        call: message.call ? '1' : undefined,
 +        group: message.group,
 +        icon: message.icon,
 +        level: message.level,
@@ -1764,10 +1868,10 @@ index 0000000000..14cccfcbfc
 +  });
 diff --git a/packages/business-server/src/notification/format.ts b/packages/business-server/src/notification/format.ts
 new file mode 100644
-index 0000000000..ef0a6405ef
+index 0000000000..b18eb615b1
 --- /dev/null
 +++ b/packages/business-server/src/notification/format.ts
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,88 @@
 +import { getAppConfig } from '@/envs/app';
 +
 +/** Hard cap for a single-line field; returns undefined for blank input. */
@@ -1779,6 +1883,31 @@ index 0000000000..ef0a6405ef
 +
 +  return `${collapsed.slice(0, maxLength - 1)}…`;
 +};
++
++/**
++ * Markdown to plain text for a push body.
++ *
++ * The same content is stored verbatim so the inbox can render it as markdown,
++ * but a phone banner has one line of plain text — `**bold**`, `` `code` `` and
++ * `# headings` arrive as literal punctuation on the lock screen.
++ */
++export const stripMarkdown = (text: string): string =>
++  text
++    .replaceAll(/```[\s\S]*?```/g, ' ') // fenced code blocks
++    .replaceAll(/`([^`]*)`/g, '$1') // inline code
++    .replaceAll(/!\[[^\]]*\]\([^)]*\)/g, '') // images
++    .replaceAll(/\[([^\]]*)\]\([^)]*\)/g, '$1') // links keep their label
++    .replaceAll(/^\s{0,3}#{1,6}\s+/gm, '') // headings
++    .replaceAll(/^\s{0,3}>\s?/gm, '') // blockquotes
++    .replaceAll(/^\s{0,3}(?:[-*+]|\d+\.)\s+/gm, '') // list markers
++    .replaceAll(/^\s{0,3}(?:[-*_]\s*){3,}$/gm, '') // horizontal rules
++    .replaceAll(/\*\*([^*]+)\*\*/g, '$1') // bold
++    .replaceAll(/__([^_]+)__/g, '$1')
++    .replaceAll(/\*([^*\n]+)\*/g, '$1') // italic
++    .replaceAll(/\b_([^_\n]+)_\b/g, '$1')
++    .replaceAll(/~~([^~]+)~~/g, '$1') // strikethrough
++    .replaceAll(/\s+/g, ' ')
++    .trim();
 +
 +/** Collapse whitespace so a multi-line reply does not blow up a push payload. */
 +export const previewText = (text?: string, fallback = '', maxLength = 200): string =>
@@ -1833,10 +1962,10 @@ index 0000000000..ef0a6405ef
 +};
 diff --git a/packages/business-server/src/notification/index.ts b/packages/business-server/src/notification/index.ts
 new file mode 100644
-index 0000000000..5a9c6dfa14
+index 0000000000..90c622d82a
 --- /dev/null
 +++ b/packages/business-server/src/notification/index.ts
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,148 @@
 +import type { NotificationMetadata } from '@lobechat/types';
 +import debug from 'debug';
 +
@@ -1845,7 +1974,7 @@ index 0000000000..5a9c6dfa14
 +
 +import { resolveAgentPushMeta } from './agentMeta';
 +import { isBarkConfigured, isBarkRecipient, sendBarkNotification } from './bark';
-+import { buildPublicUrl } from './format';
++import { buildPublicUrl, stripMarkdown } from './format';
 +import { resolvePresentation } from './levels';
 +import { resolvePushEnabled } from './settings';
 +
@@ -1954,15 +2083,20 @@ index 0000000000..5a9c6dfa14
 +    const presentation = resolvePresentation(params.category, params.type);
 +
 +    const result = await sendBarkNotification({
-+      body: params.content,
++      // The row keeps its markdown so the inbox can render it; the phone gets
++      // one line of plain text.
++      body: stripMarkdown(params.content),
 +      call: presentation.call,
 +      group: agent.name ?? DEFAULT_PUSH_GROUP,
 +      icon: agent.iconUrl,
 +      level: presentation.level,
-+      // The row's `context` is the secondary line in the inbox; on the phone it
-+      // is the subtitle, not a second paragraph of body.
-+      subtitle: params.context,
-+      title: params.title,
++      subtitle: params.context ? stripMarkdown(params.context) : undefined,
++      // The phone shows title + body, and the inbox renders neither of its
++      // `title` strings as visible text — it shows the agent's avatar next to
++      // the content. So the push leads with the agent that ran, which is what
++      // tells the reader who is talking; the canonical copy only survives as
++      // the fallback for a notification with no resolvable agent.
++      title: agent.name ?? params.title,
 +      url: buildPublicUrl(params.actionUrl),
 +    });
 +
@@ -2272,4 +2406,165 @@ index 0000000000..9ab7ec0c5e
 +      BARK_USER_ID: process.env.BARK_USER_ID,
 +    },
 +  });
++};
+diff --git a/src/app/(backend)/webapi/agent/avatar/[id]/renderAgentAvatarPng.ts b/src/app/(backend)/webapi/agent/avatar/[id]/renderAgentAvatarPng.ts
+new file mode 100644
+index 0000000000..4b64fe92a2
+--- /dev/null
++++ b/src/app/(backend)/webapi/agent/avatar/[id]/renderAgentAvatarPng.ts
+@@ -0,0 +1,103 @@
++import { getAppConfig } from '@/envs/app';
++
++/** Notification icons are small; APNs caps what it will download anyway. */
++const SIZE = 128;
++
++/** A push must not wait on a slow avatar host. */
++const FETCH_TIMEOUT_MS = 5_000;
++
++const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
++const CACHE_MAX_ENTRIES = 256;
++
++/** Per-process cache: one container keeps a hot set; a restart just refills. */
++const cache = new Map<string, { expiresAt: number; png: Buffer }>();
++
++const isHttpUrl = (value: string): boolean => {
++  try {
++    const { protocol } = new URL(value);
++
++    return protocol === 'http:' || protocol === 'https:';
++  } catch {
++    return false;
++  }
++};
++
++const escapeXml = (value: string): string =>
++  value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
++
++/** Fetch an image and flatten it into a png, which is what iOS can decode. */
++const transcode = async (url: string): Promise<Buffer> => {
++  const response = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
++  if (!response.ok) throw new Error(`avatar fetch failed: ${response.status}`);
++
++  const { default: sharp } = await import('sharp');
++
++  return sharp(Buffer.from(await response.arrayBuffer()))
++    .resize(SIZE, SIZE, { fit: 'cover' })
++    .png()
++    .toBuffer();
++};
++
++/** Rasterise an emoji the way the inbox renders one: centred on a plain tile. */
++const renderEmoji = async (emoji: string): Promise<Buffer> => {
++  const { default: sharp } = await import('sharp');
++
++  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${SIZE}" height="${SIZE}">
++  <rect width="${SIZE}" height="${SIZE}" rx="28" fill="#f5f5f5" />
++  <text x="50%" y="50%" font-size="78" text-anchor="middle" dominant-baseline="central">${escapeXml(emoji)}</text>
++</svg>`;
++
++  const png = await sharp(Buffer.from(svg)).png().toBuffer();
++  const stats = await sharp(png).stats();
++
++  // Without an emoji font in the image the glyph rasterises to nothing and the
++  // result is a flat rectangle — fall back rather than ship a blank icon.
++  if (stats.channels.every((channel) => channel.min === channel.max))
++    throw new Error('emoji glyph missing from the container fonts');
++
++  return png;
++};
++
++/** The default mark, served from this deployment's own public origin. */
++const defaultAvatar = async (): Promise<Buffer> => {
++  const origin = getAppConfig().APP_URL?.trim().replaceAll(/\/+$/g, '');
++  if (!origin) throw new Error('APP_URL is unset, no default avatar to serve');
++
++  return transcode(`${origin}/avatars/agent-default.png`);
++};
++
++/**
++ * A png for one agent's avatar, whatever shape the stored value has.
++ *
++ * iOS notification icons have to be an image APNs can both fetch and decode:
++ * webp arrives fine in a browser but not on a lock screen, and an emoji has no
++ * URL at all. Both are converted here; a stored png/jpeg is left to the caller
++ * to send directly.
++ */
++export const renderAgentAvatarPng = async (
++  agentId: string,
++  avatar?: string | null,
++): Promise<Buffer> => {
++  const cached = cache.get(agentId);
++  if (cached && cached.expiresAt > Date.now()) return cached.png;
++  if (cached) cache.delete(agentId);
++
++  const value = avatar?.trim();
++
++  let png: Buffer;
++  try {
++    if (value && isHttpUrl(value)) png = await transcode(value);
++    else if (value) png = await renderEmoji(value);
++    else png = await defaultAvatar();
++  } catch {
++    png = await defaultAvatar();
++  }
++
++  if (cache.size >= CACHE_MAX_ENTRIES) {
++    const oldest = cache.keys().next().value;
++    if (oldest) cache.delete(oldest);
++  }
++  cache.set(agentId, { expiresAt: Date.now() + CACHE_TTL_MS, png });
++
++  return png;
++};
+diff --git a/src/app/(backend)/webapi/agent/avatar/[id]/route.ts b/src/app/(backend)/webapi/agent/avatar/[id]/route.ts
+new file mode 100644
+index 0000000000..024f5b99a0
+--- /dev/null
++++ b/src/app/(backend)/webapi/agent/avatar/[id]/route.ts
+@@ -0,0 +1,46 @@
++import { eq } from 'drizzle-orm';
++
++import { agents } from '@/database/schemas';
++import { serverDB } from '@/database/server';
++
++import { renderAgentAvatarPng } from './renderAgentAvatarPng';
++
++type Params = Promise<{ id: string }>;
++
++/**
++ * One agent's avatar as a png.
++ *
++ * Bark hands `icon` to iOS, which fetches and decodes it itself — a webp the
++ * browser shows happily is invisible on a lock screen, and an emoji has no URL
++ * to fetch. This flattens both into a png so the push carries the agent's own
++ * mark instead of Bark's. Unauthenticated like the user-avatar route: it
++ * exposes an avatar, which the inbox already shows to anyone who can see the
++ * agent.
++ */
++export const GET = async (_req: Request, segmentData: { params: Params }) => {
++  try {
++    const { id } = await segmentData.params;
++
++    const rows = await serverDB
++      .select({ avatar: agents.avatar })
++      .from(agents)
++      .where(eq(agents.id, id))
++      .limit(1);
++
++    if (!rows[0]) return new Response('Avatar not found', { status: 404 });
++
++    const png = await renderAgentAvatarPng(id, rows[0].avatar);
++
++    return new Response(new Uint8Array(png), {
++      headers: {
++        'Cache-Control': 'public, max-age=86400',
++        'Content-Type': 'image/png',
++      },
++      status: 200,
++    });
++  } catch (error) {
++    console.error('Error rendering agent avatar:', error);
++
++    return new Response('Internal server error', { status: 500 });
++  }
 +};
