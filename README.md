@@ -29,8 +29,10 @@ Runs automatically every 30 minutes in Asia/Shanghai. If several upstream releas
 
 ## Patch repair
 
-Before building, the workflow verifies every patch against `upstream/canary` in
-order. If validation fails and AI repair is enabled, it invokes Codex to repair
+Before building, the workflow verifies every patch against the tree the image is
+built from — the newest upstream release tag. Validation and the build have to
+look at the same tree: a patch rebased onto `upstream/canary` can pass validation
+and still fail the build, because the two are different trees. If validation fails and AI repair is enabled, it invokes Codex to repair
 only the patch set, revalidates the complete set, and opens a pull request for
 review. It never merges the repair automatically. An existing repair PR is
 treated as pending human review: later scheduled runs skip AI repair until that

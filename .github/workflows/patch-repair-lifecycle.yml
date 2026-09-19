@@ -109,12 +109,37 @@ jobs:
           path: automation
           fetch-depth: 0
 
-      - name: Checkout upstream canary
+      - name: Resolve repair target
+        id: target
+        if: steps.context.outputs.reaction_id != ''
+        run: |
+          set -euo pipefail
+
+          # Repair against the tree the image is built from, not canary. A patch
+          # rebased onto canary can still fail the build, which applies the set
+          # to the newest release tag — the two are different trees.
+          tag="$(
+            git ls-remote --tags --refs "https://github.com/${UPSTREAM_REPOSITORY}.git" 'refs/tags/v*' |
+              awk '{print $2}' |
+              sed 's#refs/tags/##' |
+              grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-canary\.[0-9]+)?$' |
+              sort -V |
+              tail -n 1
+          )"
+          if [ -z "$tag" ]; then
+            echo "No upstream release tag to repair against" >&2
+            exit 1
+          fi
+
+          echo "Repairing against the build target ${tag}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout upstream build target
         if: steps.context.outputs.reaction_id != ''
         uses: actions/checkout@v6
         with:
           repository: ${{ env.UPSTREAM_REPOSITORY }}
-          ref: canary
+          ref: ${{ steps.target.outputs.tag }}
           path: source
 
       - name: Recreate repair branch from patch branch
@@ -199,8 +224,8 @@ jobs:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           responses-api-endpoint: ${{ secrets.CODEX_RESPONSES_API_ENDPOINT }}
           model: ${{ secrets.CODEX_MODEL }}
-          repair-target-mode: canary-patch-validation
-          repair-target-ref: canary
+          repair-target-mode: build-target-patch-validation
+          repair-target-ref: ${{ steps.target.outputs.tag }}
 
       - name: Validate repaired patches
         if: steps.context.outputs.reaction_id != '' && steps.configuration.outputs.enabled == 'true'
@@ -242,7 +267,7 @@ jobs:
           git config user.email codex@users.noreply.github.com
           git add "${repair_files[@]}"
           if ! git diff --cached --quiet; then
-            git commit -m 'fix(patches): recreate upstream canary repair'
+            git commit -m 'fix(patches): repair patches against the build target'
           fi
           git push \
             --force-with-lease="refs/heads/$REPAIR_BRANCH:${{ steps.repair-branch.outputs.remote_sha }}" \
@@ -256,15 +281,16 @@ jobs:
         run: |
           set -euo pipefail
           summary_file='.codex-repair-pr.md'
-          default_title='fix(patches): recreate upstream canary repair'
+          default_title='fix(patches): repair patches against the build target'
           if [ -f "$summary_file" ]; then
             pr_title="$(sed -n 's/^Title: //p' "$summary_file" | head -n 1)"
             [ -n "$pr_title" ] || pr_title="$default_title"
-            printf '\n## Workflow validation\n\n- All listed patches applied successfully against repair target canary.\n' >> "$summary_file"
+            printf '\n## Workflow validation\n\n- All listed patches applied successfully against the build target %s.\n' \
+              '${{ steps.target.outputs.tag }}' >> "$summary_file"
             pr_body_args=(--body-file "$summary_file")
           else
             pr_title="$default_title"
-            pr_body_args=(--body 'Codex recreated the patch repair pull request and validated the complete patch set against upstream canary.')
+            pr_body_args=(--body 'Codex recreated the patch repair pull request and validated the complete patch set against the build target.')
           fi
           gh pr edit "${{ steps.context.outputs.pr_number }}" \
             --repo "$GITHUB_REPOSITORY" --title "$pr_title" "${pr_body_args[@]}"
