@@ -962,9 +962,7 @@ index e864995d..358a8ee3 100644
  } from '@lobechat/types';
  import { applyTopicModelToHeterogeneousProvider, resolveAgentAgencyConfig } from '@lobechat/types';
  import { toast } from '@lobehub/ui/base-ui';
-@@ -26,7 +27,8 @@ import { globalAgentContextManager } from '@/helpers/GlobalAgentContextManager';
- import { messageService } from '@/services/message';
- import { topicService } from '@/services/topic';
+@@ -26,5 +27,6 @@ import { globalAgentContextManager } from '@/helpers/GlobalAgentContextManager';
  import { getAgentStoreState } from '@/store/agent';
  import { agentByIdSelectors, agentSelectors } from '@/store/agent/selectors';
 +import { agentGroupByIdSelectors, getChatGroupStoreState } from '@/store/agentGroup';
