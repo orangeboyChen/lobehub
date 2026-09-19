@@ -9,6 +9,14 @@ export interface ToolIntervention {
   batchId?: string;
   /** Declaration order inside the sealed batch. */
   itemIndex?: number;
+  /**
+   * True when the blocked producer is an Electron-hosted CLI subprocess reached
+   * over IPC — never a server long-poll. `operationId` outlives the in-memory
+   * operation, but the operation is what told us which transport to use, so a
+   * reloaded card needs this stamped alongside the id or the answer is
+   * published to a stream nobody reads.
+   */
+  localDesktop?: boolean;
   /** Parked runtime operation this decision must resume or stop. */
   operationId?: string;
   rejectedReason?: string;
@@ -29,6 +37,7 @@ export interface ToolIntervention {
 export const ToolInterventionSchema = z.object({
   batchId: z.string().optional(),
   itemIndex: z.number().int().nonnegative().optional(),
+  localDesktop: z.boolean().optional(),
   operationId: z.string().optional(),
   rejectedReason: z.string().optional(),
   resolving: z.boolean().optional(),

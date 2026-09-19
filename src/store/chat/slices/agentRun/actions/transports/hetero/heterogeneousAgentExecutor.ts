@@ -968,7 +968,13 @@ export const executeHeterogeneousAgent = async (
     try {
       await get().optimisticUpdateMessagePlugin(
         toolMsgId,
-        { intervention: { status: 'pending' } },
+        // Carry `operationId` and `localDesktop`: both outlive the in-memory
+        // operation, which is what `submitHeteroIntervention` normally reads to
+        // pick IPC vs the remote stream. After a reload the operation is gone,
+        // so without these a Submit click could not be routed at all — and if
+        // the transport were guessed from an absent operation it would publish
+        // to a Redis stream that no Electron-hosted producer long-polls.
+        { intervention: { localDesktop: true, operationId, status: 'pending' } },
         { operationId },
       );
       // Sidebar topic row swaps the running spinner for a hand icon

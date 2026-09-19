@@ -194,6 +194,19 @@ export const messagesReducer = (
         if (!message || message.role !== 'tool') return;
 
         message.plugin = merge(message.plugin, value);
+        // `plugin.intervention` and the top-level `pluginIntervention` are two
+        // projections of the same persisted column. On the client only the
+        // top-level one is ever read: the pending-intervention list gates on
+        // `pluginIntervention.status`, and the intervention card reads
+        // `pluginIntervention.resolving`. (`plugin.intervention` is also read
+        // server-side — `apps/server/src/routers/lambda/aiAgent.ts` — but the DB
+        // query never hydrates it into the client `plugin` object at all.)
+        // Patching `plugin` alone therefore left an approved AskUserQuestion
+        // card pending — it stayed mounted and its Submit button never left its
+        // loading state.
+        if (value.intervention) {
+          message.pluginIntervention = { ...message.pluginIntervention, ...value.intervention };
+        }
         message.updatedAt = Date.now();
       });
     }

@@ -3099,7 +3099,10 @@ describe('ConversationControl actions', () => {
       expect(persistAnswersSpy).not.toHaveBeenCalled();
     });
 
-    it('fails closed after an unavailable durable source when operation memory is empty', async () => {
+    // Failing closed means not claiming success — it still has to be audible.
+    // A silent return here is what left the form's Submit spinning forever,
+    // because `useAskUserForm` only releases `submitting` on a rejected submit.
+    it('fails loudly after an unavailable durable source when operation memory is empty', async () => {
       const { result } = renderHook(() => useChatStore());
       const agentId = 'remote-agent';
       const topicId = 'remote-topic';
@@ -3138,16 +3141,194 @@ describe('ConversationControl actions', () => {
         .spyOn(heterogeneousAgentService, 'submitIntervention')
         .mockResolvedValue(undefined as any);
 
-      await act(async () => {
-        await result.current.submitHeteroIntervention('tool-msg-source-unavailable', 'submit', {
-          Question: 'Answer',
-        });
-      });
+      await expect(
+        act(async () => {
+          await result.current.submitHeteroIntervention('tool-msg-source-unavailable', 'submit', {
+            Question: 'Answer',
+          });
+        }),
+      ).rejects.toThrow(/no operation provenance/);
 
       expect(sourceMutation).toHaveBeenCalledOnce();
       expect(pluginSpy).not.toHaveBeenCalled();
       expect(legacyRemoteSubmit).not.toHaveBeenCalled();
       expect(localSubmit).not.toHaveBeenCalled();
+    });
+
+    // Regression: a card raised from a client-side bridge event carries no
+    // `batchId` and no `pluginState.heterogeneousIntervention`, so the durable
+    // claim is closed to it and the only provenance is the persisted
+    // `pluginIntervention.operationId`. `messageOperationMap` is in-memory only
+    // and empty after a reload — without the persisted fallback this click
+    // routed nothing at all and the Submit button spun forever.
+    it('routes a reloaded card through the persisted operationId', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const agentId = 'reloaded-agent';
+      const topicId = 'reloaded-topic';
+      const chatKey = messageMapKey({ agentId, topicId });
+      const toolMessage = createMockMessage({
+        id: 'tool-msg-reloaded',
+        pluginIntervention: { operationId: 'persisted-operation', status: 'pending' },
+        role: 'tool',
+        tool_call_id: 'call-reloaded',
+      } as any);
+
+      act(() => {
+        useChatStore.setState({
+          activeAgentId: agentId,
+          activeTopicId: topicId,
+          dbMessagesMap: { [chatKey]: [toolMessage] },
+          messageOperationMap: {},
+          messagesMap: { [chatKey]: [toolMessage] },
+          operations: {},
+        });
+      });
+
+      const pluginSpy = vi
+        .spyOn(result.current, 'optimisticUpdateMessagePlugin')
+        .mockResolvedValue(undefined);
+      const dispatchSpy = vi.spyOn(result.current, 'internal_dispatchMessage');
+      vi.spyOn(messageService, 'updateMessagePluginState').mockResolvedValue({
+        messages: [],
+        success: true,
+      });
+      const legacyRemoteSubmit = vi.mocked(lambdaClient.aiAgent.submitHeteroIntervention.mutate);
+
+      await act(async () => {
+        await result.current.submitHeteroIntervention('tool-msg-reloaded', 'submit', {
+          'Which color?': 'Blue',
+        });
+      });
+
+      // The in-flight marker is local only, so a reload cannot inherit a card
+      // that is permanently disabled with no producer left to ACK it.
+      expect(pluginSpy).not.toHaveBeenCalled();
+      expect(dispatchSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'tool-msg-reloaded',
+          type: 'updateMessage',
+          value: {
+            pluginIntervention: {
+              operationId: 'persisted-operation',
+              resolving: true,
+              status: 'pending',
+            },
+          },
+        }),
+        expect.anything(),
+      );
+      expect(legacyRemoteSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ operationId: 'persisted-operation' }),
+      );
+    });
+
+    // Regression: the operation object is in-memory, so a reload erases it
+    // exactly when a pending card is still on screen. Without the persisted
+    // `localDesktop` marker, an op-less card took the remote branch and
+    // published the answer to a stream that an Electron-hosted producer never
+    // long-polls — the answer was lost and nothing threw.
+    it('sends a reloaded local-desktop card over IPC instead of the remote stream', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const agentId = 'reloaded-local-agent';
+      const topicId = 'reloaded-local-topic';
+      const chatKey = messageMapKey({ agentId, topicId });
+      const toolMessage = createMockMessage({
+        id: 'tool-msg-reloaded-local',
+        pluginIntervention: {
+          localDesktop: true,
+          operationId: 'persisted-local-operation',
+          status: 'pending',
+        },
+        role: 'tool',
+        tool_call_id: 'call-reloaded-local',
+      } as any);
+
+      act(() => {
+        useChatStore.setState({
+          activeAgentId: agentId,
+          activeTopicId: topicId,
+          dbMessagesMap: { [chatKey]: [toolMessage] },
+          messageOperationMap: {},
+          messagesMap: { [chatKey]: [toolMessage] },
+          operations: {},
+        });
+      });
+
+      vi.spyOn(result.current, 'optimisticUpdateMessagePlugin').mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'optimisticUpdateMessageContent').mockResolvedValue(undefined);
+      vi.spyOn(messageService, 'updateMessagePluginState').mockResolvedValue({
+        messages: [],
+        success: true,
+      });
+      const localSubmit = vi
+        .spyOn(heterogeneousAgentService, 'submitIntervention')
+        .mockResolvedValue(undefined as any);
+      const legacyRemoteSubmit = vi.mocked(lambdaClient.aiAgent.submitHeteroIntervention.mutate);
+
+      await act(async () => {
+        await result.current.submitHeteroIntervention('tool-msg-reloaded-local', 'submit', {
+          'Which color?': 'Blue',
+        });
+      });
+
+      expect(localSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ operationId: 'persisted-local-operation' }),
+      );
+      expect(legacyRemoteSubmit).not.toHaveBeenCalled();
+    });
+
+    // Regression: `interactionKind` is server-authored. On a card that never
+    // received it, submit produced no source action at all, so the durable
+    // claim was skipped and the answer never left the client.
+    it('derives the question kind from the tool identity when pluginState has none', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const agentId = 'unlabelled-agent';
+      const topicId = 'unlabelled-topic';
+      const chatKey = messageMapKey({ agentId, topicId });
+      const toolMessage = createMockMessage({
+        id: 'tool-msg-unlabelled',
+        plugin: { apiName: 'askUserQuestion', identifier: 'claude-code' },
+        pluginIntervention: {
+          batchId: 'batch-unlabelled',
+          operationId: 'operation-unlabelled',
+          status: 'pending',
+        },
+        role: 'tool',
+        tool_call_id: 'call-unlabelled',
+      } as any);
+
+      act(() => {
+        useChatStore.setState({
+          activeAgentId: agentId,
+          activeTopicId: topicId,
+          dbMessagesMap: { [chatKey]: [toolMessage] },
+          messageOperationMap: {},
+          messagesMap: { [chatKey]: [toolMessage] },
+          operations: {},
+        });
+      });
+
+      const sourceMutation = vi.mocked(
+        lambdaClient.aiAgent.resolveAgentInterventionBySource.mutate,
+      );
+      sourceMutation.mockResolvedValueOnce({
+        contractVersion: 2,
+        state: 'claimed',
+        status: 'approved',
+        success: true,
+      });
+
+      await act(async () => {
+        await result.current.submitHeteroIntervention('tool-msg-unlabelled', 'submit', {
+          'Which color?': 'Blue',
+        });
+      });
+
+      expect(sourceMutation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: { result: { 'Which color?': 'Blue' }, type: 'submit_answers' },
+        }),
+      );
     });
 
     it('uses the in-memory runtime identity only for the handled-false local desktop fallback', async () => {
@@ -3544,6 +3725,7 @@ describe('ConversationControl actions', () => {
       const pluginSpy = vi
         .spyOn(result.current, 'optimisticUpdateMessagePlugin')
         .mockResolvedValue(undefined);
+      const dispatchSpy = vi.spyOn(result.current, 'internal_dispatchMessage');
       vi.spyOn(result.current, 'optimisticUpdateMessageContent').mockResolvedValue(undefined);
       const updateTopicStatusSpy = vi
         .spyOn(result.current, 'updateTopicStatus')
@@ -3562,10 +3744,17 @@ describe('ConversationControl actions', () => {
 
       // Remote publish is only transport acceptance: keep the form pending,
       // mark it resolving, and use the empty global-state fallback context.
-      expect(pluginSpy).toHaveBeenCalledWith(
-        'tool-msg-1',
-        { intervention: { resolving: true, status: 'pending' } },
-        {},
+      // `resolving` is a local projection only — persisting it would strand the
+      // card permanently if the producer never ACKs, and a reload could not
+      // clear it. See the in-flight comment in `submitHeteroIntervention`.
+      expect(pluginSpy).not.toHaveBeenCalled();
+      expect(dispatchSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'tool-msg-1',
+          type: 'updateMessage',
+          value: { pluginIntervention: { resolving: true, status: 'pending' } },
+        }),
+        expect.anything(),
       );
       expect(updateTopicStatusSpy).not.toHaveBeenCalled();
 
@@ -3609,7 +3798,8 @@ describe('ConversationControl actions', () => {
       });
       expect(pluginSpy).toHaveBeenLastCalledWith(
         'tool-msg-1',
-        { intervention: { status: 'pending' } },
+        // The restore must not persist the local-only `resolving` hint.
+        { intervention: { resolving: false, status: 'pending' } },
         {},
       );
     });
