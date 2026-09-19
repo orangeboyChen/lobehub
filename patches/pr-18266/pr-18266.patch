@@ -955,8 +955,7 @@ diff --git a/src/features/Conversation/store/slices/generation/action.ts b/src/f
 index e864995d..358a8ee3 100644
 --- a/src/features/Conversation/store/slices/generation/action.ts
 +++ b/src/features/Conversation/store/slices/generation/action.ts
-@@ -6,6 +6,7 @@ import type {
-   ChatTTS,
+@@ -6,5 +6,6 @@ import type {
    ConversationContext,
    HeterogeneousProviderConfig,
 +  UIChatMessage,

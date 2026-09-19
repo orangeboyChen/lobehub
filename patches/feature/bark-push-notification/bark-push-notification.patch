@@ -1,0 +1,2261 @@
+diff --git a/.env.example b/.env.example
+index 2b596fc730..19146e144c 100644
+--- a/.env.example
++++ b/.env.example
+@@ -506,3 +506,34 @@ OPENAI_API_KEY=sk-xxxxxxxxx
+ 
+ # Verify-im link token TTL in seconds (default 1800 = 30 min)
+ # LOBE_LINK_TOKEN_TTL_SECONDS=1800
++
++# #######################################
++# ####### Push Notifications (Bark) #####
++# #######################################
++
++# Self-hosted deployment push channel. The OSS notification slots are no-ops by
++# default (Cloud overrides them with its own multi-channel service); set
++# BARK_KEY to get inbox rows plus an iOS push without Expo/APNs credentials.
++#
++# Only the device is configured here. How a notification presents itself —
++# interruption level, collapse group, icon — is decided per scenario in code
++# (packages/business-server/src/notification/levels.ts), not by the deployment.
++#
++# Requires APP_URL to be your reachable public origin: the deep link tapped on
++# the phone is built from it, and its unset fallback (http://localhost:3210)
++# resolves against the phone itself.
++#
++# Bark device key — the path segment of https://api.day.app/<key>
++# BARK_KEY=
++# Self-hosted Bark server. Defaults to the public Bark service.
++# BARK_SERVER_URL=https://api.day.app
++# Restricts delivery to one account. Leave unset only on single-user instances:
++# without it every user's notifications land on the configured phone.
++# Find the id with `lh whoami`, or: select id from users where email = 'you@example.com';
++# BARK_USER_ID=
++#
++# To check the channel itself, bypass LobeHub entirely:
++#   curl -X POST https://api.day.app/<BARK_KEY> -H 'Content-Type: application/json' \
++#     -d '{"title":"LobeHub","body":"test"}'
++# A silent deployment usually means BARK_USER_ID does not match the account that
++# triggered the run — run with DEBUG=lobe-notification to see why a push was skipped.
+diff --git a/apps/server/src/services/notification/__tests__/bark.test.ts b/apps/server/src/services/notification/__tests__/bark.test.ts
+new file mode 100644
+index 0000000000..ee19e1d3ea
+--- /dev/null
++++ b/apps/server/src/services/notification/__tests__/bark.test.ts
+@@ -0,0 +1,257 @@
++// @vitest-environment node
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
++
++const ENV_KEYS = ['BARK_KEY', 'BARK_SERVER_URL', 'BARK_USER_ID'];
++
++const jsonResponse = (payload: unknown, status = 200) => ({
++  json: vi.fn().mockResolvedValue(payload),
++  ok: status >= 200 && status < 300,
++  status,
++});
++
++const load = () => import('@/business/server/notification/bark');
++
++// Each test gets a fresh module so per-process state (the shared-device warning)
++// cannot leak between cases.
++beforeEach(() => {
++  vi.resetModules();
++  for (const key of ENV_KEYS) delete process.env[key];
++  vi.spyOn(console, 'warn').mockImplementation(() => {});
++});
++
++afterEach(() => {
++  vi.unstubAllGlobals();
++  vi.restoreAllMocks();
++});
++
++describe('sendBarkNotification', () => {
++  it('fails without touching the network when no key is configured', async () => {
++    const fetchMock = vi.fn();
++    vi.stubGlobal('fetch', fetchMock);
++
++    const { sendBarkNotification } = await load();
++    const result = await sendBarkNotification({ body: 'body', title: 'title' });
++
++    expect(result).toEqual({ failedReason: 'bark_not_configured', status: 'failed' });
++    expect(fetchMock).not.toHaveBeenCalled();
++  });
++
++  it('posts to the default relay with the key in the path', async () => {
++    process.env.BARK_KEY = 'my-key';
++    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ code: 200, timestamp: 1700 }));
++    vi.stubGlobal('fetch', fetchMock);
++
++    const { sendBarkNotification } = await load();
++    const result = await sendBarkNotification({ body: 'body', title: 'title' });
++
++    expect(fetchMock).toHaveBeenCalledTimes(1);
++    const [url, init] = fetchMock.mock.calls[0];
++    expect(url).toBe('https://api.day.app/my-key');
++    expect(init.method).toBe('POST');
++    // Bark parses a JSON body, and the timeout is what keeps a dead relay from
++    // stalling the run that triggered the notification.
++    expect(init.headers).toMatchObject({ 'Content-Type': 'application/json' });
++    expect(init.signal).toBeInstanceOf(AbortSignal);
++    expect(JSON.parse(init.body)).toMatchObject({ body: 'body', title: 'title' });
++    expect(result).toEqual({ providerMessageId: '1700', status: 'delivered' });
++  });
++
++  it('uses a self-hosted relay and tolerates a trailing slash', async () => {
++    process.env.BARK_KEY = 'my-key';
++    process.env.BARK_SERVER_URL = 'https://bark.example.com/';
++    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ code: 200 }));
++    vi.stubGlobal('fetch', fetchMock);
++
++    const { sendBarkNotification } = await load();
++    await sendBarkNotification({ body: 'body', title: 'title' });
++
++    expect(fetchMock.mock.calls[0][0]).toBe('https://bark.example.com/my-key');
++  });
++
++  it('keeps a relay served from a sub-path', async () => {
++    process.env.BARK_KEY = 'my-key';
++    process.env.BARK_SERVER_URL = 'https://bark.example.com/push/';
++    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ code: 200 }));
++    vi.stubGlobal('fetch', fetchMock);
++
++    const { sendBarkNotification } = await load();
++    await sendBarkNotification({ body: 'body', title: 'title' });
++
++    expect(fetchMock.mock.calls[0][0]).toBe('https://bark.example.com/push/my-key');
++  });
++
++  it('forwards the deep link and the presentation hints the caller chose', async () => {
++    process.env.BARK_KEY = 'my-key';
++    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ code: 200 }));
++    vi.stubGlobal('fetch', fetchMock);
++
++    const { sendBarkNotification } = await load();
++    await sendBarkNotification({
++      body: 'body',
++      group: 'Researcher',
++      icon: 'https://cdn.example.com/a1.png',
++      level: 'timeSensitive',
++      subtitle: 'T-1',
++      title: 'title',
++      url: 'https://app.example.com/agent/a1/t1',
++    });
++
++    // Level and group are decided per scenario in code, not read from the
++    // environment — this asserts the payload carries what it was handed.
++    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
++      body: 'body',
++      group: 'Researcher',
++      icon: 'https://cdn.example.com/a1.png',
++      level: 'timeSensitive',
++      subtitle: 'T-1',
++      title: 'title',
++      url: 'https://app.example.com/agent/a1/t1',
++    });
++  });
++
++  it('sends a call as Bark’s 1 and omits the hints a message did not set', async () => {
++    process.env.BARK_KEY = 'my-key';
++    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ code: 200 }));
++    vi.stubGlobal('fetch', fetchMock);
++
++    const { sendBarkNotification } = await load();
++    await sendBarkNotification({ body: 'body', call: true, level: 'critical', title: 'title' });
++
++    // Absent optional fields must not reach Bark as nulls, or it would fall
++    // back to its own defaults instead of the caller's omissions.
++    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
++      body: 'body',
++      call: 1,
++      level: 'critical',
++      title: 'title',
++    });
++  });
++
++  it('reports an HTTP failure as failed', async () => {
++    process.env.BARK_KEY = 'my-key';
++    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ code: 200 }, 500)));
++
++    const { sendBarkNotification } = await load();
++    const result = await sendBarkNotification({ body: 'body', title: 'title' });
++
++    expect(result).toEqual({ failedReason: 'http_500', status: 'failed' });
++  });
++
++  it('reports a non-200 Bark code as failed', async () => {
++    process.env.BARK_KEY = 'my-key';
++    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ code: 400 })));
++
++    const { sendBarkNotification } = await load();
++    const result = await sendBarkNotification({ body: 'body', title: 'title' });
++
++    expect(result).toEqual({ failedReason: 'bark_400', status: 'failed' });
++  });
++
++  it('treats a non-JSON 200 body as delivered', async () => {
++    process.env.BARK_KEY = 'my-key';
++    vi.stubGlobal(
++      'fetch',
++      vi
++        .fn()
++        .mockResolvedValue({ json: vi.fn().mockRejectedValue(new Error('not json')), ok: true }),
++    );
++
++    const { sendBarkNotification } = await load();
++    const result = await sendBarkNotification({ body: 'body', title: 'title' });
++
++    expect(result).toEqual({ status: 'delivered' });
++  });
++
++  it('never throws when the relay is unreachable', async () => {
++    process.env.BARK_KEY = 'my-key';
++    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed')));
++
++    const { sendBarkNotification } = await load();
++    const result = await sendBarkNotification({ body: 'body', title: 'title' });
++
++    expect(result).toEqual({ failedReason: 'TypeError', status: 'failed' });
++  });
++});
++
++describe('isBarkConfigured', () => {
++  beforeEach(() => {
++    for (const key of ENV_KEYS) delete process.env[key];
++  });
++
++  it('is false without a key and true with one', async () => {
++    const { isBarkConfigured } = await load();
++    expect(isBarkConfigured()).toBe(false);
++
++    process.env.BARK_KEY = 'my-key';
++    expect(isBarkConfigured()).toBe(true);
++  });
++
++  it('treats a blank key as unconfigured', async () => {
++    process.env.BARK_KEY = '   ';
++    const { isBarkConfigured } = await load();
++    expect(isBarkConfigured()).toBe(false);
++  });
++});
++
++describe('isBarkRecipient', () => {
++  beforeEach(() => {
++    for (const key of ENV_KEYS) delete process.env[key];
++  });
++
++  it('accepts every user when no owner is pinned', async () => {
++    const { isBarkRecipient } = await load();
++    expect(isBarkRecipient('user-1')).toBe(true);
++    expect(isBarkRecipient('user-2')).toBe(true);
++  });
++
++  it('accepts only the pinned owner when one is set', async () => {
++    process.env.BARK_USER_ID = 'user-1';
++    const { isBarkRecipient } = await load();
++    expect(isBarkRecipient('user-1')).toBe(true);
++    expect(isBarkRecipient('user-2')).toBe(false);
++  });
++
++  it('warns once that the device is shared when no owner is pinned', async () => {
++    const { isBarkRecipient } = await load();
++
++    isBarkRecipient('user-1');
++    isBarkRecipient('user-2');
++
++    expect(console.warn).toHaveBeenCalledTimes(1);
++  });
++
++  it('does not warn when the recipient is pinned', async () => {
++    process.env.BARK_USER_ID = 'user-1';
++    const { isBarkRecipient } = await load();
++
++    isBarkRecipient('user-1');
++
++    expect(console.warn).not.toHaveBeenCalled();
++  });
++});
++
++describe('relay url handling', () => {
++  it('refuses a non-http relay instead of fetching it with the key attached', async () => {
++    process.env.BARK_KEY = 'my-key';
++    process.env.BARK_SERVER_URL = 'file:///etc/passwd';
++    const fetchMock = vi.fn();
++    vi.stubGlobal('fetch', fetchMock);
++
++    const { sendBarkNotification } = await load();
++    const result = await sendBarkNotification({ body: 'body', title: 'title' });
++
++    expect(result).toEqual({ failedReason: 'invalid_server_url', status: 'failed' });
++    expect(fetchMock).not.toHaveBeenCalled();
++  });
++
++  it('escapes a key that would otherwise change the request path', async () => {
++    process.env.BARK_KEY = 'a/b?c#d';
++    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ code: 200 }));
++    vi.stubGlobal('fetch', fetchMock);
++
++    const { sendBarkNotification } = await load();
++    await sendBarkNotification({ body: 'body', title: 'title' });
++
++    expect(fetchMock.mock.calls[0][0]).toBe('https://api.day.app/a%2Fb%3Fc%23d');
++  });
++});
+diff --git a/apps/server/src/services/notification/__tests__/categories.test.ts b/apps/server/src/services/notification/__tests__/categories.test.ts
+new file mode 100644
+index 0000000000..240db0ace9
+--- /dev/null
++++ b/apps/server/src/services/notification/__tests__/categories.test.ts
+@@ -0,0 +1,45 @@
++// @vitest-environment node
++import { describe, expect, it } from 'vitest';
++
++import {
++  NOTIFICATION_CATEGORY,
++  NOTIFICATION_TYPE,
++} from '@/business/server/notification/categories';
++import notificationLocale from '@/locales/default/notification';
++
++/**
++ * The inbox renders one tab per category and labels it with `category.<value>`;
++ * `PERSONAL_INBOX_CATEGORIES` / `WORKSPACE_INBOX_CATEGORIES` live inside
++ * InboxModal and are not exported, so the vocabulary is mirrored here. A value
++ * outside it still renders — as an extra tab with a raw, untranslated label.
++ */
++const INBOX_CATEGORIES = [
++  'agent',
++  'billing',
++  'generation',
++  'mention',
++  'pending',
++  'schedule',
++  'system',
++  'workspace',
++];
++
++describe('notification taxonomy', () => {
++  it('only writes categories the inbox renders as a tab', () => {
++    for (const category of Object.values(NOTIFICATION_CATEGORY)) {
++      expect(INBOX_CATEGORIES).toContain(category);
++    }
++  });
++
++  it('only writes categories with a label', () => {
++    for (const category of Object.values(NOTIFICATION_CATEGORY)) {
++      expect(notificationLocale).toHaveProperty(`category.${category}`);
++    }
++  });
++
++  it('only writes types that already ship as notification copy', () => {
++    for (const type of Object.values(NOTIFICATION_TYPE)) {
++      expect(notificationLocale).toHaveProperty(`${type}_title`);
++    }
++  });
++});
+diff --git a/apps/server/src/services/notification/__tests__/config.test.ts b/apps/server/src/services/notification/__tests__/config.test.ts
+new file mode 100644
+index 0000000000..ea201ce7d3
+--- /dev/null
++++ b/apps/server/src/services/notification/__tests__/config.test.ts
+@@ -0,0 +1,35 @@
++// @vitest-environment node
++import { beforeEach, describe, expect, it } from 'vitest';
++
++const load = () => import('@/business/server/notification/config');
++
++const ENV_KEYS = ['BARK_KEY', 'BARK_SERVER_URL', 'BARK_USER_ID'];
++
++describe('pushConfig', () => {
++  beforeEach(() => {
++    for (const key of ENV_KEYS) delete process.env[key];
++  });
++
++  it('reads a valid configuration', async () => {
++    process.env.BARK_KEY = 'my-key';
++    process.env.BARK_SERVER_URL = 'https://bark.example.com';
++
++    const { pushConfig } = await load();
++
++    expect(pushConfig()).toMatchObject({
++      BARK_KEY: 'my-key',
++      BARK_SERVER_URL: 'https://bark.example.com',
++    });
++  });
++
++  it('reads as unconfigured rather than throwing on an empty environment', async () => {
++    const { pushConfig } = await load();
++
++    // Nothing in the schema can reject any more — level, group and the duration
++    // floor are code decisions now — but the guard stays because a throw here
++    // happens before the inbox row is written, and the run lifecycle swallows
++    // slot errors, so one would silently drop every notification.
++    expect(() => pushConfig()).not.toThrow();
++    expect(pushConfig().BARK_KEY).toBeUndefined();
++  });
++});
+diff --git a/apps/server/src/services/notification/__tests__/format.test.ts b/apps/server/src/services/notification/__tests__/format.test.ts
+new file mode 100644
+index 0000000000..2336604794
+--- /dev/null
++++ b/apps/server/src/services/notification/__tests__/format.test.ts
+@@ -0,0 +1,85 @@
++// @vitest-environment node
++import { beforeEach, describe, expect, it, vi } from 'vitest';
++
++import {
++  buildConversationPath,
++  buildPublicUrl,
++  clampText,
++  previewText,
++} from '@/business/server/notification/format';
++
++const { mockAppUrl } = vi.hoisted(() => ({
++  mockAppUrl: { value: undefined as string | undefined },
++}));
++
++vi.mock('@/envs/app', () => ({ getAppConfig: () => ({ APP_URL: mockAppUrl.value }) }));
++
++describe('clampText', () => {
++  it('is undefined for blank input', () => {
++    expect(clampText(undefined, 10)).toBeUndefined();
++    expect(clampText('   ', 10)).toBeUndefined();
++  });
++
++  it('caps the text and marks the truncation', () => {
++    expect(clampText('abcdefghij', 5)).toBe('abcd…');
++    expect(clampText('abcde', 5)).toBe('abcde');
++  });
++});
++
++describe('previewText', () => {
++  it('falls back when there is nothing to preview', () => {
++    expect(previewText(undefined, 'fallback')).toBe('fallback');
++    expect(previewText('   \n  ', 'fallback')).toBe('fallback');
++  });
++
++  it('collapses whitespace', () => {
++    expect(previewText('line one\n\nline   two', 'fallback')).toBe('line one line two');
++  });
++
++  it('caps the preview and marks the truncation', () => {
++    expect(previewText('abcdefghij', 'fallback', 5)).toBe('abcd…');
++    expect(previewText('abcde', 'fallback', 5)).toBe('abcde');
++  });
++});
++
++describe('buildConversationPath', () => {
++  it('builds the agent conversation path', () => {
++    expect(buildConversationPath({ agentId: 'a1', topicId: 't1' })).toBe('/agent/a1/t1');
++  });
++
++  it('is undefined without both ids', () => {
++    expect(buildConversationPath({ agentId: 'a1' })).toBeUndefined();
++    expect(buildConversationPath({ topicId: 't1' })).toBeUndefined();
++    expect(buildConversationPath({})).toBeUndefined();
++  });
++
++  it('escapes ids so a crafted id cannot redirect the deep link', () => {
++    expect(buildConversationPath({ agentId: '../../etc', topicId: 't1' })).toBe(
++      '/agent/..%2F..%2Fetc/t1',
++    );
++  });
++});
++
++describe('buildPublicUrl', () => {
++  beforeEach(() => {
++    mockAppUrl.value = undefined;
++  });
++
++  it('has no link to offer when there is no usable origin', () => {
++    expect(buildPublicUrl('/agent/a1/t1')).toBeUndefined();
++  });
++
++  it('refuses a loopback origin — a localhost link is a dead tap on a phone', () => {
++    mockAppUrl.value = 'http://localhost:3210';
++    expect(buildPublicUrl('/agent/a1/t1')).toBeUndefined();
++  });
++
++  it('prefixes the origin and trims its trailing slash', () => {
++    mockAppUrl.value = 'https://app.example.com/';
++    expect(buildPublicUrl('/agent/a1/t1')).toBe('https://app.example.com/agent/a1/t1');
++  });
++
++  it('is undefined without a path', () => {
++    expect(buildPublicUrl(undefined)).toBeUndefined();
++  });
++});
+diff --git a/apps/server/src/services/notification/__tests__/notifyUser.test.ts b/apps/server/src/services/notification/__tests__/notifyUser.test.ts
+new file mode 100644
+index 0000000000..3f07da8b93
+--- /dev/null
++++ b/apps/server/src/services/notification/__tests__/notifyUser.test.ts
+@@ -0,0 +1,425 @@
++// @vitest-environment node
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
++
++import { NotificationModel } from '@/database/models/notification';
++
++const {
++  mockAppUrl,
++  mockCreate,
++  mockCreateDelivery,
++  mockGetAgentAvatarsByIds,
++  mockGetPreference,
++  mockGetUserSettings,
++  mockGetServerDB,
++} = vi.hoisted(() => ({
++  mockAppUrl: { value: undefined as string | undefined },
++  mockCreate: vi.fn(),
++  mockCreateDelivery: vi.fn(),
++  mockGetAgentAvatarsByIds: vi.fn(),
++  mockGetPreference: vi.fn(),
++  mockGetServerDB: vi.fn(),
++  mockGetUserSettings: vi.fn(),
++}));
++
++vi.mock('@/envs/app', () => ({ getAppConfig: () => ({ APP_URL: mockAppUrl.value }) }));
++
++vi.mock('@/database/core/db-adaptor', () => ({ getServerDB: mockGetServerDB }));
++
++vi.mock('@/database/models/notification', () => ({
++  NotificationModel: vi.fn(function () {
++    return { create: mockCreate, createDelivery: mockCreateDelivery };
++  }),
++}));
++
++vi.mock('@/database/models/user', () => ({
++  UserModel: vi.fn(function () {
++    return { getUserSettings: mockGetUserSettings };
++  }),
++}));
++
++vi.mock('@/database/models/agent', () => ({
++  AgentModel: vi.fn(function () {
++    return { getAgentAvatarsByIds: mockGetAgentAvatarsByIds };
++  }),
++}));
++
++vi.mock('@/database/models/workspaceUserSettings', () => ({
++  WorkspaceUserSettingsModel: vi.fn(function () {
++    return { getPreference: mockGetPreference };
++  }),
++}));
++
++const load = () => import('@/business/server/notification/index');
++
++const BARK_ENV_KEYS = ['BARK_KEY', 'BARK_SERVER_URL', 'BARK_USER_ID'];
++
++const okResponse = () => ({
++  json: vi.fn().mockResolvedValue({ code: 200, timestamp: 1700 }),
++  ok: true,
++});
++
++const baseParams = {
++  category: 'agent',
++  content: 'Here is your summary.',
++  context: 'T-1',
++  dedupeKey: 'agent_run_completed:op-1',
++  metadata: { agent: { id: 'a1' } },
++  title: 'Agent run finished',
++  type: 'agent_run_completed',
++  userId: 'u1',
++};
++
++describe('notifyUser', () => {
++  beforeEach(() => {
++    vi.clearAllMocks();
++    for (const key of BARK_ENV_KEYS) delete process.env[key];
++    mockAppUrl.value = undefined;
++    mockGetServerDB.mockResolvedValue({});
++    mockGetUserSettings.mockResolvedValue(undefined);
++    mockGetPreference.mockResolvedValue({});
++    mockGetAgentAvatarsByIds.mockResolvedValue([]);
++    mockCreate.mockResolvedValue({ id: 'n1' });
++    mockCreateDelivery.mockResolvedValue({ id: 'd1' });
++    vi.spyOn(console, 'error').mockImplementation(() => {});
++    vi.spyOn(console, 'warn').mockImplementation(() => {});
++  });
++
++  afterEach(() => {
++    vi.unstubAllGlobals();
++    vi.restoreAllMocks();
++  });
++
++  it('persists the inbox row even when push is unconfigured', async () => {
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, actionUrl: '/agent/a1/t1', workspaceId: 'w1' });
++
++    expect(mockCreate).toHaveBeenCalledWith(
++      expect.objectContaining({
++        actionUrl: '/agent/a1/t1',
++        category: 'agent',
++        content: 'Here is your summary.',
++        context: 'T-1',
++        dedupeKey: 'agent_run_completed:op-1',
++        metadata: { agent: { id: 'a1' } },
++        title: 'Agent run finished',
++        type: 'agent_run_completed',
++        workspaceId: 'w1',
++      }),
++    );
++    expect(mockCreateDelivery).not.toHaveBeenCalled();
++  });
++
++  it('scopes the row to the notified user', async () => {
++    const { notifyUser } = await load();
++
++    await notifyUser(baseParams);
++
++    // The model folds its userId into every read and write, so writing through
++    // the wrong id would strand the row outside its owner's inbox.
++    expect(NotificationModel).toHaveBeenCalledWith(expect.anything(), 'u1');
++  });
++
++  it('keeps a notification without a workspace out of every workspace inbox', async () => {
++    const { notifyUser } = await load();
++
++    await notifyUser(baseParams);
++
++    expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: null }));
++  });
++
++  it('pushes and records a delivered delivery row', async () => {
++    process.env.BARK_KEY = 'my-key';
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++    mockAppUrl.value = 'https://app.example.com';
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, actionUrl: '/agent/a1/t1' });
++
++    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
++      body: 'Here is your summary.',
++      title: 'Agent run finished',
++      url: 'https://app.example.com/agent/a1/t1',
++    });
++    expect(mockCreateDelivery).toHaveBeenCalledWith(
++      expect.objectContaining({
++        channel: 'push',
++        notificationId: 'n1',
++        providerMessageId: '1700',
++        sentAt: expect.any(Date),
++        status: 'delivered',
++      }),
++    );
++  });
++
++  it('skips both the row and the push when the dedupe key already sent', async () => {
++    process.env.BARK_KEY = 'my-key';
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++    mockCreate.mockResolvedValue(null);
++
++    const { notifyUser } = await load();
++
++    await notifyUser(baseParams);
++
++    expect(fetchMock).not.toHaveBeenCalled();
++    expect(mockCreateDelivery).not.toHaveBeenCalled();
++  });
++
++  it('skips the push when the user muted this scenario', async () => {
++    process.env.BARK_KEY = 'my-key';
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++    mockGetUserSettings.mockResolvedValue({
++      notification: { push: { items: { agent: { agent_run_completed: false } } } },
++    });
++
++    const { notifyUser } = await load();
++
++    await notifyUser(baseParams);
++
++    expect(mockCreate).toHaveBeenCalled();
++    expect(fetchMock).not.toHaveBeenCalled();
++  });
++
++  it('gates the push on the workspace-merged preference', async () => {
++    process.env.BARK_KEY = 'my-key';
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++    mockGetUserSettings.mockResolvedValue({
++      notification: { push: { items: { agent: { agent_run_completed: false } } } },
++    });
++    mockGetPreference.mockResolvedValue({
++      notification: { push: { items: { agent: { agent_run_completed: true } } } },
++    });
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, workspaceId: 'w1' });
++
++    expect(fetchMock).toHaveBeenCalledTimes(1);
++  });
++
++  it('keeps another user’s notifications off the configured device', async () => {
++    process.env.BARK_KEY = 'my-key';
++    process.env.BARK_USER_ID = 'owner';
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++
++    const { notifyUser } = await load();
++
++    await notifyUser(baseParams);
++
++    expect(fetchMock).not.toHaveBeenCalled();
++  });
++
++  it('records a failed delivery row when the relay rejects the push', async () => {
++    process.env.BARK_KEY = 'my-key';
++    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ json: vi.fn(), ok: false, status: 500 }));
++
++    const { notifyUser } = await load();
++
++    await notifyUser(baseParams);
++
++    expect(mockCreateDelivery).toHaveBeenCalledWith(
++      expect.objectContaining({
++        channel: 'push',
++        failedReason: 'http_500',
++        sentAt: expect.any(Date),
++        status: 'failed',
++      }),
++    );
++  });
++
++  it('keeps the inbox row but skips the push when asked', async () => {
++    process.env.BARK_KEY = 'my-key';
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++
++    const { notifyUser } = await load();
++
++    await notifyUser(baseParams, { skipPush: true });
++
++    expect(mockCreate).toHaveBeenCalled();
++    expect(fetchMock).not.toHaveBeenCalled();
++    expect(mockCreateDelivery).not.toHaveBeenCalled();
++  });
++
++  it('re-throws a persistence failure when the caller needs it to be retryable', async () => {
++    mockCreate.mockRejectedValue(new Error('db down'));
++
++    const { notifyUser } = await load();
++
++    await expect(notifyUser(baseParams, { fatalOnPersistenceError: true })).rejects.toThrow(
++      'db down',
++    );
++  });
++
++  it('swallows a failure that happens after the row is durable', async () => {
++    process.env.BARK_KEY = 'my-key';
++    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse()));
++    mockCreateDelivery.mockRejectedValue(new Error('delivery row failed'));
++
++    const { notifyUser } = await load();
++
++    // The row exists by now, so the recall is not lost — the caller must not
++    // retry the whole operation just because the audit row failed.
++    await expect(
++      notifyUser(baseParams, { fatalOnPersistenceError: true }),
++    ).resolves.toBeUndefined();
++    expect(console.error).toHaveBeenCalled();
++  });
++
++  it('swallows a database outage instead of failing the caller', async () => {
++    mockGetServerDB.mockRejectedValue(new Error('db down'));
++
++    const { notifyUser } = await load();
++
++    await expect(notifyUser(baseParams)).resolves.toBeUndefined();
++    expect(console.error).toHaveBeenCalled();
++  });
++});
++
++describe('notifyUser push presentation', () => {
++  const pushBody = (fetchMock: ReturnType<typeof vi.fn>) =>
++    JSON.parse(fetchMock.mock.calls[0][1].body);
++
++  // Sibling of the block above rather than nested in it, so it needs its own
++  // setup: without the DB stubs `create` resolves to undefined and notifyUser
++  // returns before it ever reaches the push.
++  beforeEach(() => {
++    vi.clearAllMocks();
++    for (const key of BARK_ENV_KEYS) delete process.env[key];
++    process.env.BARK_KEY = 'my-key';
++    mockAppUrl.value = 'https://app.example.com';
++    mockGetServerDB.mockResolvedValue({});
++    mockGetUserSettings.mockResolvedValue(undefined);
++    mockGetPreference.mockResolvedValue({});
++    mockGetAgentAvatarsByIds.mockResolvedValue([]);
++    mockCreate.mockResolvedValue({ id: 'n1' });
++    mockCreateDelivery.mockResolvedValue({ id: 'd1' });
++    vi.spyOn(console, 'error').mockImplementation(() => {});
++    vi.spyOn(console, 'warn').mockImplementation(() => {});
++  });
++
++  afterEach(() => {
++    vi.unstubAllGlobals();
++    vi.restoreAllMocks();
++  });
++
++  it('sends the agent avatar as the icon and its name as the collapse group', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++    mockGetAgentAvatarsByIds.mockResolvedValue([
++      { avatar: 'https://cdn.example.com/a1.png', id: 'a1', name: 'Researcher', title: null },
++    ]);
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, actionUrl: '/agent/a1/t1' });
++
++    // The row only carries `agent.id`; a push has no client to resolve it, so
++    // the avatar has to be looked up here.
++    expect(mockGetAgentAvatarsByIds).toHaveBeenCalledWith(['a1']);
++    expect(pushBody(fetchMock)).toMatchObject({
++      group: 'Researcher',
++      icon: 'https://cdn.example.com/a1.png',
++    });
++  });
++
++  it('drops an emoji avatar rather than sending it as a broken icon', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++    mockGetAgentAvatarsByIds.mockResolvedValue([
++      { avatar: '🤖', id: 'a1', name: 'Researcher', title: null },
++    ]);
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, actionUrl: '/agent/a1/t1' });
++
++    // APNs can only fetch a URL, so a common emoji avatar degrades the icon,
++    // not the notification.
++    expect(pushBody(fetchMock).icon).toBeUndefined();
++    expect(pushBody(fetchMock).group).toBe('Researcher');
++  });
++
++  it('falls back to a shared group when no agent can be resolved', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++    mockGetAgentAvatarsByIds.mockResolvedValue([]);
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, actionUrl: '/agent/a1/t1' });
++
++    expect(pushBody(fetchMock).group).toBe('LobeHub');
++    expect(pushBody(fetchMock).icon).toBeUndefined();
++  });
++
++  it('still pushes when the agent lookup blows up', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++    mockGetAgentAvatarsByIds.mockRejectedValue(new Error('db down'));
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, actionUrl: '/agent/a1/t1' });
++
++    expect(fetchMock).toHaveBeenCalledTimes(1);
++  });
++
++  it('carries the row context as the subtitle', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, context: 'T-1' });
++
++    expect(pushBody(fetchMock).subtitle).toBe('T-1');
++  });
++
++  it('rings persistently for a parked intervention', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++
++    const { notifyUser } = await load();
++
++    await notifyUser({
++      ...baseParams,
++      category: 'agent',
++      type: 'agent_intervention_required',
++    });
++
++    // Someone has to answer before the run continues, so this one pierces
++    // silent mode and keeps sounding.
++    expect(pushBody(fetchMock)).toMatchObject({ call: 1, level: 'critical' });
++  });
++
++  it('escalates a scheduled failure through the interruption levels', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, category: 'schedule', type: 'agent_cron_job_failed' });
++    await notifyUser({
++      ...baseParams,
++      category: 'schedule',
++      type: 'agent_cron_job_failed_paused',
++    });
++    await notifyUser({ ...baseParams, category: 'generation', type: 'image_generation_completed' });
++
++    // A failed tick surfaces during Focus; a blown fuse that paused the task
++    // ignores silent mode because nothing will retry on its own; a generation
++    // the user is watching the canvas for just lands in the list.
++    expect(fetchMock.mock.calls.map((call) => JSON.parse(call[1].body).level)).toEqual([
++      'timeSensitive',
++      'critical',
++      'passive',
++    ]);
++  });
++});
+diff --git a/apps/server/src/services/notification/__tests__/settings.test.ts b/apps/server/src/services/notification/__tests__/settings.test.ts
+new file mode 100644
+index 0000000000..9b2253ad12
+--- /dev/null
++++ b/apps/server/src/services/notification/__tests__/settings.test.ts
+@@ -0,0 +1,100 @@
++// @vitest-environment node
++import { beforeEach, describe, expect, it, vi } from 'vitest';
++
++const { mockGetUserSettings, mockGetPreference } = vi.hoisted(() => ({
++  mockGetPreference: vi.fn(),
++  mockGetUserSettings: vi.fn(),
++}));
++
++vi.mock('@/database/models/user', () => ({
++  UserModel: vi.fn(function () {
++    return { getUserSettings: mockGetUserSettings };
++  }),
++}));
++
++vi.mock('@/database/models/workspaceUserSettings', () => ({
++  WorkspaceUserSettingsModel: vi.fn(function () {
++    return { getPreference: mockGetPreference };
++  }),
++}));
++
++const load = () => import('@/business/server/notification/settings');
++
++const db = {} as any;
++
++describe('resolvePushEnabled', () => {
++  beforeEach(() => {
++    vi.clearAllMocks();
++    mockGetUserSettings.mockResolvedValue(undefined);
++    mockGetPreference.mockResolvedValue({});
++  });
++
++  it('defaults to enabled when the user never touched the settings', async () => {
++    const { resolvePushEnabled } = await load();
++
++    await expect(
++      resolvePushEnabled(db, { category: 'agent', type: 'agent_run_completed', userId: 'u1' }),
++    ).resolves.toBe(true);
++  });
++
++  it('honours an explicit channel switch', async () => {
++    mockGetUserSettings.mockResolvedValue({ notification: { push: { enabled: false } } });
++    const { resolvePushEnabled } = await load();
++
++    await expect(
++      resolvePushEnabled(db, { category: 'agent', type: 'agent_run_completed', userId: 'u1' }),
++    ).resolves.toBe(false);
++  });
++
++  it('honours a per-scenario switch', async () => {
++    mockGetUserSettings.mockResolvedValue({
++      notification: { push: { items: { schedule: { agent_cron_job_completed: false } } } },
++    });
++    const { resolvePushEnabled } = await load();
++
++    await expect(
++      resolvePushEnabled(db, {
++        category: 'schedule',
++        type: 'agent_cron_job_completed',
++        userId: 'u1',
++      }),
++    ).resolves.toBe(false);
++
++    await expect(
++      resolvePushEnabled(db, { category: 'schedule', type: 'agent_cron_job_failed', userId: 'u1' }),
++    ).resolves.toBe(true);
++  });
++
++  it('lets a workspace override re-enable a scenario the personal bag muted', async () => {
++    mockGetUserSettings.mockResolvedValue({
++      notification: { push: { items: { schedule: { agent_cron_job_completed: false } } } },
++    });
++    mockGetPreference.mockResolvedValue({
++      notification: { push: { items: { schedule: { agent_cron_job_completed: true } } } },
++    });
++    const { resolvePushEnabled } = await load();
++
++    await expect(
++      resolvePushEnabled(db, {
++        category: 'task',
++        type: 'completed',
++        userId: 'u1',
++        workspaceId: 'w1',
++      }),
++    ).resolves.toBe(true);
++  });
++
++  it('does not read workspace preferences for personal notifications', async () => {
++    mockGetUserSettings.mockResolvedValue({ notification: { push: { enabled: true } } });
++    const { resolvePushEnabled } = await load();
++
++    await resolvePushEnabled(db, {
++      category: 'agent_run',
++      type: 'completed',
++      userId: 'u1',
++      workspaceId: null,
++    });
++
++    expect(mockGetPreference).not.toHaveBeenCalled();
++  });
++});
+diff --git a/apps/server/src/services/notification/__tests__/slots.test.ts b/apps/server/src/services/notification/__tests__/slots.test.ts
+new file mode 100644
+index 0000000000..9705c03571
+--- /dev/null
++++ b/apps/server/src/services/notification/__tests__/slots.test.ts
+@@ -0,0 +1,221 @@
++// @vitest-environment node
++import { beforeEach, describe, expect, it, vi } from 'vitest';
++
++import { notifyAgentInterventionRequired } from '@/business/server/agent-run/agentInterventionReview';
++import { notifyAgentRunCompleted } from '@/business/server/agent-run/notifyAgentRunCompleted';
++import { notifyImageCompleted } from '@/business/server/image-generation/notifyImageCompleted';
++import {
++  notifyScheduledTaskCompleted,
++  notifyScheduledTaskFailed,
++} from '@/business/server/task/notifyScheduledTaskResult';
++import { notifyVideoCompleted } from '@/business/server/video-generation/notifyVideoCompleted';
++
++const { mockNotifyUser } = vi.hoisted(() => ({ mockNotifyUser: vi.fn() }));
++
++vi.mock('@/business/server/notification', () => ({ notifyUser: mockNotifyUser }));
++
++const lastCall = () => mockNotifyUser.mock.lastCall!;
++
++beforeEach(() => {
++  vi.clearAllMocks();
++  mockNotifyUser.mockResolvedValue(undefined);
++});
++
++describe('notifyAgentRunCompleted', () => {
++  it('recalls with the reply preview and a deep link into the conversation', async () => {
++    await notifyAgentRunCompleted({
++      agentId: 'a1',
++      lastAssistantContent: 'Here is the **summary**.',
++      operationId: 'op-1',
++      topicId: 't1',
++      userId: 'u1',
++    });
++
++    const [params] = lastCall();
++    expect(params).toMatchObject({
++      actionUrl: '/agent/a1/t1',
++      category: 'agent',
++      content: 'Here is the **summary**.',
++      dedupeKey: 'agent_run_completed:op-1',
++      metadata: { agent: { id: 'a1' } },
++      title: 'Agent task completed',
++      type: 'agent_run_completed',
++      userId: 'u1',
++    });
++  });
++
++  it('falls back to the title when the run produced no text', async () => {
++    await notifyAgentRunCompleted({ operationId: 'op-2', userId: 'u1' });
++
++    expect(lastCall()[0].content).toBe('Agent task completed');
++  });
++
++  // The floor is a code constant (MIN_PUSH_DURATION_MS) rather than a
++  // deployment knob: whether a run was short enough that the user was still
++  // watching is a product judgement, not something an operator configures.
++  it('keeps a run shorter than the floor off the phone', async () => {
++    await notifyAgentRunCompleted({ duration: 1_200, operationId: 'op-3', userId: 'u1' });
++
++    expect(lastCall()[1]).toEqual({ skipPush: true });
++  });
++
++  it('pushes a run that outlasts the floor', async () => {
++    await notifyAgentRunCompleted({ duration: 120_000, operationId: 'op-4', userId: 'u1' });
++
++    expect(lastCall()[1]).toEqual({ skipPush: false });
++  });
++});
++
++describe('notifyScheduledTaskResult', () => {
++  const base = {
++    agentId: 'a1',
++    operationId: 'op-1',
++    runTrigger: 'schedule' as const,
++    taskId: 'task-1',
++    taskIdentifier: 'T-1',
++    topicId: 't1',
++    userId: 'u1',
++  };
++
++  it('names the task in the completed copy', async () => {
++    await notifyScheduledTaskCompleted({
++      ...base,
++      lastAssistantContent: 'tick reply',
++      taskName: 'Nightly digest',
++    });
++
++    const [params] = lastCall();
++    expect(params).toMatchObject({
++      category: 'schedule',
++      content: 'Your scheduled task "Nightly digest" completed successfully.',
++      context: 'tick reply',
++      dedupeKey: 'scheduled_task_completed:op-1',
++      title: 'Scheduled task completed',
++      type: 'agent_cron_job_completed',
++    });
++  });
++
++  it('falls back to the task identifier when the task has no name', async () => {
++    await notifyScheduledTaskCompleted(base);
++
++    expect(lastCall()[0].content).toContain('"T-1"');
++  });
++
++  it('caps a runaway task name', async () => {
++    await notifyScheduledTaskCompleted({ ...base, taskName: 'x'.repeat(500) });
++
++    expect(lastCall()[0].content.length).toBeLessThan(140);
++  });
++
++  it('reports a tick failure with its structured error code', async () => {
++    await notifyScheduledTaskFailed({ ...base, errorCode: 'InsufficientBudgetForModel' });
++
++    const [params] = lastCall();
++    expect(params).toMatchObject({
++      context: 'InsufficientBudgetForModel',
++      dedupeKey: 'scheduled_task_failed:op-1',
++      title: 'Scheduled task failed',
++      type: 'agent_cron_job_failed',
++    });
++  });
++
++  it('reports a fuse stop as its own scenario', async () => {
++    await notifyScheduledTaskFailed({ ...base, consecutiveFailures: 3, paused: true });
++
++    const [params] = lastCall();
++    expect(params).toMatchObject({
++      content: expect.stringContaining('3 consecutive failures'),
++      title: 'Scheduled task paused',
++      type: 'agent_cron_job_failed_paused',
++    });
++  });
++});
++
++describe('generation notifications', () => {
++  it('names the prompt in the image copy', async () => {
++    await notifyImageCompleted({
++      duration: 10,
++      generationBatchId: 'b1',
++      model: 'dall-e-3',
++      prompt: 'a red panda',
++      userId: 'u1',
++    });
++
++    const [params] = lastCall();
++    expect(params).toMatchObject({
++      category: 'generation',
++      content: 'Your image "a red panda" is ready.',
++      context: 'dall-e-3',
++      dedupeKey: 'image_completed:b1',
++      title: 'Image generation completed',
++      type: 'image_generation_completed',
++    });
++  });
++
++  it('does not ship an empty prompt', async () => {
++    await notifyVideoCompleted({
++      generationBatchId: 'b3',
++      model: 'sora',
++      prompt: '   ',
++      userId: 'u1',
++    });
++
++    expect(lastCall()[0].content).toBe('Video generation completed');
++  });
++
++  it('names the prompt in the video copy', async () => {
++    await notifyVideoCompleted({
++      generationBatchId: 'b2',
++      model: 'sora',
++      prompt: 'a red panda',
++      userId: 'u1',
++    });
++
++    const [params] = lastCall();
++    expect(params).toMatchObject({
++      category: 'generation',
++      content: 'Your video "a red panda" is ready.',
++      dedupeKey: 'video_completed:b2',
++      type: 'video_generation_completed',
++    });
++  });
++});
++
++describe('notifyAgentInterventionRequired', () => {
++  const params = {
++    approvalMode: 'manual' as const,
++    batch: {
++      activityKey: 'activity-1',
++      allowedActions: [],
++      id: 'batch-1',
++      kind: 'single' as const,
++      sealed: true as const,
++      stepIndex: 0,
++    },
++    context: { agentId: 'a1', operationId: 'op-1', topicId: 't1' },
++    items: [],
++    summary: 'Approve running rm -rf?',
++    systemActionEligibility: 'review_only' as const,
++    userId: 'u1',
++  };
++
++  it('asks for review and deep-links into the parked run', async () => {
++    await notifyAgentInterventionRequired(params);
++
++    const [payload] = lastCall();
++    expect(payload).toMatchObject({
++      actionUrl: '/agent/a1/t1',
++      category: 'agent',
++      content: 'Agent needs your input: Approve running rm -rf?',
++      dedupeKey: 'agent_intervention_required:batch-1',
++      title: 'Agent needs your review',
++      type: 'agent_intervention_required',
++    });
++  });
++
++  it('makes a lost inbox row retryable for the parked lifecycle', async () => {
++    await notifyAgentInterventionRequired(params);
++
++    expect(lastCall()[1]).toEqual({ fatalOnPersistenceError: true });
++  });
++});
+diff --git a/packages/business-server/package.json b/packages/business-server/package.json
+index 20d659af0b..5877272c48 100644
+--- a/packages/business-server/package.json
++++ b/packages/business-server/package.json
+@@ -11,6 +11,8 @@
+     "@lobechat/database": "workspace:*",
+     "@lobechat/model-runtime": "workspace:*",
+     "@lobechat/trpc": "workspace:*",
+-    "@lobechat/types": "workspace:*"
++    "@lobechat/types": "workspace:*",
++    "@lobechat/utils": "workspace:*",
++    "debug": "^4.4.3"
+   }
+ }
+diff --git a/packages/business-server/src/agent-run/agentInterventionReview.ts b/packages/business-server/src/agent-run/agentInterventionReview.ts
+index a1d8bff61c..dd98f7145b 100644
+--- a/packages/business-server/src/agent-run/agentInterventionReview.ts
++++ b/packages/business-server/src/agent-run/agentInterventionReview.ts
+@@ -1,5 +1,10 @@
+ import type { MessageMapScope } from '@lobechat/types';
+ 
++import { notifyUser } from '../notification';
++import { NOTIFICATION_CATEGORY, NOTIFICATION_TYPE } from '../notification/categories';
++import { renderCopy } from '../notification/copy';
++import { buildConversationPath, previewText } from '../notification/format';
++
+ export type AgentInterventionReviewStatus =
+   | 'approved'
+   | 'cancelled'
+@@ -583,8 +588,42 @@ export async function acknowledgeAgentInterventionProducerResolution(
+  * Push / Live Activity fanout happens only after that create boundary and must
+  * be caught, logged, or durably retried inside the Cloud implementation. A
+  * downstream delivery failure must never reject this slot after persistence.
+- * OSS deliberately has no durable store and therefore keeps the no-op default.
++ *
++ * OSS has no Live Activity to drive, so this slot only recalls the user: one
++ * inbox row plus a push when the `push` channel is configured. The inbox row is
++ * the durable boundary here, so — matching the contract above — a failure to
++ * persist it is re-thrown for the parked lifecycle to retry, while a push
++ * failure after persistence is swallowed.
+  */
+ export async function notifyAgentInterventionRequired(
+-  _params: NotifyAgentInterventionRequiredParams,
+-): Promise<void> {}
++  params: NotifyAgentInterventionRequiredParams,
++): Promise<void> {
++  await notifyUser(
++    {
++      actionUrl: buildConversationPath({
++        agentId: params.agentId ?? params.context.agentId,
++        topicId: params.context.topicId,
++      }),
++      category: NOTIFICATION_CATEGORY.agent,
++      // The canonical copy addresses the agent by name; only the id reaches
++      // this slot (display metadata is stripped upstream), so the generic noun
++      // stands in rather than leaking an id into the banner.
++      content: renderCopy('agent_intervention_required', {
++        agent: 'Agent',
++        summary: previewText(params.summary, '', 160),
++      }),
++      // One alert per sealed batch: the parked lifecycle may publish more than
++      // once while the queue retries.
++      dedupeKey: `agent_intervention_required:${params.batch.id}`,
++      metadata:
++        (params.agentId ?? params.context.agentId)
++          ? { agent: { id: (params.agentId ?? params.context.agentId) as string } }
++          : undefined,
++      title: renderCopy('agent_intervention_required_title', { agent: 'Agent' }),
++      type: NOTIFICATION_TYPE.interventionRequired,
++      userId: params.userId,
++      workspaceId: params.workspaceId,
++    },
++    { fatalOnPersistenceError: true },
++  );
++}
+diff --git a/packages/business-server/src/agent-run/notifyAgentRunCompleted.ts b/packages/business-server/src/agent-run/notifyAgentRunCompleted.ts
+index ef570beac5..eac5970a02 100644
+--- a/packages/business-server/src/agent-run/notifyAgentRunCompleted.ts
++++ b/packages/business-server/src/agent-run/notifyAgentRunCompleted.ts
+@@ -1,3 +1,19 @@
++import { notifyUser } from '../notification';
++import { NOTIFICATION_CATEGORY, NOTIFICATION_TYPE } from '../notification/categories';
++import { renderCopy } from '../notification/copy';
++import { buildConversationPath, previewText } from '../notification/format';
++
++/**
++ * Runs shorter than this keep their inbox row but stay quiet on the phone.
++ *
++ * The server cannot see whether the user is still watching the reply the way the
++ * desktop client can (it suppresses its own banner on a focused window), so
++ * elapsed time is the only proxy available. Under half a minute the reply almost
++ * certainly landed while they were still looking at the screen, and waking the
++ * phone for that just trains people to mute the channel.
++ */
++const MIN_PUSH_DURATION_MS = 30_000;
++
+ export interface NotifyAgentRunCompletedParams {
+   agentId?: string;
+   duration?: number;
+@@ -8,6 +24,42 @@ export interface NotifyAgentRunCompletedParams {
+   workspaceId?: string;
+ }
+ 
++/**
++ * Recall the user when a run finishes while they may be away.
++ *
++ * `CompletionLifecycle` decides who is worth recalling: sub-agents, group
++ * members and share-visitor runs never reach this slot, and only the
++ * recallable triggers do — plain chat turns plus the two deferred ones
++ * (`scheduled` and `cron`), which are exactly the "user walked away
++ * mid-conversation" cases.
++ *
++ * `scheduled` and `cron` here are *chat* triggers — a turn the user deferred
++ * and a rate-limit auto-resume — not automation task ticks. Task runs go
++ * through the task runner under its own trigger (`task`), which
++ * `CompletionLifecycle` explicitly does not recall, and are notified by
++ * `notifyScheduledTaskCompleted` instead. The two slots therefore never fire
++ * for the same operation.
++ */
+ export async function notifyAgentRunCompleted(
+-  _params: NotifyAgentRunCompletedParams,
+-): Promise<void> {}
++  params: NotifyAgentRunCompletedParams,
++): Promise<void> {
++  const title = renderCopy('agent_run_completed_title');
++  const preview = previewText(params.lastAssistantContent, title);
++
++  await notifyUser(
++    {
++      actionUrl: buildConversationPath({ agentId: params.agentId, topicId: params.topicId }),
++      category: NOTIFICATION_CATEGORY.agent,
++      content: renderCopy('agent_run_completed', { preview }),
++      // Keyed by operation so a lifecycle retry cannot push the same reply twice.
++      dedupeKey: `agent_run_completed:${params.operationId}`,
++      metadata: params.agentId ? { agent: { id: params.agentId } } : undefined,
++      title,
++      type: NOTIFICATION_TYPE.agentRunCompleted,
++      userId: params.userId,
++      workspaceId: params.workspaceId,
++    },
++    // An unknown duration pushes: better a stray banner than a missed recall.
++    { skipPush: params.duration !== undefined && params.duration < MIN_PUSH_DURATION_MS },
++  );
++}
+diff --git a/packages/business-server/src/image-generation/notifyImageCompleted.ts b/packages/business-server/src/image-generation/notifyImageCompleted.ts
+index 9ce4cc2b45..48668f95f1 100644
+--- a/packages/business-server/src/image-generation/notifyImageCompleted.ts
++++ b/packages/business-server/src/image-generation/notifyImageCompleted.ts
+@@ -1,3 +1,8 @@
++import { notifyUser } from '../notification';
++import { NOTIFICATION_CATEGORY, NOTIFICATION_TYPE } from '../notification/categories';
++import { renderCopy } from '../notification/copy';
++import { clampText, previewText } from '../notification/format';
++
+ interface NotifyImageCompletedParams {
+   duration: number;
+   generationBatchId: string;
+@@ -9,4 +14,23 @@ interface NotifyImageCompletedParams {
+   workspaceId?: string;
+ }
+ 
+-export async function notifyImageCompleted(_params: NotifyImageCompletedParams): Promise<void> {}
++/**
++ * A generation batch finished. The prompt is the most useful preview, and it is
++ * the user's own input — unlike a run reply it is already known to them.
++ */
++export async function notifyImageCompleted(params: NotifyImageCompletedParams): Promise<void> {
++  const title = renderCopy('image_generation_completed_title');
++  const prompt = previewText(params.prompt, '', 120);
++
++  await notifyUser({
++    category: NOTIFICATION_CATEGORY.generation,
++    // A blank prompt would otherwise read `Your image "" is ready.`
++    content: prompt ? renderCopy('image_generation_completed', { prompt }) : title,
++    context: clampText(params.model, 80),
++    dedupeKey: `image_completed:${params.generationBatchId}`,
++    title,
++    type: NOTIFICATION_TYPE.imageGenerationCompleted,
++    userId: params.userId,
++    workspaceId: params.workspaceId,
++  });
++}
+diff --git a/packages/business-server/src/notification/agentMeta.ts b/packages/business-server/src/notification/agentMeta.ts
+new file mode 100644
+index 0000000000..3bd9e180d3
+--- /dev/null
++++ b/packages/business-server/src/notification/agentMeta.ts
+@@ -0,0 +1,58 @@
++import { AgentModel } from '@/database/models/agent';
++import type { LobeChatDatabase } from '@/database/type';
++
++/**
++ * Everything a push payload needs to know about the agent behind it.
++ *
++ * Inbox rows only carry `metadata.agent.id` because a client resolves the
++ * avatar from its live store (`useNotificationAgentMeta`). A push has no
++ * client: Bark has to be handed a URL, so the row's id is resolved here.
++ */
++export interface AgentPushMeta {
++  /** Absolute image URL, or undefined — Bark cannot use an emoji avatar. */
++  iconUrl?: string;
++  /** Collapse key for Bark's `group`: same agent, one stack on the phone. */
++  name?: string;
++}
++
++/** Agent avatars are free text: http(s) URLs, emojis, and data URIs all occur. */
++const isFetchableUrl = (value: string): boolean => {
++  try {
++    const { protocol } = new URL(value);
++
++    return protocol === 'http:' || protocol === 'https:';
++  } catch {
++    return false;
++  }
++};
++
++/**
++ * Resolve the agent behind a notification, never throwing.
++ *
++ * A missing or unreadable agent degrades the push (no icon, no group) — it
++ * must not cost the notification, and it must not cost the caller's run.
++ */
++export const resolveAgentPushMeta = async (
++  db: LobeChatDatabase,
++  userId: string,
++  agentId?: string,
++): Promise<AgentPushMeta> => {
++  if (!agentId) return {};
++
++  try {
++    const [agent] = await new AgentModel(db, userId).getAgentAvatarsByIds([agentId]);
++    if (!agent) return {};
++
++    const label = agent.name || agent.title || undefined;
++    const avatar = agent.avatar?.trim();
++
++    return {
++      // An emoji avatar is common and APNs cannot fetch it, so it is dropped
++      // rather than sent as a broken icon URL.
++      iconUrl: avatar && isFetchableUrl(avatar) ? avatar : undefined,
++      name: label,
++    };
++  } catch {
++    return {};
++  }
++};
+diff --git a/packages/business-server/src/notification/bark.ts b/packages/business-server/src/notification/bark.ts
+new file mode 100644
+index 0000000000..7080f61f70
+--- /dev/null
++++ b/packages/business-server/src/notification/bark.ts
+@@ -0,0 +1,142 @@
++import { pushConfig } from './config';
++import type { BarkLevel } from './levels';
++
++/** Public Bark relay used when `BARK_SERVER_URL` is not set. */
++const DEFAULT_BARK_SERVER_URL = 'https://api.day.app';
++
++/**
++ * Bark is a best-effort side channel, and two callers await this slot inside a
++ * persistence path — a dead relay must not add a long stall to either.
++ */
++const REQUEST_TIMEOUT_MS = 5_000;
++
++/** Emitted once per process: the operator needs to know their phone is shared. */
++let warnedAboutSharedDevice = false;
++
++export interface BarkMessage {
++  body: string;
++  /** Bark's `call`: play the sound repeatedly for 30s. For "answer me now". */
++  call?: boolean;
++  /** Collapse key — pushes sharing a group stack together on the phone. */
++  group?: string;
++  /** iOS 15+: APNs fetches this and renders it as the notification icon. */
++  icon?: string;
++  /** Interruption level; drives screen wake, Focus and silent mode. */
++  level?: BarkLevel;
++  /** Secondary line under the title. */
++  subtitle?: string;
++  title: string;
++  /** Opened when the notification is tapped. */
++  url?: string;
++}
++
++export interface BarkDeliveryResult {
++  failedReason?: string;
++  /** Bark echoes a timestamp for accepted pushes; good enough for tracing. */
++  providerMessageId?: string;
++  status: 'delivered' | 'failed';
++}
++
++/**
++ * Normalised relay origin, or `undefined` when the configured value is not an
++ * http(s) URL — the device key is appended to this, and the URL is
++ * operator-supplied, so anything else is refused rather than fetched.
++ */
++const serverUrl = (): string | undefined => {
++  const configured = pushConfig().BARK_SERVER_URL?.trim() || DEFAULT_BARK_SERVER_URL;
++
++  try {
++    const url = new URL(configured);
++    if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined;
++
++    return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
++  } catch {
++    return undefined;
++  }
++};
++
++/** Whether this deployment has a push channel at all. */
++export const isBarkConfigured = (): boolean => Boolean(pushConfig().BARK_KEY?.trim());
++
++/**
++ * Whether `userId` owns the configured device.
++ *
++ * An unset `BARK_USER_ID` means "single-user instance", so every user is
++ * accepted — on a shared instance that ships other people's replies and prompts
++ * to this one phone, so warn once instead of failing silently.
++ */
++export const isBarkRecipient = (userId: string): boolean => {
++  const ownerId = pushConfig().BARK_USER_ID?.trim();
++
++  if (!ownerId) {
++    if (!warnedAboutSharedDevice) {
++      warnedAboutSharedDevice = true;
++      console.warn(
++        "[notification] BARK_KEY is set without BARK_USER_ID — every user's notifications will be pushed to this device. Set BARK_USER_ID unless this instance is single-user.",
++      );
++    }
++
++    return true;
++  }
++
++  return ownerId === userId;
++};
++
++/**
++ * Deliver one message through Bark.
++ *
++ * Never throws: notification delivery is fire-and-forget, and a dead relay must
++ * not surface as a failed agent run.
++ */
++export const sendBarkNotification = async (message: BarkMessage): Promise<BarkDeliveryResult> => {
++  const key = pushConfig().BARK_KEY?.trim();
++
++  if (!key) return { failedReason: 'bark_not_configured', status: 'failed' };
++
++  const base = serverUrl();
++  if (!base) return { failedReason: 'invalid_server_url', status: 'failed' };
++
++  try {
++    const response = await fetch(`${base}/${encodeURIComponent(key)}`, {
++      // `JSON.stringify` drops the absent optional fields, so Bark only sees
++      // the hints this message actually set.
++      body: JSON.stringify({
++        body: message.body,
++        call: message.call ? 1 : undefined,
++        group: message.group,
++        icon: message.icon,
++        level: message.level,
++        subtitle: message.subtitle,
++        title: message.title,
++        url: message.url,
++      }),
++      headers: { 'Content-Type': 'application/json' },
++      method: 'POST',
++      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
++    });
++
++    if (!response.ok) return { failedReason: `http_${response.status}`, status: 'failed' };
++
++    // Bark replies 200 with a JSON body whose `code` is the real outcome; a
++    // non-JSON body is treated as success because the HTTP status already said
++    // the relay accepted the push.
++    const payload = (await response.json().catch(() => null)) as {
++      code?: number;
++      timestamp?: number;
++    } | null;
++
++    if (payload?.code !== undefined && payload.code !== 200) {
++      return { failedReason: `bark_${payload.code}`, status: 'failed' };
++    }
++
++    return {
++      providerMessageId: payload?.timestamp ? String(payload.timestamp) : undefined,
++      status: 'delivered',
++    };
++  } catch (error) {
++    return {
++      failedReason: error instanceof Error ? error.name : 'unknown',
++      status: 'failed',
++    };
++  }
++};
+diff --git a/packages/business-server/src/notification/categories.ts b/packages/business-server/src/notification/categories.ts
+new file mode 100644
+index 0000000000..71f017bbd3
+--- /dev/null
++++ b/packages/business-server/src/notification/categories.ts
+@@ -0,0 +1,29 @@
++/**
++ * `(category, type)` pairs used for inbox grouping and for the per-scenario
++ * switches under `notification.push.items[category][type]`.
++ *
++ * Neither value is free to choose:
++ *
++ * - **category** — the inbox renders one tab per category from
++ *   `PERSONAL_INBOX_CATEGORIES` / `WORKSPACE_INBOX_CATEGORIES` and labels it
++ *   with the `category.<value>` locale key, so a value outside that vocabulary
++ *   shows up as an untranslated extra tab.
++ * - **type** — matches the notification keys already shipped in
++ *   `packages/locales/src/default/notification.ts` (and the inbox's icon map),
++ *   so these rows render — and later localise — like their Cloud equivalents.
++ */
++export const NOTIFICATION_CATEGORY = {
++  agent: 'agent',
++  generation: 'generation',
++  schedule: 'schedule',
++} as const;
++
++export const NOTIFICATION_TYPE = {
++  agentRunCompleted: 'agent_run_completed',
++  cronJobCompleted: 'agent_cron_job_completed',
++  cronJobFailed: 'agent_cron_job_failed',
++  cronJobFailedPaused: 'agent_cron_job_failed_paused',
++  imageGenerationCompleted: 'image_generation_completed',
++  interventionRequired: 'agent_intervention_required',
++  videoGenerationCompleted: 'video_generation_completed',
++} as const;
+diff --git a/packages/business-server/src/notification/config.ts b/packages/business-server/src/notification/config.ts
+new file mode 100644
+index 0000000000..ff88ded200
+--- /dev/null
++++ b/packages/business-server/src/notification/config.ts
+@@ -0,0 +1,28 @@
++import debug from 'debug';
++
++import { getNotificationConfig } from '@/envs/notification';
++
++const log = debug('lobe-notification');
++
++type PushConfig = Partial<ReturnType<typeof getNotificationConfig>>;
++
++/**
++ * Push configuration that never throws.
++ *
++ * A malformed `BARK_*` value makes `createEnv` reject. Most reads happen inside
++ * `notifyUser`, after the inbox row is durable, so a rejection there only costs
++ * the push. `notifyAgentRunCompleted` reads the config *before* the row exists,
++ * and the run lifecycle swallows slot errors — a typo would therefore drop
++ * every notification with no visible cause. Degrade to "unconfigured": the
++ * inbox still works, and the operator sees the reason under
++ * `DEBUG=lobe-notification`.
++ */
++export const pushConfig = (): PushConfig => {
++  try {
++    return getNotificationConfig();
++  } catch (error) {
++    log('invalid BARK_* configuration — treating push as unconfigured: %O', error);
++
++    return {};
++  }
++};
+diff --git a/packages/business-server/src/notification/copy.ts b/packages/business-server/src/notification/copy.ts
+new file mode 100644
+index 0000000000..14cccfcbfc
+--- /dev/null
++++ b/packages/business-server/src/notification/copy.ts
+@@ -0,0 +1,20 @@
++import notificationCopy from '@/locales/default/notification';
++
++type CopyKey = keyof typeof notificationCopy;
++
++/**
++ * Server-side notification copy.
++ *
++ * The inbox and Cloud render the same strings from the `notification` locale
++ * namespace, so a self-hosted push reuses them instead of inventing a parallel
++ * set that would drift. Only the default (en-US) copy is read: the server has
++ * no per-user locale at notification time.
++ */
++export const renderCopy = (key: CopyKey, values: Record<string, string | undefined> = {}): string =>
++  notificationCopy[key].replaceAll(/\{\{(\w+)\}\}/g, (_match, name: string) => {
++    const value = values[name]?.trim();
++
++    // Callers always supply every placeholder; this only keeps a missed one
++    // from reaching the phone as a raw `{{token}}`.
++    return value ?? '';
++  });
+diff --git a/packages/business-server/src/notification/format.ts b/packages/business-server/src/notification/format.ts
+new file mode 100644
+index 0000000000..ef0a6405ef
+--- /dev/null
++++ b/packages/business-server/src/notification/format.ts
+@@ -0,0 +1,63 @@
++import { getAppConfig } from '@/envs/app';
++
++/** Hard cap for a single-line field; returns undefined for blank input. */
++export const clampText = (text: string | undefined, maxLength: number): string | undefined => {
++  const collapsed = text?.replaceAll(/\s+/g, ' ').trim();
++
++  if (!collapsed) return undefined;
++  if (collapsed.length <= maxLength) return collapsed;
++
++  return `${collapsed.slice(0, maxLength - 1)}…`;
++};
++
++/** Collapse whitespace so a multi-line reply does not blow up a push payload. */
++export const previewText = (text?: string, fallback = '', maxLength = 200): string =>
++  clampText(text, maxLength) ?? fallback;
++
++/**
++ * Relative SPA path for a conversation.
++ *
++ * Workspace runs would need the workspace slug prefixed to match the URL the
++ * signed-in user sees; without it the bare agent path still resolves, so the
++ * link is emitted as-is rather than guessed at.
++ */
++export const buildConversationPath = (params: {
++  agentId?: string;
++  topicId?: string;
++}): string | undefined => {
++  const { agentId, topicId } = params;
++
++  if (!topicId) return undefined;
++  if (!agentId) return undefined;
++
++  // Encoded: the ids reach here straight off a run payload, and an unescaped
++  // segment would let a crafted id turn the deep link into another path.
++  return `/agent/${encodeURIComponent(agentId)}/${encodeURIComponent(topicId)}`;
++};
++
++/** Hosts that only mean something on the machine that produced them. */
++const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1', '0.0.0.0']);
++
++/**
++ * Absolute URL for an external surface (a push payload).
++ *
++ * Returns undefined when there is no usable origin — including a loopback one,
++ * which `APP_URL` falls back to when it is unset. A `http://localhost:3210/...`
++ * link is a dead tap on a phone (it resolves against the phone itself), so no
++ * link is better than a broken one; the inbox still navigates from the row's
++ * relative path.
++ */
++export const buildPublicUrl = (path: string | undefined): string | undefined => {
++  if (!path) return undefined;
++
++  const origin = getAppConfig().APP_URL?.trim().replaceAll(/\/+$/g, '');
++  if (!origin) return undefined;
++
++  try {
++    if (LOOPBACK_HOSTS.has(new URL(origin).hostname)) return undefined;
++  } catch {
++    return undefined;
++  }
++
++  return `${origin}${path}`;
++};
+diff --git a/packages/business-server/src/notification/index.ts b/packages/business-server/src/notification/index.ts
+new file mode 100644
+index 0000000000..e53ec600b2
+--- /dev/null
++++ b/packages/business-server/src/notification/index.ts
+@@ -0,0 +1,155 @@
++import type { NotificationMetadata } from '@lobechat/types';
++import debug from 'debug';
++
++import { getServerDB } from '@/database/core/db-adaptor';
++import { NotificationModel } from '@/database/models/notification';
++
++import { resolveAgentPushMeta } from './agentMeta';
++import { isBarkConfigured, isBarkRecipient, sendBarkNotification } from './bark';
++import { buildPublicUrl } from './format';
++import { resolvePresentation } from './levels';
++import { resolvePushEnabled } from './settings';
++
++const log = debug('lobe-notification');
++
++/**
++ * Collapse group for pushes with no resolvable agent.
++ *
++ * Notifications that carry an agent group under that agent's name so its
++ * pushes stack together; the rest still need a key, or Bark would file each of
++ * them separately.
++ */
++const DEFAULT_PUSH_GROUP = 'LobeHub';
++
++/**
++ * One user-visible notification: persisted to the inbox, then pushed to every
++ * enabled channel.
++ *
++ * This is the OSS counterpart of Cloud's `NotificationService`. Every business
++ * slot (`@/business/server/**`) funnels through here so a self-hosted instance
++ * gets inbox rows plus a push without Cloud's channel registry.
++ */
++export interface NotifyUserParams {
++  /** Relative SPA path opened from the inbox and from the push payload. */
++  actionUrl?: string;
++  /** Preference grouping, e.g. `agent`. Keys `push.items`. */
++  category: string;
++  content: string;
++  /** Optional secondary line rendered under the body. */
++  context?: string;
++  /** Skips both the row and the push when an identical key was already sent. */
++  dedupeKey?: string;
++  metadata?: NotificationMetadata;
++  title: string;
++  /** Scenario type, e.g. `completed`. Keys `push.items[category]`. */
++  type: string;
++  userId: string;
++  /** `null` keeps the row personal so it never leaks into a workspace inbox. */
++  workspaceId?: string | null;
++}
++
++export interface NotifyUserOptions {
++  /**
++   * Re-throw a failure to persist the inbox row instead of swallowing it.
++   *
++   * For slots whose caller treats a rejection as fatal and retryable — the
++   * parked intervention path re-queues the whole operation — so silently
++   * absorbing a DB blip would drop the notification with no retry. Delivery
++   * failures are still swallowed either way: they happen after persistence.
++   */
++  fatalOnPersistenceError?: boolean;
++
++  /**
++   * Keep the inbox row but skip the push.
++   *
++   * Slots use this for the one proxy the server has for "the user is probably
++   * still watching" — how long the run took. The desktop client can suppress
++   * its own banner on a focused window; the server cannot see that, so the
++   * floor is a code decision, not a deployment knob.
++   */
++  skipPush?: boolean;
++}
++
++export const notifyUser = async (
++  params: NotifyUserParams,
++  options: NotifyUserOptions = {},
++): Promise<void> => {
++  let persisted = false;
++
++  try {
++    const db = await getServerDB();
++    const model = new NotificationModel(db, params.userId);
++
++    const notification = await model.create({
++      actionUrl: params.actionUrl,
++      category: params.category,
++      content: params.content,
++      context: params.context,
++      dedupeKey: params.dedupeKey,
++      metadata: params.metadata,
++      title: params.title,
++      type: params.type,
++      workspaceId: params.workspaceId ?? null,
++    });
++
++    persisted = true;
++
++    // `null` means the dedupe key already sent this notification — skip it
++    // rather than pushing the same alert twice off a lifecycle retry.
++    if (!notification) return;
++
++    if (options.skipPush) return;
++
++    // Cheap local gates first: on an unconfigured or single-user instance these
++    // answer without the two settings reads below.
++    if (!isBarkConfigured()) {
++      log('no Bark key configured — skipping push');
++      return;
++    }
++
++    // Logged rather than silent: a mistyped BARK_USER_ID otherwise looks exactly
++    // like a broken relay — inbox rows, no pushes, nothing in the log.
++    if (!isBarkRecipient(params.userId)) {
++      log('userId=%s does not own the configured device — skipping push', params.userId);
++      return;
++    }
++
++    if (!(await resolvePushEnabled(db, params))) {
++      log('push muted for userId=%s %s/%s', params.userId, params.category, params.type);
++      return;
++    }
++
++    // The inbox row stores only `metadata.agent.id` and lets a client resolve
++    // the avatar from its live store. A push has no client, so the id is
++    // resolved here: Bark needs a real image URL for the icon, and the agent's
++    // name is what collapses its pushes into one stack on the phone.
++    const agent = await resolveAgentPushMeta(db, params.userId, params.metadata?.agent?.id);
++    const presentation = resolvePresentation(params.category, params.type);
++
++    const result = await sendBarkNotification({
++      body: params.content,
++      call: presentation.call,
++      group: agent.name ?? DEFAULT_PUSH_GROUP,
++      icon: agent.iconUrl,
++      level: presentation.level,
++      // The row's `context` is the secondary line in the inbox; on the phone it
++      // is the subtitle, not a second paragraph of body.
++      subtitle: params.context,
++      title: params.title,
++      url: buildPublicUrl(params.actionUrl),
++    });
++
++    await model.createDelivery({
++      channel: 'push',
++      failedReason: result.failedReason,
++      notificationId: notification.id,
++      providerMessageId: result.providerMessageId,
++      sentAt: new Date(),
++      status: result.status === 'delivered' ? 'delivered' : 'failed',
++    });
++  } catch (error) {
++    if (!persisted && options.fatalOnPersistenceError) throw error;
++
++    console.error('[notification] dispatch failed:', error);
++  }
++};
+diff --git a/packages/business-server/src/notification/levels.ts b/packages/business-server/src/notification/levels.ts
+new file mode 100644
+index 0000000000..3f54f597c3
+--- /dev/null
++++ b/packages/business-server/src/notification/levels.ts
+@@ -0,0 +1,54 @@
++import { NOTIFICATION_CATEGORY, NOTIFICATION_TYPE } from './categories';
++
++export type BarkLevel = 'active' | 'critical' | 'passive' | 'timeSensitive';
++
++export interface BarkPresentation {
++  /** Bark's `call`: plays the sound repeatedly for 30s. */
++  call?: boolean;
++  level: BarkLevel;
++}
++
++/**
++ * How loudly one scenario should arrive on the phone.
++ *
++ * Bark exposes four interruption levels and they are not decoration — they
++ * decide whether the screen lights up, whether Focus mode is pierced, and
++ * whether silent mode is ignored. Picking one per scenario is the whole point
++ * of having them, so the mapping lives here rather than in config:
++ *
++ * - `critical` — a human has to act now: silent and Do Not Disturb are ignored.
++ * - `timeSensitive` — something broke; surfaces even during Focus.
++ * - `active` — ordinary completion; lights the screen.
++ * - `passive` — lands in the notification list without waking the phone.
++ */
++const PRESENTATION: Record<string, BarkPresentation> = {
++  // A parked intervention is the only case where the run is stopped until a
++  // person answers — ring properly instead of dropping a silent banner.
++  [`${NOTIFICATION_CATEGORY.agent}/${NOTIFICATION_TYPE.interventionRequired}`]: {
++    call: true,
++    level: 'critical',
++  },
++  // The fuse blew and the task is paused: nothing will retry on its own.
++  [`${NOTIFICATION_CATEGORY.schedule}/${NOTIFICATION_TYPE.cronJobFailedPaused}`]: {
++    level: 'critical',
++  },
++  [`${NOTIFICATION_CATEGORY.schedule}/${NOTIFICATION_TYPE.cronJobFailed}`]: {
++    level: 'timeSensitive',
++  },
++  [`${NOTIFICATION_CATEGORY.agent}/${NOTIFICATION_TYPE.agentRunCompleted}`]: { level: 'active' },
++  [`${NOTIFICATION_CATEGORY.schedule}/${NOTIFICATION_TYPE.cronJobCompleted}`]: { level: 'active' },
++  // Generations are something the user is already watching the canvas for; a
++  // phone that lights up adds nothing over the row in the inbox.
++  [`${NOTIFICATION_CATEGORY.generation}/${NOTIFICATION_TYPE.imageGenerationCompleted}`]: {
++    level: 'passive',
++  },
++  [`${NOTIFICATION_CATEGORY.generation}/${NOTIFICATION_TYPE.videoGenerationCompleted}`]: {
++    level: 'passive',
++  },
++};
++
++/** Scenario unknown to this table: show it, but do not make it urgent. */
++const DEFAULT_PRESENTATION: BarkPresentation = { level: 'active' };
++
++export const resolvePresentation = (category: string, type: string): BarkPresentation =>
++  PRESENTATION[`${category}/${type}`] ?? DEFAULT_PRESENTATION;
+diff --git a/packages/business-server/src/notification/settings.ts b/packages/business-server/src/notification/settings.ts
+new file mode 100644
+index 0000000000..5a439718f1
+--- /dev/null
++++ b/packages/business-server/src/notification/settings.ts
+@@ -0,0 +1,50 @@
++import type { NotificationSettings } from '@lobechat/types';
++import { mergeNotificationSettings } from '@lobechat/utils/mergeNotificationSettings';
++
++import { UserModel } from '@/database/models/user';
++import { WorkspaceUserSettingsModel } from '@/database/models/workspaceUserSettings';
++import type { LobeChatDatabase } from '@/database/type';
++
++/**
++ * The user's effective notification settings: the personal bag with the
++ * workspace-scoped override merged on top, mirroring how the client resolves
++ * `WorkspaceUserPreference` over `UserSettings`.
++ */
++const resolveNotificationSettings = async (
++  db: LobeChatDatabase,
++  userId: string,
++  workspaceId?: string | null,
++): Promise<NotificationSettings> => {
++  const personal = await new UserModel(db, userId).getUserSettings();
++
++  if (!workspaceId) return personal?.notification ?? {};
++
++  const workspacePreference = await new WorkspaceUserSettingsModel(
++    db,
++    userId,
++    workspaceId,
++  ).getPreference();
++
++  return mergeNotificationSettings(
++    personal?.notification ?? {},
++    workspacePreference?.notification ?? {},
++  );
++};
++
++/**
++ * Whether the `push` channel should carry one notification.
++ *
++ * Defaults to enabled: a missing switch means "use the scenario default", so a
++ * user who never opened the settings page still gets recalled. Only an explicit
++ * `false` — the channel master switch, or this scenario's leaf — opts out.
++ */
++export const resolvePushEnabled = async (
++  db: LobeChatDatabase,
++  params: { category: string; type: string; userId: string; workspaceId?: string | null },
++): Promise<boolean> => {
++  const { push } = await resolveNotificationSettings(db, params.userId, params.workspaceId);
++
++  if (push?.enabled === false) return false;
++
++  return push?.items?.[params.category]?.[params.type] !== false;
++};
+diff --git a/packages/business-server/src/task/notifyScheduledTaskResult.ts b/packages/business-server/src/task/notifyScheduledTaskResult.ts
+index 5d0edba576..a3fe333d8c 100644
+--- a/packages/business-server/src/task/notifyScheduledTaskResult.ts
++++ b/packages/business-server/src/task/notifyScheduledTaskResult.ts
+@@ -1,3 +1,8 @@
++import { notifyUser } from '../notification';
++import { NOTIFICATION_CATEGORY, NOTIFICATION_TYPE } from '../notification/categories';
++import { renderCopy } from '../notification/copy';
++import { buildConversationPath, previewText } from '../notification/format';
++
+ export interface NotifyScheduledTaskCompletedParams {
+   /** Agent executing the task — lets inbox surfaces render its avatar. */
+   agentId?: string;
+@@ -33,10 +38,66 @@ export interface NotifyScheduledTaskFailedParams {
+   workspaceId?: string;
+ }
+ 
++/** Task names are free text — cap them before they land in a push payload. */
++const jobName = (params: { taskIdentifier: string; taskName?: string }) =>
++  previewText(params.taskName, params.taskIdentifier, 80);
++
++/**
++ * A scheduled tick landed. `taskLifecycle` only calls this for genuine
++ * scheduled runs, so a manual "run now" run stays silent.
++ *
++ * This is the task side of the pair; the chat side is
++ * `notifyAgentRunCompleted`. A task run carries the task runner's own trigger,
++ * which `CompletionLifecycle` does not recall, so an operation never reaches
++ * both slots.
++ */
+ export async function notifyScheduledTaskCompleted(
+-  _params: NotifyScheduledTaskCompletedParams,
+-): Promise<void> {}
++  params: NotifyScheduledTaskCompletedParams,
++): Promise<void> {
++  await notifyUser({
++    actionUrl: buildConversationPath({ agentId: params.agentId, topicId: params.topicId }),
++    category: NOTIFICATION_CATEGORY.schedule,
++    content: renderCopy('agent_cron_job_completed', { jobName: jobName(params) }),
++    context: previewText(params.lastAssistantContent, '', 120) || undefined,
++    dedupeKey: `scheduled_task_completed:${params.operationId}`,
++    metadata: params.agentId ? { agent: { id: params.agentId } } : undefined,
++    title: renderCopy('agent_cron_job_completed_title'),
++    type: NOTIFICATION_TYPE.cronJobCompleted,
++    userId: params.userId,
++    workspaceId: params.workspaceId,
++  });
++}
+ 
++/**
++ * A scheduled tick failed. `taskLifecycle` fires this for heartbeat ticks too,
++ * but only once the failure fuse trips and pauses the task — an ordinary
++ * heartbeat failure is expected to be transient and stays silent.
++ */
+ export async function notifyScheduledTaskFailed(
+-  _params: NotifyScheduledTaskFailedParams,
+-): Promise<void> {}
++  params: NotifyScheduledTaskFailedParams,
++): Promise<void> {
++  await notifyUser({
++    actionUrl: buildConversationPath({ agentId: params.agentId, topicId: params.topicId }),
++    category: NOTIFICATION_CATEGORY.schedule,
++    // The canonical copy already carries the job name. The structured error
++    // code rides along as context so the phone shows *why* without the raw
++    // error text — that stays in briefs/logs.
++    content: params.paused
++      ? renderCopy('agent_cron_job_failed_paused', {
++          count: String(params.consecutiveFailures ?? 1),
++          jobName: jobName(params),
++        })
++      : renderCopy('agent_cron_job_failed', { jobName: jobName(params) }),
++    context: params.errorCode,
++    dedupeKey: `scheduled_task_failed:${params.operationId}`,
++    metadata: params.agentId ? { agent: { id: params.agentId } } : undefined,
++    title: renderCopy(
++      params.paused ? 'agent_cron_job_failed_paused_title' : 'agent_cron_job_failed_title',
++    ),
++    // A fuse-stop is its own scenario: the user has to re-arm the task by hand,
++    // which is a different action from simply retrying a failed tick.
++    type: params.paused ? NOTIFICATION_TYPE.cronJobFailedPaused : NOTIFICATION_TYPE.cronJobFailed,
++    userId: params.userId,
++    workspaceId: params.workspaceId,
++  });
++}
+diff --git a/packages/business-server/src/video-generation/notifyVideoCompleted.ts b/packages/business-server/src/video-generation/notifyVideoCompleted.ts
+index 55decfd1fc..1332fb5457 100644
+--- a/packages/business-server/src/video-generation/notifyVideoCompleted.ts
++++ b/packages/business-server/src/video-generation/notifyVideoCompleted.ts
+@@ -1,3 +1,8 @@
++import { notifyUser } from '../notification';
++import { NOTIFICATION_CATEGORY, NOTIFICATION_TYPE } from '../notification/categories';
++import { renderCopy } from '../notification/copy';
++import { clampText, previewText } from '../notification/format';
++
+ interface NotifyVideoCompletedParams {
+   generationBatchId: string;
+   model: string;
+@@ -8,4 +13,23 @@ interface NotifyVideoCompletedParams {
+   workspaceId?: string;
+ }
+ 
+-export async function notifyVideoCompleted(_params: NotifyVideoCompletedParams): Promise<void> {}
++/**
++ * A generation batch finished. Video takes far longer than a chat turn, so this
++ * is the recall the user is actually waiting on.
++ */
++export async function notifyVideoCompleted(params: NotifyVideoCompletedParams): Promise<void> {
++  const title = renderCopy('video_generation_completed_title');
++  const prompt = previewText(params.prompt, '', 120);
++
++  await notifyUser({
++    category: NOTIFICATION_CATEGORY.generation,
++    // A blank prompt would otherwise read `Your video "" is ready.`
++    content: prompt ? renderCopy('video_generation_completed', { prompt }) : title,
++    context: clampText(params.model, 80),
++    dedupeKey: `video_completed:${params.generationBatchId}`,
++    title,
++    type: NOTIFICATION_TYPE.videoGenerationCompleted,
++    userId: params.userId,
++    workspaceId: params.workspaceId,
++  });
++}
+diff --git a/packages/env/src/notification.ts b/packages/env/src/notification.ts
+new file mode 100644
+index 0000000000..9ab7ec0c5e
+--- /dev/null
++++ b/packages/env/src/notification.ts
+@@ -0,0 +1,49 @@
++import { createEnv } from '@t3-oss/env-core';
++import { z } from 'zod';
++
++declare global {
++  // eslint-disable-next-line @typescript-eslint/no-namespace
++  namespace NodeJS {
++    interface ProcessEnv {
++      BARK_KEY?: string;
++      BARK_SERVER_URL?: string;
++      BARK_USER_ID?: string;
++    }
++  }
++}
++
++/**
++ * Outbound push configuration for self-hosted deployments.
++ *
++ * The OSS notification slots are no-ops by default (Cloud overrides them with
++ * its own multi-channel service). Setting `BARK_KEY` gives a self-hosted
++ * instance a working push channel without Expo/APNs credentials: Bark is an
++ * iOS app that exposes an HTTP endpoint and relays the message to APNs itself.
++ *
++ * Only the device has to be configured here. Everything about *how* a
++ * notification looks — interruption level, collapse group, icon — is a product
++ * decision made in `packages/business-server/src/notification`, not a
++ * deployment knob.
++ */
++export const getNotificationConfig = () => {
++  return createEnv({
++    server: {
++      /** Bark device key — the path segment of `https://api.day.app/<key>`. */
++      BARK_KEY: z.string().optional(),
++      /** Self-hosted Bark server. Defaults to the public Bark service. */
++      BARK_SERVER_URL: z.string().optional(),
++      /**
++       * Restricts delivery to a single user id. A self-hosted instance is often
++       * shared by several accounts while one person owns the phone — shipping
++       * everyone's notifications to that one device would leak other users'
++       * activity, so set this unless the instance really is single-user.
++       */
++      BARK_USER_ID: z.string().optional(),
++    },
++    runtimeEnv: {
++      BARK_KEY: process.env.BARK_KEY,
++      BARK_SERVER_URL: process.env.BARK_SERVER_URL,
++      BARK_USER_ID: process.env.BARK_USER_ID,
++    },
++  });
++};
