@@ -1,8 +1,8 @@
 diff --git a/.env.example b/.env.example
-index 2b596fc730..bb9d10002f 100644
+index 2b596fc730..19146e144c 100644
 --- a/.env.example
 +++ b/.env.example
-@@ -506,3 +506,38 @@ OPENAI_API_KEY=sk-xxxxxxxxx
+@@ -506,3 +506,34 @@ OPENAI_API_KEY=sk-xxxxxxxxx
  
  # Verify-im link token TTL in seconds (default 1800 = 30 min)
  # LOBE_LINK_TOKEN_TTL_SECONDS=1800
@@ -14,6 +14,10 @@ index 2b596fc730..bb9d10002f 100644
 +# Self-hosted deployment push channel. The OSS notification slots are no-ops by
 +# default (Cloud overrides them with its own multi-channel service); set
 +# BARK_KEY to get inbox rows plus an iOS push without Expo/APNs credentials.
++#
++# Only the device is configured here. How a notification presents itself —
++# interruption level, collapse group, icon — is decided per scenario in code
++# (packages/business-server/src/notification/levels.ts), not by the deployment.
 +#
 +# Requires APP_URL to be your reachable public origin: the deep link tapped on
 +# the phone is built from it, and its unset fallback (http://localhost:3210)
@@ -27,14 +31,6 @@ index 2b596fc730..bb9d10002f 100644
 +# without it every user's notifications land on the configured phone.
 +# Find the id with `lh whoami`, or: select id from users where email = 'you@example.com';
 +# BARK_USER_ID=
-+# Bark interruption level: active | timeSensitive | critical | passive
-+# BARK_LEVEL=active
-+# Bark collapse group. Omitted lets Bark group the alert as it prefers.
-+# BARK_GROUP=LobeHub
-+# Only push when a run took at least this long. Every completed chat turn pushes
-+# by default (0); 30000-60000 keeps short replies you are already watching off
-+# the phone. The inbox row is written either way.
-+# BARK_MIN_RUN_DURATION_MS=0
 +#
 +# To check the channel itself, bypass LobeHub entirely:
 +#   curl -X POST https://api.day.app/<BARK_KEY> -H 'Content-Type: application/json' \
@@ -43,14 +39,14 @@ index 2b596fc730..bb9d10002f 100644
 +# triggered the run — run with DEBUG=lobe-notification to see why a push was skipped.
 diff --git a/apps/server/src/services/notification/__tests__/bark.test.ts b/apps/server/src/services/notification/__tests__/bark.test.ts
 new file mode 100644
-index 0000000000..6759deb995
+index 0000000000..ee19e1d3ea
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/bark.test.ts
-@@ -0,0 +1,233 @@
+@@ -0,0 +1,257 @@
 +// @vitest-environment node
 +import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 +
-+const ENV_KEYS = ['BARK_GROUP', 'BARK_KEY', 'BARK_LEVEL', 'BARK_SERVER_URL', 'BARK_USER_ID'];
++const ENV_KEYS = ['BARK_KEY', 'BARK_SERVER_URL', 'BARK_USER_ID'];
 +
 +const jsonResponse = (payload: unknown, status = 200) => ({
 +  json: vi.fn().mockResolvedValue(payload),
@@ -129,26 +125,50 @@ index 0000000000..6759deb995
 +    expect(fetchMock.mock.calls[0][0]).toBe('https://bark.example.com/push/my-key');
 +  });
 +
-+  it('forwards the deep link and the optional presentation hints', async () => {
++  it('forwards the deep link and the presentation hints the caller chose', async () => {
 +    process.env.BARK_KEY = 'my-key';
-+    process.env.BARK_GROUP = 'LobeHub';
-+    process.env.BARK_LEVEL = 'timeSensitive';
 +    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ code: 200 }));
 +    vi.stubGlobal('fetch', fetchMock);
 +
 +    const { sendBarkNotification } = await load();
 +    await sendBarkNotification({
 +      body: 'body',
++      group: 'Researcher',
++      icon: 'https://cdn.example.com/a1.png',
++      level: 'timeSensitive',
++      subtitle: 'T-1',
 +      title: 'title',
 +      url: 'https://app.example.com/agent/a1/t1',
 +    });
 +
++    // Level and group are decided per scenario in code, not read from the
++    // environment — this asserts the payload carries what it was handed.
 +    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
 +      body: 'body',
-+      group: 'LobeHub',
++      group: 'Researcher',
++      icon: 'https://cdn.example.com/a1.png',
 +      level: 'timeSensitive',
++      subtitle: 'T-1',
 +      title: 'title',
 +      url: 'https://app.example.com/agent/a1/t1',
++    });
++  });
++
++  it('sends a call as Bark’s 1 and omits the hints a message did not set', async () => {
++    process.env.BARK_KEY = 'my-key';
++    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ code: 200 }));
++    vi.stubGlobal('fetch', fetchMock);
++
++    const { sendBarkNotification } = await load();
++    await sendBarkNotification({ body: 'body', call: true, level: 'critical', title: 'title' });
++
++    // Absent optional fields must not reach Bark as nulls, or it would fall
++    // back to its own defaults instead of the caller's omissions.
++    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
++      body: 'body',
++      call: 1,
++      level: 'critical',
++      title: 'title',
 +    });
 +  });
 +
@@ -333,23 +353,16 @@ index 0000000000..240db0ace9
 +});
 diff --git a/apps/server/src/services/notification/__tests__/config.test.ts b/apps/server/src/services/notification/__tests__/config.test.ts
 new file mode 100644
-index 0000000000..55616902be
+index 0000000000..ea201ce7d3
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/config.test.ts
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,35 @@
 +// @vitest-environment node
 +import { beforeEach, describe, expect, it } from 'vitest';
 +
 +const load = () => import('@/business/server/notification/config');
 +
-+const ENV_KEYS = [
-+  'BARK_GROUP',
-+  'BARK_KEY',
-+  'BARK_LEVEL',
-+  'BARK_MIN_RUN_DURATION_MS',
-+  'BARK_SERVER_URL',
-+  'BARK_USER_ID',
-+];
++const ENV_KEYS = ['BARK_KEY', 'BARK_SERVER_URL', 'BARK_USER_ID'];
 +
 +describe('pushConfig', () => {
 +  beforeEach(() => {
@@ -358,20 +371,23 @@ index 0000000000..55616902be
 +
 +  it('reads a valid configuration', async () => {
 +    process.env.BARK_KEY = 'my-key';
-+    process.env.BARK_MIN_RUN_DURATION_MS = '1000';
++    process.env.BARK_SERVER_URL = 'https://bark.example.com';
 +
 +    const { pushConfig } = await load();
 +
-+    expect(pushConfig()).toMatchObject({ BARK_KEY: 'my-key', BARK_MIN_RUN_DURATION_MS: 1000 });
++    expect(pushConfig()).toMatchObject({
++      BARK_KEY: 'my-key',
++      BARK_SERVER_URL: 'https://bark.example.com',
++    });
 +  });
 +
-+  it('degrades to unconfigured instead of throwing on a malformed value', async () => {
-+    process.env.BARK_MIN_RUN_DURATION_MS = 'abc';
-+
++  it('reads as unconfigured rather than throwing on an empty environment', async () => {
 +    const { pushConfig } = await load();
 +
-+    // A throw here would happen before the inbox row is written, and the run
-+    // lifecycle swallows slot errors — every notification would vanish.
++    // Nothing in the schema can reject any more — level, group and the duration
++    // floor are code decisions now — but the guard stays because a throw here
++    // happens before the inbox row is written, and the run lifecycle swallows
++    // slot errors, so one would silently drop every notification.
 +    expect(() => pushConfig()).not.toThrow();
 +    expect(pushConfig().BARK_KEY).toBeUndefined();
 +  });
@@ -469,10 +485,10 @@ index 0000000000..2336604794
 +});
 diff --git a/apps/server/src/services/notification/__tests__/notifyUser.test.ts b/apps/server/src/services/notification/__tests__/notifyUser.test.ts
 new file mode 100644
-index 0000000000..c5844effc6
+index 0000000000..3f07da8b93
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/notifyUser.test.ts
-@@ -0,0 +1,274 @@
+@@ -0,0 +1,425 @@
 +// @vitest-environment node
 +import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 +
@@ -482,6 +498,7 @@ index 0000000000..c5844effc6
 +  mockAppUrl,
 +  mockCreate,
 +  mockCreateDelivery,
++  mockGetAgentAvatarsByIds,
 +  mockGetPreference,
 +  mockGetUserSettings,
 +  mockGetServerDB,
@@ -489,6 +506,7 @@ index 0000000000..c5844effc6
 +  mockAppUrl: { value: undefined as string | undefined },
 +  mockCreate: vi.fn(),
 +  mockCreateDelivery: vi.fn(),
++  mockGetAgentAvatarsByIds: vi.fn(),
 +  mockGetPreference: vi.fn(),
 +  mockGetServerDB: vi.fn(),
 +  mockGetUserSettings: vi.fn(),
@@ -510,6 +528,12 @@ index 0000000000..c5844effc6
 +  }),
 +}));
 +
++vi.mock('@/database/models/agent', () => ({
++  AgentModel: vi.fn(function () {
++    return { getAgentAvatarsByIds: mockGetAgentAvatarsByIds };
++  }),
++}));
++
 +vi.mock('@/database/models/workspaceUserSettings', () => ({
 +  WorkspaceUserSettingsModel: vi.fn(function () {
 +    return { getPreference: mockGetPreference };
@@ -518,7 +542,7 @@ index 0000000000..c5844effc6
 +
 +const load = () => import('@/business/server/notification/index');
 +
-+const BARK_ENV_KEYS = ['BARK_GROUP', 'BARK_KEY', 'BARK_LEVEL', 'BARK_SERVER_URL', 'BARK_USER_ID'];
++const BARK_ENV_KEYS = ['BARK_KEY', 'BARK_SERVER_URL', 'BARK_USER_ID'];
 +
 +const okResponse = () => ({
 +  json: vi.fn().mockResolvedValue({ code: 200, timestamp: 1700 }),
@@ -544,6 +568,7 @@ index 0000000000..c5844effc6
 +    mockGetServerDB.mockResolvedValue({});
 +    mockGetUserSettings.mockResolvedValue(undefined);
 +    mockGetPreference.mockResolvedValue({});
++    mockGetAgentAvatarsByIds.mockResolvedValue([]);
 +    mockCreate.mockResolvedValue({ id: 'n1' });
 +    mockCreateDelivery.mockResolvedValue({ id: 'd1' });
 +    vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -747,6 +772,148 @@ index 0000000000..c5844effc6
 +    expect(console.error).toHaveBeenCalled();
 +  });
 +});
++
++describe('notifyUser push presentation', () => {
++  const pushBody = (fetchMock: ReturnType<typeof vi.fn>) =>
++    JSON.parse(fetchMock.mock.calls[0][1].body);
++
++  // Sibling of the block above rather than nested in it, so it needs its own
++  // setup: without the DB stubs `create` resolves to undefined and notifyUser
++  // returns before it ever reaches the push.
++  beforeEach(() => {
++    vi.clearAllMocks();
++    for (const key of BARK_ENV_KEYS) delete process.env[key];
++    process.env.BARK_KEY = 'my-key';
++    mockAppUrl.value = 'https://app.example.com';
++    mockGetServerDB.mockResolvedValue({});
++    mockGetUserSettings.mockResolvedValue(undefined);
++    mockGetPreference.mockResolvedValue({});
++    mockGetAgentAvatarsByIds.mockResolvedValue([]);
++    mockCreate.mockResolvedValue({ id: 'n1' });
++    mockCreateDelivery.mockResolvedValue({ id: 'd1' });
++    vi.spyOn(console, 'error').mockImplementation(() => {});
++    vi.spyOn(console, 'warn').mockImplementation(() => {});
++  });
++
++  afterEach(() => {
++    vi.unstubAllGlobals();
++    vi.restoreAllMocks();
++  });
++
++  it('sends the agent avatar as the icon and its name as the collapse group', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++    mockGetAgentAvatarsByIds.mockResolvedValue([
++      { avatar: 'https://cdn.example.com/a1.png', id: 'a1', name: 'Researcher', title: null },
++    ]);
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, actionUrl: '/agent/a1/t1' });
++
++    // The row only carries `agent.id`; a push has no client to resolve it, so
++    // the avatar has to be looked up here.
++    expect(mockGetAgentAvatarsByIds).toHaveBeenCalledWith(['a1']);
++    expect(pushBody(fetchMock)).toMatchObject({
++      group: 'Researcher',
++      icon: 'https://cdn.example.com/a1.png',
++    });
++  });
++
++  it('drops an emoji avatar rather than sending it as a broken icon', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++    mockGetAgentAvatarsByIds.mockResolvedValue([
++      { avatar: '🤖', id: 'a1', name: 'Researcher', title: null },
++    ]);
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, actionUrl: '/agent/a1/t1' });
++
++    // APNs can only fetch a URL, so a common emoji avatar degrades the icon,
++    // not the notification.
++    expect(pushBody(fetchMock).icon).toBeUndefined();
++    expect(pushBody(fetchMock).group).toBe('Researcher');
++  });
++
++  it('falls back to a shared group when no agent can be resolved', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++    mockGetAgentAvatarsByIds.mockResolvedValue([]);
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, actionUrl: '/agent/a1/t1' });
++
++    expect(pushBody(fetchMock).group).toBe('LobeHub');
++    expect(pushBody(fetchMock).icon).toBeUndefined();
++  });
++
++  it('still pushes when the agent lookup blows up', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++    mockGetAgentAvatarsByIds.mockRejectedValue(new Error('db down'));
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, actionUrl: '/agent/a1/t1' });
++
++    expect(fetchMock).toHaveBeenCalledTimes(1);
++  });
++
++  it('carries the row context as the subtitle', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, context: 'T-1' });
++
++    expect(pushBody(fetchMock).subtitle).toBe('T-1');
++  });
++
++  it('rings persistently for a parked intervention', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++
++    const { notifyUser } = await load();
++
++    await notifyUser({
++      ...baseParams,
++      category: 'agent',
++      type: 'agent_intervention_required',
++    });
++
++    // Someone has to answer before the run continues, so this one pierces
++    // silent mode and keeps sounding.
++    expect(pushBody(fetchMock)).toMatchObject({ call: 1, level: 'critical' });
++  });
++
++  it('escalates a scheduled failure through the interruption levels', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, category: 'schedule', type: 'agent_cron_job_failed' });
++    await notifyUser({
++      ...baseParams,
++      category: 'schedule',
++      type: 'agent_cron_job_failed_paused',
++    });
++    await notifyUser({ ...baseParams, category: 'generation', type: 'image_generation_completed' });
++
++    // A failed tick surfaces during Focus; a blown fuse that paused the task
++    // ignores silent mode because nothing will retry on its own; a generation
++    // the user is watching the canvas for just lands in the list.
++    expect(fetchMock.mock.calls.map((call) => JSON.parse(call[1].body).level)).toEqual([
++      'timeSensitive',
++      'critical',
++      'passive',
++    ]);
++  });
++});
 diff --git a/apps/server/src/services/notification/__tests__/settings.test.ts b/apps/server/src/services/notification/__tests__/settings.test.ts
 new file mode 100644
 index 0000000000..9b2253ad12
@@ -855,10 +1022,10 @@ index 0000000000..9b2253ad12
 +});
 diff --git a/apps/server/src/services/notification/__tests__/slots.test.ts b/apps/server/src/services/notification/__tests__/slots.test.ts
 new file mode 100644
-index 0000000000..56aafe2d29
+index 0000000000..9705c03571
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/slots.test.ts
-@@ -0,0 +1,224 @@
+@@ -0,0 +1,221 @@
 +// @vitest-environment node
 +import { beforeEach, describe, expect, it, vi } from 'vitest';
 +
@@ -911,22 +1078,19 @@ index 0000000000..56aafe2d29
 +    expect(lastCall()[0].content).toBe('Agent task completed');
 +  });
 +
-+  it('keeps a run shorter than the configured floor off the phone', async () => {
-+    process.env.BARK_MIN_RUN_DURATION_MS = '60000';
-+
++  // The floor is a code constant (MIN_PUSH_DURATION_MS) rather than a
++  // deployment knob: whether a run was short enough that the user was still
++  // watching is a product judgement, not something an operator configures.
++  it('keeps a run shorter than the floor off the phone', async () => {
 +    await notifyAgentRunCompleted({ duration: 1_200, operationId: 'op-3', userId: 'u1' });
 +
 +    expect(lastCall()[1]).toEqual({ skipPush: true });
-+    delete process.env.BARK_MIN_RUN_DURATION_MS;
 +  });
 +
 +  it('pushes a run that outlasts the floor', async () => {
-+    process.env.BARK_MIN_RUN_DURATION_MS = '60000';
-+
 +    await notifyAgentRunCompleted({ duration: 120_000, operationId: 'op-4', userId: 'u1' });
 +
 +    expect(lastCall()[1]).toEqual({ skipPush: false });
-+    delete process.env.BARK_MIN_RUN_DURATION_MS;
 +  });
 +});
 +
@@ -1159,20 +1323,30 @@ index a1d8bff61c..dd98f7145b 100644
 +  );
 +}
 diff --git a/packages/business-server/src/agent-run/notifyAgentRunCompleted.ts b/packages/business-server/src/agent-run/notifyAgentRunCompleted.ts
-index ef570beac5..b29a5aebc3 100644
+index ef570beac5..eac5970a02 100644
 --- a/packages/business-server/src/agent-run/notifyAgentRunCompleted.ts
 +++ b/packages/business-server/src/agent-run/notifyAgentRunCompleted.ts
-@@ -1,3 +1,9 @@
+@@ -1,3 +1,19 @@
 +import { notifyUser } from '../notification';
 +import { NOTIFICATION_CATEGORY, NOTIFICATION_TYPE } from '../notification/categories';
-+import { pushConfig } from '../notification/config';
 +import { renderCopy } from '../notification/copy';
 +import { buildConversationPath, previewText } from '../notification/format';
++
++/**
++ * Runs shorter than this keep their inbox row but stay quiet on the phone.
++ *
++ * The server cannot see whether the user is still watching the reply the way the
++ * desktop client can (it suppresses its own banner on a focused window), so
++ * elapsed time is the only proxy available. Under half a minute the reply almost
++ * certainly landed while they were still looking at the screen, and waking the
++ * phone for that just trains people to mute the channel.
++ */
++const MIN_PUSH_DURATION_MS = 30_000;
 +
  export interface NotifyAgentRunCompletedParams {
    agentId?: string;
    duration?: number;
-@@ -8,6 +14,48 @@ export interface NotifyAgentRunCompletedParams {
+@@ -8,6 +24,42 @@ export interface NotifyAgentRunCompletedParams {
    workspaceId?: string;
  }
  
@@ -1191,11 +1365,6 @@ index ef570beac5..b29a5aebc3 100644
 + * `CompletionLifecycle` explicitly does not recall, and are notified by
 + * `notifyScheduledTaskCompleted` instead. The two slots therefore never fire
 + * for the same operation.
-+ *
-+ * The server cannot see whether the user is still watching the reply the way
-+ * the desktop client can (it suppresses its own banner on a focused window), so
-+ * `BARK_MIN_RUN_DURATION_MS` is the opt-in proxy: a run shorter than the floor
-+ * keeps its inbox row but stays quiet on the phone.
 + */
  export async function notifyAgentRunCompleted(
 -  _params: NotifyAgentRunCompletedParams,
@@ -1204,7 +1373,6 @@ index ef570beac5..b29a5aebc3 100644
 +): Promise<void> {
 +  const title = renderCopy('agent_run_completed_title');
 +  const preview = previewText(params.lastAssistantContent, title);
-+  const minDuration = pushConfig().BARK_MIN_RUN_DURATION_MS ?? 0;
 +
 +  await notifyUser(
 +    {
@@ -1220,7 +1388,7 @@ index ef570beac5..b29a5aebc3 100644
 +      workspaceId: params.workspaceId,
 +    },
 +    // An unknown duration pushes: better a stray banner than a missed recall.
-+    { skipPush: params.duration !== undefined && params.duration < minDuration },
++    { skipPush: params.duration !== undefined && params.duration < MIN_PUSH_DURATION_MS },
 +  );
 +}
 diff --git a/packages/business-server/src/image-generation/notifyImageCompleted.ts b/packages/business-server/src/image-generation/notifyImageCompleted.ts
@@ -1261,13 +1429,78 @@ index 9ce4cc2b45..48668f95f1 100644
 +    workspaceId: params.workspaceId,
 +  });
 +}
+diff --git a/packages/business-server/src/notification/agentMeta.ts b/packages/business-server/src/notification/agentMeta.ts
+new file mode 100644
+index 0000000000..3bd9e180d3
+--- /dev/null
++++ b/packages/business-server/src/notification/agentMeta.ts
+@@ -0,0 +1,58 @@
++import { AgentModel } from '@/database/models/agent';
++import type { LobeChatDatabase } from '@/database/type';
++
++/**
++ * Everything a push payload needs to know about the agent behind it.
++ *
++ * Inbox rows only carry `metadata.agent.id` because a client resolves the
++ * avatar from its live store (`useNotificationAgentMeta`). A push has no
++ * client: Bark has to be handed a URL, so the row's id is resolved here.
++ */
++export interface AgentPushMeta {
++  /** Absolute image URL, or undefined — Bark cannot use an emoji avatar. */
++  iconUrl?: string;
++  /** Collapse key for Bark's `group`: same agent, one stack on the phone. */
++  name?: string;
++}
++
++/** Agent avatars are free text: http(s) URLs, emojis, and data URIs all occur. */
++const isFetchableUrl = (value: string): boolean => {
++  try {
++    const { protocol } = new URL(value);
++
++    return protocol === 'http:' || protocol === 'https:';
++  } catch {
++    return false;
++  }
++};
++
++/**
++ * Resolve the agent behind a notification, never throwing.
++ *
++ * A missing or unreadable agent degrades the push (no icon, no group) — it
++ * must not cost the notification, and it must not cost the caller's run.
++ */
++export const resolveAgentPushMeta = async (
++  db: LobeChatDatabase,
++  userId: string,
++  agentId?: string,
++): Promise<AgentPushMeta> => {
++  if (!agentId) return {};
++
++  try {
++    const [agent] = await new AgentModel(db, userId).getAgentAvatarsByIds([agentId]);
++    if (!agent) return {};
++
++    const label = agent.name || agent.title || undefined;
++    const avatar = agent.avatar?.trim();
++
++    return {
++      // An emoji avatar is common and APNs cannot fetch it, so it is dropped
++      // rather than sent as a broken icon URL.
++      iconUrl: avatar && isFetchableUrl(avatar) ? avatar : undefined,
++      name: label,
++    };
++  } catch {
++    return {};
++  }
++};
 diff --git a/packages/business-server/src/notification/bark.ts b/packages/business-server/src/notification/bark.ts
 new file mode 100644
-index 0000000000..b215b021ac
+index 0000000000..7080f61f70
 --- /dev/null
 +++ b/packages/business-server/src/notification/bark.ts
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,142 @@
 +import { pushConfig } from './config';
++import type { BarkLevel } from './levels';
 +
 +/** Public Bark relay used when `BARK_SERVER_URL` is not set. */
 +const DEFAULT_BARK_SERVER_URL = 'https://api.day.app';
@@ -1283,6 +1516,16 @@ index 0000000000..b215b021ac
 +
 +export interface BarkMessage {
 +  body: string;
++  /** Bark's `call`: play the sound repeatedly for 30s. For "answer me now". */
++  call?: boolean;
++  /** Collapse key — pushes sharing a group stack together on the phone. */
++  group?: string;
++  /** iOS 15+: APNs fetches this and renders it as the notification icon. */
++  icon?: string;
++  /** Interruption level; drives screen wake, Focus and silent mode. */
++  level?: BarkLevel;
++  /** Secondary line under the title. */
++  subtitle?: string;
 +  title: string;
 +  /** Opened when the notification is tapped. */
 +  url?: string;
@@ -1356,10 +1599,15 @@ index 0000000000..b215b021ac
 +
 +  try {
 +    const response = await fetch(`${base}/${encodeURIComponent(key)}`, {
++      // `JSON.stringify` drops the absent optional fields, so Bark only sees
++      // the hints this message actually set.
 +      body: JSON.stringify({
 +        body: message.body,
-+        group: pushConfig().BARK_GROUP,
-+        level: pushConfig().BARK_LEVEL,
++        call: message.call ? 1 : undefined,
++        group: message.group,
++        icon: message.icon,
++        level: message.level,
++        subtitle: message.subtitle,
 +        title: message.title,
 +        url: message.url,
 +      }),
@@ -1559,21 +1807,32 @@ index 0000000000..ef0a6405ef
 +};
 diff --git a/packages/business-server/src/notification/index.ts b/packages/business-server/src/notification/index.ts
 new file mode 100644
-index 0000000000..dcdb79216a
+index 0000000000..e53ec600b2
 --- /dev/null
 +++ b/packages/business-server/src/notification/index.ts
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,155 @@
 +import type { NotificationMetadata } from '@lobechat/types';
 +import debug from 'debug';
 +
 +import { getServerDB } from '@/database/core/db-adaptor';
 +import { NotificationModel } from '@/database/models/notification';
 +
++import { resolveAgentPushMeta } from './agentMeta';
 +import { isBarkConfigured, isBarkRecipient, sendBarkNotification } from './bark';
 +import { buildPublicUrl } from './format';
++import { resolvePresentation } from './levels';
 +import { resolvePushEnabled } from './settings';
 +
 +const log = debug('lobe-notification');
++
++/**
++ * Collapse group for pushes with no resolvable agent.
++ *
++ * Notifications that carry an agent group under that agent's name so its
++ * pushes stack together; the rest still need a key, or Bark would file each of
++ * them separately.
++ */
++const DEFAULT_PUSH_GROUP = 'LobeHub';
 +
 +/**
 + * One user-visible notification: persisted to the inbox, then pushed to every
@@ -1616,10 +1875,10 @@ index 0000000000..dcdb79216a
 +  /**
 +   * Keep the inbox row but skip the push.
 +   *
-+   * The server cannot see whether the user is already watching the reply — the
-+   * desktop client suppresses its own banner on a focused window — so slots use
-+   * this for the proxies they do have (how long the run took) and leave the
-+   * decision to configuration.
++   * Slots use this for the one proxy the server has for "the user is probably
++   * still watching" — how long the run took. The desktop client can suppress
++   * its own banner on a focused window; the server cannot see that, so the
++   * floor is a code decision, not a deployment knob.
 +   */
 +  skipPush?: boolean;
 +}
@@ -1673,8 +1932,22 @@ index 0000000000..dcdb79216a
 +      return;
 +    }
 +
++    // The inbox row stores only `metadata.agent.id` and lets a client resolve
++    // the avatar from its live store. A push has no client, so the id is
++    // resolved here: Bark needs a real image URL for the icon, and the agent's
++    // name is what collapses its pushes into one stack on the phone.
++    const agent = await resolveAgentPushMeta(db, params.userId, params.metadata?.agent?.id);
++    const presentation = resolvePresentation(params.category, params.type);
++
 +    const result = await sendBarkNotification({
 +      body: params.content,
++      call: presentation.call,
++      group: agent.name ?? DEFAULT_PUSH_GROUP,
++      icon: agent.iconUrl,
++      level: presentation.level,
++      // The row's `context` is the secondary line in the inbox; on the phone it
++      // is the subtitle, not a second paragraph of body.
++      subtitle: params.context,
 +      title: params.title,
 +      url: buildPublicUrl(params.actionUrl),
 +    });
@@ -1693,6 +1966,66 @@ index 0000000000..dcdb79216a
 +    console.error('[notification] dispatch failed:', error);
 +  }
 +};
+diff --git a/packages/business-server/src/notification/levels.ts b/packages/business-server/src/notification/levels.ts
+new file mode 100644
+index 0000000000..3f54f597c3
+--- /dev/null
++++ b/packages/business-server/src/notification/levels.ts
+@@ -0,0 +1,54 @@
++import { NOTIFICATION_CATEGORY, NOTIFICATION_TYPE } from './categories';
++
++export type BarkLevel = 'active' | 'critical' | 'passive' | 'timeSensitive';
++
++export interface BarkPresentation {
++  /** Bark's `call`: plays the sound repeatedly for 30s. */
++  call?: boolean;
++  level: BarkLevel;
++}
++
++/**
++ * How loudly one scenario should arrive on the phone.
++ *
++ * Bark exposes four interruption levels and they are not decoration — they
++ * decide whether the screen lights up, whether Focus mode is pierced, and
++ * whether silent mode is ignored. Picking one per scenario is the whole point
++ * of having them, so the mapping lives here rather than in config:
++ *
++ * - `critical` — a human has to act now: silent and Do Not Disturb are ignored.
++ * - `timeSensitive` — something broke; surfaces even during Focus.
++ * - `active` — ordinary completion; lights the screen.
++ * - `passive` — lands in the notification list without waking the phone.
++ */
++const PRESENTATION: Record<string, BarkPresentation> = {
++  // A parked intervention is the only case where the run is stopped until a
++  // person answers — ring properly instead of dropping a silent banner.
++  [`${NOTIFICATION_CATEGORY.agent}/${NOTIFICATION_TYPE.interventionRequired}`]: {
++    call: true,
++    level: 'critical',
++  },
++  // The fuse blew and the task is paused: nothing will retry on its own.
++  [`${NOTIFICATION_CATEGORY.schedule}/${NOTIFICATION_TYPE.cronJobFailedPaused}`]: {
++    level: 'critical',
++  },
++  [`${NOTIFICATION_CATEGORY.schedule}/${NOTIFICATION_TYPE.cronJobFailed}`]: {
++    level: 'timeSensitive',
++  },
++  [`${NOTIFICATION_CATEGORY.agent}/${NOTIFICATION_TYPE.agentRunCompleted}`]: { level: 'active' },
++  [`${NOTIFICATION_CATEGORY.schedule}/${NOTIFICATION_TYPE.cronJobCompleted}`]: { level: 'active' },
++  // Generations are something the user is already watching the canvas for; a
++  // phone that lights up adds nothing over the row in the inbox.
++  [`${NOTIFICATION_CATEGORY.generation}/${NOTIFICATION_TYPE.imageGenerationCompleted}`]: {
++    level: 'passive',
++  },
++  [`${NOTIFICATION_CATEGORY.generation}/${NOTIFICATION_TYPE.videoGenerationCompleted}`]: {
++    level: 'passive',
++  },
++};
++
++/** Scenario unknown to this table: show it, but do not make it urgent. */
++const DEFAULT_PRESENTATION: BarkPresentation = { level: 'active' };
++
++export const resolvePresentation = (category: string, type: string): BarkPresentation =>
++  PRESENTATION[`${category}/${type}`] ?? DEFAULT_PRESENTATION;
 diff --git a/packages/business-server/src/notification/settings.ts b/packages/business-server/src/notification/settings.ts
 new file mode 100644
 index 0000000000..5a439718f1
@@ -1873,10 +2206,10 @@ index 55decfd1fc..1332fb5457 100644
 +}
 diff --git a/packages/env/src/notification.ts b/packages/env/src/notification.ts
 new file mode 100644
-index 0000000000..4827a5424a
+index 0000000000..9ab7ec0c5e
 --- /dev/null
 +++ b/packages/env/src/notification.ts
-@@ -0,0 +1,61 @@
+@@ -0,0 +1,49 @@
 +import { createEnv } from '@t3-oss/env-core';
 +import { z } from 'zod';
 +
@@ -1884,10 +2217,7 @@ index 0000000000..4827a5424a
 +  // eslint-disable-next-line @typescript-eslint/no-namespace
 +  namespace NodeJS {
 +    interface ProcessEnv {
-+      BARK_GROUP?: string;
 +      BARK_KEY?: string;
-+      BARK_LEVEL?: string;
-+      BARK_MIN_RUN_DURATION_MS?: string;
 +      BARK_SERVER_URL?: string;
 +      BARK_USER_ID?: string;
 +    }
@@ -1901,6 +2231,11 @@ index 0000000000..4827a5424a
 + * its own multi-channel service). Setting `BARK_KEY` gives a self-hosted
 + * instance a working push channel without Expo/APNs credentials: Bark is an
 + * iOS app that exposes an HTTP endpoint and relays the message to APNs itself.
++ *
++ * Only the device has to be configured here. Everything about *how* a
++ * notification looks — interruption level, collapse group, icon — is a product
++ * decision made in `packages/business-server/src/notification`, not a
++ * deployment knob.
 + */
 +export const getNotificationConfig = () => {
 +  return createEnv({
@@ -1916,25 +2251,11 @@ index 0000000000..4827a5424a
 +       * activity, so set this unless the instance really is single-user.
 +       */
 +      BARK_USER_ID: z.string().optional(),
-+      /** Bark interruption level. Omitted means Bark's own default (`active`). */
-+      BARK_LEVEL: z.enum(['active', 'critical', 'passive', 'timeSensitive']).optional(),
-+      /** Bark collapse group. Omitted lets Bark group the alert as it prefers. */
-+      BARK_GROUP: z.string().optional(),
-+      /**
-+       * Only push when a run took at least this long. `0` (the default) pushes
-+       * every completion; a self-hoster watching the desktop reply arrive
-+       * usually wants a floor instead.
-+       */
-+      BARK_MIN_RUN_DURATION_MS: z.coerce.number().int().nonnegative().optional(),
 +    },
 +    runtimeEnv: {
 +      BARK_KEY: process.env.BARK_KEY,
 +      BARK_SERVER_URL: process.env.BARK_SERVER_URL,
 +      BARK_USER_ID: process.env.BARK_USER_ID,
-+      BARK_LEVEL: process.env.BARK_LEVEL as
-+        'active' | 'critical' | 'passive' | 'timeSensitive' | undefined,
-+      BARK_GROUP: process.env.BARK_GROUP,
-+      BARK_MIN_RUN_DURATION_MS: process.env.BARK_MIN_RUN_DURATION_MS,
 +    },
 +  });
 +};
