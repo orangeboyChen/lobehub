@@ -524,10 +524,10 @@ index 0000000000..3c4951c10f
 +});
 diff --git a/apps/server/src/services/notification/__tests__/notifyUser.test.ts b/apps/server/src/services/notification/__tests__/notifyUser.test.ts
 new file mode 100644
-index 0000000000..99b5c3d834
+index 0000000000..37bd2f164e
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/notifyUser.test.ts
-@@ -0,0 +1,472 @@
+@@ -0,0 +1,495 @@
 +// @vitest-environment node
 +import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 +
@@ -917,10 +917,33 @@ index 0000000000..99b5c3d834
 +
 +    await notifyUser({ ...baseParams, actionUrl: '/agent/a1/t1' });
 +
-+    // An emoji has no image for APNs to fetch, so the push carries the default
-+    // mark rather than arriving faceless.
-+    expect(pushBody(fetchMock).icon).toBe('https://app.example.com/avatars/agent-default.png');
++    // An emoji has no URL for APNs to fetch, so it is rasterised by the avatar
++    // endpoint instead of the push arriving faceless.
++    expect(pushBody(fetchMock).icon).toBe('https://app.example.com/webapi/agent/avatar/a1');
 +    expect(pushBody(fetchMock).group).toBe('Researcher');
++  });
++
++  it('sends a webp avatar through the flattening endpoint', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++    mockGetAgentAvatarsByIds.mockResolvedValue([
++      {
++        avatar:
++          'https://registry.npmmirror.com/@lobehub/icons-static-avatar/1.14.0/files/avatars/claudecode.webp',
++        id: 'a1',
++        name: 'Claude Code',
++        title: null,
++      },
++    ]);
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, actionUrl: '/agent/a1/t1' });
++
++    // What the static avatar package ships, and what a lock screen renders as
++    // nothing — hence the conversion hop.
++    expect(pushBody(fetchMock).icon).toBe('https://app.example.com/webapi/agent/avatar/a1');
++    expect(pushBody(fetchMock).group).toBe('Claude Code');
 +  });
 +
 +  it('falls back to a shared group when no agent can be resolved', async () => {
@@ -1505,12 +1528,10 @@ index 9ce4cc2b45..48668f95f1 100644
 +}
 diff --git a/packages/business-server/src/notification/agentMeta.ts b/packages/business-server/src/notification/agentMeta.ts
 new file mode 100644
-index 0000000000..c279b143ce
+index 0000000000..f585b67585
 --- /dev/null
 +++ b/packages/business-server/src/notification/agentMeta.ts
-@@ -0,0 +1,81 @@
-+import { DEFAULT_AVATAR } from '@lobechat/const';
-+
+@@ -0,0 +1,89 @@
 +import { AgentModel } from '@/database/models/agent';
 +import type { LobeChatDatabase } from '@/database/type';
 +
@@ -1541,26 +1562,36 @@ index 0000000000..c279b143ce
 +};
 +
 +/**
-+ * An image URL APNs can actually fetch, or undefined.
++ * Formats iOS cannot decode into a notification icon.
 + *
-+ * Agent avatars are free text and three shapes occur: an absolute
-+ * `https://…` URL, a **site-relative path** (`/avatars/agent-default.png`,
-+ * which is what `DEFAULT_AVATAR` and most shipped agents use), and an emoji.
-+ * Only the first two can be an iOS notification icon, so a relative path is
-+ * resolved against `APP_URL` — the same origin the deep link uses, and the
-+ * same loopback rule, because APNs fetches the icon from its own network
-+ * where `http://localhost` resolves to nothing.
-+ *
-+ * An emoji has no image to point at, so it falls back to the default avatar
-+ * rather than leaving the push faceless.
++ * Webp is the one that actually bites: the browser shows it fine, and it is
++ * what the static avatar package ships, but the lock screen renders nothing.
 + */
-+const resolveIconUrl = (avatar: string | null | undefined): string | undefined => {
-+  const value = avatar?.trim();
-+  if (!value) return buildPublicUrl(DEFAULT_AVATAR);
-+  if (isAbsoluteUrl(value)) return value;
-+  if (value.startsWith('/')) return buildPublicUrl(value);
++const NEEDS_FLATTENING = /\.(?:webp|avif|svg|gif|heic|heif)(?:\?|$)/i;
 +
-+  return buildPublicUrl(DEFAULT_AVATAR);
++/**
++ * An image URL APNs can actually fetch and decode, or undefined.
++ *
++ * Agent avatars are free text and three shapes occur: an absolute `https://…`
++ * URL, a **site-relative path** (`/avatars/agent-default.png`, which is what
++ * the packaged default and most shipped agents use), and an emoji. The first two
++ * are sent straight through — a relative one resolved against `APP_URL`, the
++ * same origin and loopback rule the deep link uses, because APNs fetches the
++ * icon from its own network where `http://localhost` resolves to nothing.
++ *
++ * Everything else goes to the avatar endpoint, which flattens it into a png:
++ * a webp converted, an emoji rasterised. That way the push carries the
++ * agent's own mark instead of Bark's.
++ */
++const resolveIconUrl = (avatar: string | null | undefined, agentId: string): string | undefined => {
++  const value = avatar?.trim();
++
++  if (value && !NEEDS_FLATTENING.test(value)) {
++    if (isAbsoluteUrl(value)) return value;
++    if (value.startsWith('/')) return buildPublicUrl(value);
++  }
++
++  return buildPublicUrl(`/webapi/agent/avatar/${encodeURIComponent(agentId)}`);
 +};
 +
 +/**
@@ -1583,7 +1614,7 @@ index 0000000000..c279b143ce
 +    const label = agent.name || agent.title || undefined;
 +
 +    return {
-+      iconUrl: resolveIconUrl(agent.avatar),
++      iconUrl: resolveIconUrl(agent.avatar, agentId),
 +      name: label,
 +    };
 +  } catch {
@@ -2375,4 +2406,165 @@ index 0000000000..9ab7ec0c5e
 +      BARK_USER_ID: process.env.BARK_USER_ID,
 +    },
 +  });
++};
+diff --git a/src/app/(backend)/webapi/agent/avatar/[id]/renderAgentAvatarPng.ts b/src/app/(backend)/webapi/agent/avatar/[id]/renderAgentAvatarPng.ts
+new file mode 100644
+index 0000000000..4b64fe92a2
+--- /dev/null
++++ b/src/app/(backend)/webapi/agent/avatar/[id]/renderAgentAvatarPng.ts
+@@ -0,0 +1,103 @@
++import { getAppConfig } from '@/envs/app';
++
++/** Notification icons are small; APNs caps what it will download anyway. */
++const SIZE = 128;
++
++/** A push must not wait on a slow avatar host. */
++const FETCH_TIMEOUT_MS = 5_000;
++
++const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
++const CACHE_MAX_ENTRIES = 256;
++
++/** Per-process cache: one container keeps a hot set; a restart just refills. */
++const cache = new Map<string, { expiresAt: number; png: Buffer }>();
++
++const isHttpUrl = (value: string): boolean => {
++  try {
++    const { protocol } = new URL(value);
++
++    return protocol === 'http:' || protocol === 'https:';
++  } catch {
++    return false;
++  }
++};
++
++const escapeXml = (value: string): string =>
++  value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
++
++/** Fetch an image and flatten it into a png, which is what iOS can decode. */
++const transcode = async (url: string): Promise<Buffer> => {
++  const response = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
++  if (!response.ok) throw new Error(`avatar fetch failed: ${response.status}`);
++
++  const { default: sharp } = await import('sharp');
++
++  return sharp(Buffer.from(await response.arrayBuffer()))
++    .resize(SIZE, SIZE, { fit: 'cover' })
++    .png()
++    .toBuffer();
++};
++
++/** Rasterise an emoji the way the inbox renders one: centred on a plain tile. */
++const renderEmoji = async (emoji: string): Promise<Buffer> => {
++  const { default: sharp } = await import('sharp');
++
++  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${SIZE}" height="${SIZE}">
++  <rect width="${SIZE}" height="${SIZE}" rx="28" fill="#f5f5f5" />
++  <text x="50%" y="50%" font-size="78" text-anchor="middle" dominant-baseline="central">${escapeXml(emoji)}</text>
++</svg>`;
++
++  const png = await sharp(Buffer.from(svg)).png().toBuffer();
++  const stats = await sharp(png).stats();
++
++  // Without an emoji font in the image the glyph rasterises to nothing and the
++  // result is a flat rectangle — fall back rather than ship a blank icon.
++  if (stats.channels.every((channel) => channel.min === channel.max))
++    throw new Error('emoji glyph missing from the container fonts');
++
++  return png;
++};
++
++/** The default mark, served from this deployment's own public origin. */
++const defaultAvatar = async (): Promise<Buffer> => {
++  const origin = getAppConfig().APP_URL?.trim().replaceAll(/\/+$/g, '');
++  if (!origin) throw new Error('APP_URL is unset, no default avatar to serve');
++
++  return transcode(`${origin}/avatars/agent-default.png`);
++};
++
++/**
++ * A png for one agent's avatar, whatever shape the stored value has.
++ *
++ * iOS notification icons have to be an image APNs can both fetch and decode:
++ * webp arrives fine in a browser but not on a lock screen, and an emoji has no
++ * URL at all. Both are converted here; a stored png/jpeg is left to the caller
++ * to send directly.
++ */
++export const renderAgentAvatarPng = async (
++  agentId: string,
++  avatar?: string | null,
++): Promise<Buffer> => {
++  const cached = cache.get(agentId);
++  if (cached && cached.expiresAt > Date.now()) return cached.png;
++  if (cached) cache.delete(agentId);
++
++  const value = avatar?.trim();
++
++  let png: Buffer;
++  try {
++    if (value && isHttpUrl(value)) png = await transcode(value);
++    else if (value) png = await renderEmoji(value);
++    else png = await defaultAvatar();
++  } catch {
++    png = await defaultAvatar();
++  }
++
++  if (cache.size >= CACHE_MAX_ENTRIES) {
++    const oldest = cache.keys().next().value;
++    if (oldest) cache.delete(oldest);
++  }
++  cache.set(agentId, { expiresAt: Date.now() + CACHE_TTL_MS, png });
++
++  return png;
++};
+diff --git a/src/app/(backend)/webapi/agent/avatar/[id]/route.ts b/src/app/(backend)/webapi/agent/avatar/[id]/route.ts
+new file mode 100644
+index 0000000000..024f5b99a0
+--- /dev/null
++++ b/src/app/(backend)/webapi/agent/avatar/[id]/route.ts
+@@ -0,0 +1,46 @@
++import { eq } from 'drizzle-orm';
++
++import { agents } from '@/database/schemas';
++import { serverDB } from '@/database/server';
++
++import { renderAgentAvatarPng } from './renderAgentAvatarPng';
++
++type Params = Promise<{ id: string }>;
++
++/**
++ * One agent's avatar as a png.
++ *
++ * Bark hands `icon` to iOS, which fetches and decodes it itself — a webp the
++ * browser shows happily is invisible on a lock screen, and an emoji has no URL
++ * to fetch. This flattens both into a png so the push carries the agent's own
++ * mark instead of Bark's. Unauthenticated like the user-avatar route: it
++ * exposes an avatar, which the inbox already shows to anyone who can see the
++ * agent.
++ */
++export const GET = async (_req: Request, segmentData: { params: Params }) => {
++  try {
++    const { id } = await segmentData.params;
++
++    const rows = await serverDB
++      .select({ avatar: agents.avatar })
++      .from(agents)
++      .where(eq(agents.id, id))
++      .limit(1);
++
++    if (!rows[0]) return new Response('Avatar not found', { status: 404 });
++
++    const png = await renderAgentAvatarPng(id, rows[0].avatar);
++
++    return new Response(new Uint8Array(png), {
++      headers: {
++        'Cache-Control': 'public, max-age=86400',
++        'Content-Type': 'image/png',
++      },
++      status: 200,
++    });
++  } catch (error) {
++    console.error('Error rendering agent avatar:', error);
++
++    return new Response('Internal server error', { status: 500 });
++  }
 +};
