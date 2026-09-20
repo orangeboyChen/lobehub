@@ -38,7 +38,7 @@ index 2b596fc730..19146e144c 100644
 +# A silent deployment usually means BARK_USER_ID does not match the account that
 +# triggered the run — run with DEBUG=lobe-notification to see why a push was skipped.
 diff --git a/apps/server/src/services/agentRuntime/CompletionLifecycle.ts b/apps/server/src/services/agentRuntime/CompletionLifecycle.ts
-index e1193041d9..a9dcdc9efd 100644
+index 44fd58daf1..3a7cabbdd8 100644
 --- a/apps/server/src/services/agentRuntime/CompletionLifecycle.ts
 +++ b/apps/server/src/services/agentRuntime/CompletionLifecycle.ts
 @@ -7,6 +7,7 @@ import debug from 'debug';
@@ -49,7 +49,7 @@ index e1193041d9..a9dcdc9efd 100644
  import {
    AgentOperationModel,
    type ChildUsageRollup,
-@@ -747,7 +748,6 @@ export class CompletionLifecycle {
+@@ -751,7 +752,6 @@ export class CompletionLifecycle {
  
      await notifyAgentRunCompleted({
        agentId: event.agentId || undefined,
@@ -57,7 +57,7 @@ index e1193041d9..a9dcdc9efd 100644
        lastAssistantContent: event.lastAssistantContent,
        operationId,
        topicId: event.topicId,
-@@ -758,6 +758,38 @@ export class CompletionLifecycle {
+@@ -762,6 +762,38 @@ export class CompletionLifecycle {
      });
    }
  
@@ -96,7 +96,7 @@ index e1193041d9..a9dcdc9efd 100644
    /**
     * Register the operation's Works: entity files edited this round
     * (pptx/xlsx/docx/pdf, …) as `file` Works — one version per operation,
-@@ -955,15 +987,25 @@ export class CompletionLifecycle {
+@@ -959,15 +991,25 @@ export class CompletionLifecycle {
        // repeatedly running the shared agent, and the notification would deep-link
        // into a visitor topic (`topics.senderId`) that is deliberately excluded
        // from creator-facing surfaces.
@@ -1216,10 +1216,10 @@ index 0000000000..9b2253ad12
 +});
 diff --git a/apps/server/src/services/notification/__tests__/slots.test.ts b/apps/server/src/services/notification/__tests__/slots.test.ts
 new file mode 100644
-index 0000000000..3a512a8ceb
+index 0000000000..4d5fa657eb
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/slots.test.ts
-@@ -0,0 +1,258 @@
+@@ -0,0 +1,292 @@
 +// @vitest-environment node
 +import { beforeEach, describe, expect, it, vi } from 'vitest';
 +
@@ -1477,6 +1477,40 @@ index 0000000000..3a512a8ceb
 +
 +    expect(lastCall()[0].content).toBe('The run failed: unknown error');
 +  });
++
++  // `network` classifies the failure without explaining it — the banner has to
++  // carry the provider's own text too, or the user only learns the category.
++  it('carries the error text under the taxonomy type', async () => {
++    await notifyAgentRunFailed({
++      errorMessage: 'connect ETIMEDOUT 10.0.0.1:443',
++      errorType: 'network',
++      operationId: 'op-12',
++      userId: 'u1',
++    });
++
++    const [params] = lastCall();
++    expect(params.content).toBe('The run failed: network');
++    expect(params.context).toBe('connect ETIMEDOUT 10.0.0.1:443');
++  });
++
++  it('puts the error text in the body when there is no taxonomy type', async () => {
++    await notifyAgentRunFailed({
++      errorMessage: 'Rate limit **exceeded**',
++      operationId: 'op-13',
++      userId: 'u1',
++    });
++
++    const [params] = lastCall();
++    expect(params.content).toBe('The run failed: Rate limit exceeded');
++    // Already the whole story in the body; repeating it below only pads the banner.
++    expect(params.context).toBeUndefined();
++  });
++
++  it('ships no secondary line when the run carried only a type', async () => {
++    await notifyAgentRunFailed({ errorType: 'network', operationId: 'op-14', userId: 'u1' });
++
++    expect(lastCall()[0].context).toBeUndefined();
++  });
 +});
 diff --git a/packages/business-server/package.json b/packages/business-server/package.json
 index 20d659af0b..5877272c48 100644
@@ -1618,10 +1652,10 @@ index ef570beac5..5c0cb69c35 100644
 +}
 diff --git a/packages/business-server/src/agent-run/notifyAgentRunFailed.ts b/packages/business-server/src/agent-run/notifyAgentRunFailed.ts
 new file mode 100644
-index 0000000000..03d9a3b3ca
+index 0000000000..57f8a5dfdb
 --- /dev/null
 +++ b/packages/business-server/src/agent-run/notifyAgentRunFailed.ts
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,61 @@
 +import { notifyUser } from '../notification';
 +import { NOTIFICATION_CATEGORY, NOTIFICATION_TYPE } from '../notification/categories';
 +import { renderCopy } from '../notification/copy';
@@ -1629,11 +1663,14 @@ index 0000000000..03d9a3b3ca
 +
 +export interface NotifyAgentRunFailedParams {
 +  agentId?: string;
-+  /** Fallback label when the run carried no structured error type. */
++  /**
++   * The provider's own error text — the only half that says *why* the run
++   * broke. Flattened and capped before it reaches a phone.
++   */
 +  errorMessage?: string;
 +  /**
 +   * Stable error taxonomy type (`network`, `quota`, `provider_outage`, …).
-+   * Never the raw error text — that stays in briefs and logs.
++   * Stable and short, so it leads — but it classifies, it does not explain.
 +   */
 +  errorType?: string;
 +  operationId: string;
@@ -1651,19 +1688,26 @@ index 0000000000..03d9a3b3ca
 + * already has its own intervention notification, and `lease_expired` is an
 + * infrastructure timeout that would otherwise buzz the phone on every restart.
 + *
++ * The body leads with the taxonomy type and the secondary line carries the
++ * provider's own text: `network` classifies the failure without explaining it,
++ * and a lock screen is the one surface with no room to go looking. With no type
++ * at all the message is the whole story, so it takes the body rather than
++ * repeating itself one line down.
++ *
 + * The same recall gates apply as on completion: sub-agents, group members and
 + * share-visitor runs never reach this slot, and only interactive triggers
 + * (plain chat turns plus the two deferred ones) do.
 + */
 +export async function notifyAgentRunFailed(params: NotifyAgentRunFailedParams): Promise<void> {
 +  // A raw provider error can carry markdown, and it lands on a lock screen.
-+  const error =
-+    params.errorType || previewText(stripMarkdown(params.errorMessage ?? ''), 'unknown error', 120);
++  const message = previewText(stripMarkdown(params.errorMessage ?? ''), '', 120) || undefined;
++  const error = params.errorType ?? message ?? 'unknown error';
 +
 +  await notifyUser({
 +    actionUrl: buildConversationPath({ agentId: params.agentId, topicId: params.topicId }),
 +    category: NOTIFICATION_CATEGORY.agent,
 +    content: renderCopy('agent_run_failed', { error }),
++    context: params.errorType ? message : undefined,
 +    // Keyed by operation so a lifecycle retry cannot push the same failure twice.
 +    dedupeKey: `agent_run_failed:${params.operationId}`,
 +    metadata: params.agentId ? { agent: { id: params.agentId } } : undefined,
