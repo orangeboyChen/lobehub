@@ -72,6 +72,32 @@ index d85de0cb88..6496c88595 100644
    operationId: z.string().optional(),
    rejectedReason: z.string().optional(),
    resolving: z.boolean().optional(),
+diff --git a/src/features/Conversation/Messages/AssistantGroup/Tool/Detail/Intervention/index.tsx b/src/features/Conversation/Messages/AssistantGroup/Tool/Detail/Intervention/index.tsx
+index 80958ae20e..7360a3954e 100644
+--- a/src/features/Conversation/Messages/AssistantGroup/Tool/Detail/Intervention/index.tsx
++++ b/src/features/Conversation/Messages/AssistantGroup/Tool/Detail/Intervention/index.tsx
+@@ -5,6 +5,7 @@ import { memo, Suspense, useCallback, useMemo, useRef, useState } from 'react';
+ import { createPortal } from 'react-dom';
+ 
+ import { useSingleton } from '@/hooks/useSingleton';
++import { isInterventionResolvingLocally } from '@/store/chat/utils/interventionResolvingSession';
+ import { useUserStore } from '@/store/user';
+ import { toolInterventionSelectors } from '@/store/user/selectors';
+ 
+@@ -120,7 +121,12 @@ const Intervention = memo<InterventionProps>(
+     const isCustomInteraction = isCustomInteractionIdentifier(identifier, apiName);
+ 
+     const topicId = message?.topicId;
+-    const interventionResolving = message?.pluginIntervention?.resolving === true;
++    // Only honour `resolving` when this session stamped it. The value is also
++    // read back from the database, and rows written by earlier builds still
++    // carry it: those disabled the card and pinned Submit in `loading` on
++    // mount, and no reload could clear them because the flag is durable.
++    const interventionResolving =
++      message?.pluginIntervention?.resolving === true && isInterventionResolvingLocally(id);
+     const submitToolInteraction = useConversationStore((s) => s.submitToolInteraction);
+     const skipToolInteraction = useConversationStore((s) => s.skipToolInteraction);
+     const cancelToolInteraction = useConversationStore((s) => s.cancelToolInteraction);
 diff --git a/src/features/Conversation/store/slices/data/reducer.ts b/src/features/Conversation/store/slices/data/reducer.ts
 index ea696382c9..f6d6a239c5 100644
 --- a/src/features/Conversation/store/slices/data/reducer.ts
@@ -96,7 +122,7 @@ index ea696382c9..f6d6a239c5 100644
        });
      }
 diff --git a/src/store/chat/slices/agentRun/actions/entries/conversationControl.ts b/src/store/chat/slices/agentRun/actions/entries/conversationControl.ts
-index 0876f92f5a..d16b39b34e 100644
+index 0876f92f5a..931d46f14b 100644
 --- a/src/store/chat/slices/agentRun/actions/entries/conversationControl.ts
 +++ b/src/store/chat/slices/agentRun/actions/entries/conversationControl.ts
 @@ -3,9 +3,11 @@ import { type AgentRuntimeContext } from '@lobechat/agent-runtime';
@@ -111,7 +137,15 @@ index 0876f92f5a..d16b39b34e 100644
    type UIChatMessage,
  } from '@lobechat/types';
  import { t } from 'i18next';
-@@ -1582,6 +1584,47 @@ export class ConversationControlActionImpl {
+@@ -35,6 +37,7 @@ import { operationSelectors } from '@/store/chat/slices/operation/selectors';
+ import type { Operation } from '@/store/chat/slices/operation/types';
+ import { AI_RUNTIME_OPERATION_TYPES } from '@/store/chat/slices/operation/types';
+ import { type ChatStore } from '@/store/chat/store';
++import { markInterventionResolvingLocally } from '@/store/chat/utils/interventionResolvingSession';
+ import { messageMapKey } from '@/store/chat/utils/messageMapKey';
+ import { type StoreSetter } from '@/store/types';
+ import { useUserStore } from '@/store/user';
+@@ -1582,6 +1585,51 @@ export class ConversationControlActionImpl {
      completeOperation(operationId);
    };
  
@@ -135,6 +169,10 @@ index 0876f92f5a..d16b39b34e 100644
 +    intervention?: ToolIntervention,
 +  ): void => {
 +    const resolvingIntervention = { ...intervention, resolving: true, status: 'pending' as const };
++    // Record the mark in this session. The card only treats `resolving` as real
++    // when we set it here, so a leftover value in the database — an earlier
++    // build, or another subscriber — cannot disable the card forever.
++    markInterventionResolvingLocally(toolMessage.id);
 +    this.#get().internal_dispatchMessage(
 +      {
 +        id: toolMessage.id,
@@ -159,7 +197,7 @@ index 0876f92f5a..d16b39b34e 100644
    /**
     * Resolve a heterogeneous-runtime intervention (CC AskUserQuestion, …).
     *
-@@ -1610,13 +1653,21 @@ export class ConversationControlActionImpl {
+@@ -1610,13 +1658,21 @@ export class ConversationControlActionImpl {
      context?: ConversationContext,
    ): Promise<void> => {
      const toolMessage = dbMessageSelectors.getDbMessageById(toolMessageId)(this.#get());
@@ -186,7 +224,7 @@ index 0876f92f5a..d16b39b34e 100644
  
      const effectiveContext: ConversationContext = context ?? {
        agentId: this.#get().activeAgentId,
-@@ -1629,11 +1680,26 @@ export class ConversationControlActionImpl {
+@@ -1629,11 +1685,26 @@ export class ConversationControlActionImpl {
        toolMessage.pluginState as
          { heterogeneousIntervention?: { interactionKind?: unknown } } | undefined
      )?.heterogeneousIntervention;
@@ -218,7 +256,7 @@ index 0876f92f5a..d16b39b34e 100644
  
      // A persisted v2 card carries everything the server needs to locate and
      // authorize the intervention. Resolve it before consulting ephemeral
-@@ -1649,33 +1715,15 @@ export class ConversationControlActionImpl {
+@@ -1649,33 +1720,15 @@ export class ConversationControlActionImpl {
        if (this.#discardAlreadyResolvedSource(sourceResolution)) return;
  
        if (sourceResolution.handled) {
@@ -259,7 +297,7 @@ index 0876f92f5a..d16b39b34e 100644
          }
          return;
        }
-@@ -1688,13 +1736,28 @@ export class ConversationControlActionImpl {
+@@ -1688,13 +1741,28 @@ export class ConversationControlActionImpl {
      // until the durable path is unavailable or reports `handled: false`; it is
      // provenance for local desktop IPC / legacy fallback, never server auth.
      const { messageOperationMap } = this.#get();
@@ -291,7 +329,7 @@ index 0876f92f5a..d16b39b34e 100644
      }
  
      // Resolve the runtime execution op before choosing IPC vs remote transport.
-@@ -1718,16 +1781,23 @@ export class ConversationControlActionImpl {
+@@ -1718,16 +1786,23 @@ export class ConversationControlActionImpl {
        );
      }
      const optimisticContext: OptimisticUpdateContext = operationAlive ? { operationId } : {};
@@ -323,7 +361,7 @@ index 0876f92f5a..d16b39b34e 100644
        );
        if (actionType === 'submit') {
          await this.setInterventionAnswers(toolMessageId, payload ?? {}, optimisticContext);
-@@ -1822,7 +1892,18 @@ export class ConversationControlActionImpl {
+@@ -1822,7 +1897,18 @@ export class ConversationControlActionImpl {
        console.error('[submitHeteroIntervention] submitIntervention failed:', err);
        await this.#get().optimisticUpdateMessagePlugin(
          toolMessageId,
@@ -386,3 +424,38 @@ index b49f0ec356..ad1a1f346b 100644
          message.updatedAt = Date.now();
        });
      }
+diff --git a/src/store/chat/utils/interventionResolvingSession.ts b/src/store/chat/utils/interventionResolvingSession.ts
+new file mode 100644
+index 0000000000..698618c85f
+--- /dev/null
++++ b/src/store/chat/utils/interventionResolvingSession.ts
+@@ -0,0 +1,29 @@
++/**
++ * Session-scoped record of which pending interventions THIS client has actually
++ * marked in flight.
++ *
++ * `pluginIntervention.resolving` disables every action on the card, so it must
++ * never outlive the run that is waiting for the producer's ACK. The flag is
++ * written to the local projection only (see `#markInterventionResolving` in
++ * `conversationControl`), but rows written by earlier builds still carry it in
++ * the database, and those are read back verbatim — which disabled the card and
++ * pinned its Submit button in `loading` on mount, surviving every reload.
++ *
++ * A persisted `resolving` is therefore never authoritative: it is either a
++ * leftover from a previous session/build, or a hint another subscriber (mobile,
++ * another tab) stamped. Pairing the read with this session's own marks keeps the
++ * in-flight semantics without letting stale rows strand a card forever.
++ */
++const resolvingIds = new Set<string>();
++
++export const markInterventionResolvingLocally = (toolMessageId: string): void => {
++  resolvingIds.add(toolMessageId);
++};
++
++export const isInterventionResolvingLocally = (toolMessageId: string): boolean =>
++  resolvingIds.has(toolMessageId);
++
++/** Test-only: drop every mark so one spec cannot leak into the next. */
++export const resetInterventionResolvingLocally = (): void => {
++  resolvingIds.clear();
++};
