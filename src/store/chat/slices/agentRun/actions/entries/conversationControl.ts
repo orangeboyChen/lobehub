@@ -37,6 +37,7 @@ import { operationSelectors } from '@/store/chat/slices/operation/selectors';
 import type { Operation } from '@/store/chat/slices/operation/types';
 import { AI_RUNTIME_OPERATION_TYPES } from '@/store/chat/slices/operation/types';
 import { type ChatStore } from '@/store/chat/store';
+import { markInterventionResolvingLocally } from '@/store/chat/utils/interventionResolvingSession';
 import { messageMapKey } from '@/store/chat/utils/messageMapKey';
 import { type StoreSetter } from '@/store/types';
 import { useUserStore } from '@/store/user';
@@ -1604,6 +1605,10 @@ export class ConversationControlActionImpl {
     intervention?: ToolIntervention,
   ): void => {
     const resolvingIntervention = { ...intervention, resolving: true, status: 'pending' as const };
+    // Record the mark in this session. The card only treats `resolving` as real
+    // when we set it here, so a leftover value in the database — an earlier
+    // build, or another subscriber — cannot disable the card forever.
+    markInterventionResolvingLocally(toolMessage.id);
     this.#get().internal_dispatchMessage(
       {
         id: toolMessage.id,
