@@ -38,9 +38,13 @@ index 2b596fc730..19146e144c 100644
 +# A silent deployment usually means BARK_USER_ID does not match the account that
 +# triggered the run — run with DEBUG=lobe-notification to see why a push was skipped.
 diff --git a/apps/server/src/services/agentRuntime/CompletionLifecycle.ts b/apps/server/src/services/agentRuntime/CompletionLifecycle.ts
-index 44fd58daf1..3a7cabbdd8 100644
+index 44fd58daf1..6740cbfedb 100644
 --- a/apps/server/src/services/agentRuntime/CompletionLifecycle.ts
 +++ b/apps/server/src/services/agentRuntime/CompletionLifecycle.ts
+@@ -3,2 +3,2 @@
+-import { RequestTrigger } from '@lobechat/types';
++import { type ChatMessageErrorAttribution, RequestTrigger } from '@lobechat/types';
+ import { deserializeParts } from '@lobechat/utils';
 @@ -7,6 +7,7 @@ import debug from 'debug';
  
  import { notifyAgentInterventionRequired } from '@/business/server/agent-run/agentInterventionReview';
@@ -57,7 +61,7 @@ index 44fd58daf1..3a7cabbdd8 100644
        lastAssistantContent: event.lastAssistantContent,
        operationId,
        topicId: event.topicId,
-@@ -762,6 +762,38 @@ export class CompletionLifecycle {
+@@ -762,6 +762,45 @@ export class CompletionLifecycle {
      });
    }
  
@@ -69,7 +73,13 @@ index 44fd58daf1..3a7cabbdd8 100644
 +   */
 +  private async recallUserOnFailure(
 +    operationId: string,
-+    event: { agentId?: string; errorMessage?: string; errorType?: string; topicId?: string },
++    event: {
++      agentId?: string;
++      errorAttribution?: ChatMessageErrorAttribution;
++      errorMessage?: string;
++      errorType?: string;
++      topicId?: string;
++    },
 +    runOrigin: { trigger?: unknown; userId?: string } | undefined,
 +  ): Promise<void> {
 +    const { isChildRun, trigger } = await this.resolveRunRecallFacts(operationId, runOrigin);
@@ -84,6 +94,7 @@ index 44fd58daf1..3a7cabbdd8 100644
 +
 +    await notifyAgentRunFailed({
 +      agentId: event.agentId || undefined,
++      errorAttribution: event.errorAttribution,
 +      errorMessage: event.errorMessage,
 +      errorType: event.errorType,
 +      operationId,
@@ -96,7 +107,7 @@ index 44fd58daf1..3a7cabbdd8 100644
    /**
     * Register the operation's Works: entity files edited this round
     * (pptx/xlsx/docx/pdf, …) as `file` Works — one version per operation,
-@@ -959,15 +991,25 @@ export class CompletionLifecycle {
+@@ -959,15 +998,25 @@ export class CompletionLifecycle {
        // repeatedly running the shared agent, and the notification would deep-link
        // into a visitor topic (`topics.senderId`) that is deliberately excluded
        // from creator-facing surfaces.
@@ -1216,10 +1227,10 @@ index 0000000000..9b2253ad12
 +});
 diff --git a/apps/server/src/services/notification/__tests__/slots.test.ts b/apps/server/src/services/notification/__tests__/slots.test.ts
 new file mode 100644
-index 0000000000..4d5fa657eb
+index 0000000000..35cea9a6e7
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/slots.test.ts
-@@ -0,0 +1,292 @@
+@@ -0,0 +1,312 @@
 +// @vitest-environment node
 +import { beforeEach, describe, expect, it, vi } from 'vitest';
 +
@@ -1440,10 +1451,12 @@ index 0000000000..4d5fa657eb
 +});
 +
 +describe('notifyAgentRunFailed', () => {
-+  it('leads with the structured error type', async () => {
++  it('leads with the error text, not the taxonomy type', async () => {
 +    await notifyAgentRunFailed({
 +      agentId: 'a1',
-+      errorType: 'provider_outage',
++      errorAttribution: 'provider',
++      errorMessage: 'Rate limit reached for requests',
++      errorType: 'RateLimitExceeded',
 +      operationId: 'op-9',
 +      topicId: 't1',
 +      userId: 'u1',
@@ -1452,7 +1465,7 @@ index 0000000000..4d5fa657eb
 +    const [params] = lastCall();
 +    expect(params).toMatchObject({
 +      category: 'agent',
-+      content: 'The run failed: provider_outage',
++      content: 'The run failed: Rate limit reached for requests',
 +      dedupeKey: 'agent_run_failed:op-9',
 +      metadata: { agent: { id: 'a1' } },
 +      title: 'Agent run failed',
@@ -1464,7 +1477,9 @@ index 0000000000..4d5fa657eb
 +  it('strips markdown out of a raw error message', async () => {
 +    // A provider error can come back as markdown; it lands on a lock screen.
 +    await notifyAgentRunFailed({
++      errorAttribution: 'provider',
 +      errorMessage: 'Rate limit **exceeded** — see [docs](https://x.com/a)',
++      errorType: 'RateLimitExceeded',
 +      operationId: 'op-10',
 +      userId: 'u1',
 +    });
@@ -1472,44 +1487,60 @@ index 0000000000..4d5fa657eb
 +    expect(lastCall()[0].content).toBe('The run failed: Rate limit exceeded — see docs');
 +  });
 +
-+  it('falls back when the run carried no error at all', async () => {
-+    await notifyAgentRunFailed({ operationId: 'op-11', userId: 'u1' });
++  // A Postgres failure arrives formatted with table, column and constraint names
++  // plus PG's own `detail`, which can quote row values. The type is all a lock
++  // screen gets to see of it.
++  it('withholds the text of a harness-side failure', async () => {
++    await notifyAgentRunFailed({
++      errorAttribution: 'harness',
++      errorMessage:
++        'PG 23505 · ERROR · duplicate key value violates unique constraint "agents_pkey"',
++      errorType: 'pg_23505',
++      operationId: 'op-11',
++      userId: 'u1',
++    });
 +
-+    expect(lastCall()[0].content).toBe('The run failed: unknown error');
++    expect(lastCall()[0].content).toBe('The run failed: pg_23505');
 +  });
 +
-+  // `network` classifies the failure without explaining it — the banner has to
-+  // carry the provider's own text too, or the user only learns the category.
-+  it('carries the error text under the taxonomy type', async () => {
++  // A transport failure quotes the host and port it could not reach.
++  it('withholds the text of a system-side failure', async () => {
 +    await notifyAgentRunFailed({
++      errorAttribution: 'system',
 +      errorMessage: 'connect ETIMEDOUT 10.0.0.1:443',
-+      errorType: 'network',
++      errorType: 'ProviderNetworkError',
 +      operationId: 'op-12',
 +      userId: 'u1',
 +    });
 +
-+    const [params] = lastCall();
-+    expect(params.content).toBe('The run failed: network');
-+    expect(params.context).toBe('connect ETIMEDOUT 10.0.0.1:443');
++    expect(lastCall()[0].content).toBe('The run failed: ProviderNetworkError');
 +  });
 +
-+  it('puts the error text in the body when there is no taxonomy type', async () => {
++  it('falls back to the type when a shareable failure carried no text', async () => {
 +    await notifyAgentRunFailed({
-+      errorMessage: 'Rate limit **exceeded**',
++      errorAttribution: 'provider',
++      errorType: 'RateLimitExceeded',
 +      operationId: 'op-13',
 +      userId: 'u1',
 +    });
 +
-+    const [params] = lastCall();
-+    expect(params.content).toBe('The run failed: Rate limit exceeded');
-+    // Already the whole story in the body; repeating it below only pads the banner.
-+    expect(params.context).toBeUndefined();
++    expect(lastCall()[0].content).toBe('The run failed: RateLimitExceeded');
 +  });
 +
-+  it('ships no secondary line when the run carried only a type', async () => {
-+    await notifyAgentRunFailed({ errorType: 'network', operationId: 'op-14', userId: 'u1' });
++  it('leads with the text of an unattributed error — it is all the run carried', async () => {
++    await notifyAgentRunFailed({
++      errorMessage: 'Rate limit **exceeded**',
++      operationId: 'op-14',
++      userId: 'u1',
++    });
 +
-+    expect(lastCall()[0].context).toBeUndefined();
++    expect(lastCall()[0].content).toBe('The run failed: Rate limit exceeded');
++  });
++
++  it('falls back when the run carried no error at all', async () => {
++    await notifyAgentRunFailed({ operationId: 'op-15', userId: 'u1' });
++
++    expect(lastCall()[0].content).toBe('The run failed: unknown error');
 +  });
 +});
 diff --git a/packages/business-server/package.json b/packages/business-server/package.json
@@ -1652,25 +1683,47 @@ index ef570beac5..5c0cb69c35 100644
 +}
 diff --git a/packages/business-server/src/agent-run/notifyAgentRunFailed.ts b/packages/business-server/src/agent-run/notifyAgentRunFailed.ts
 new file mode 100644
-index 0000000000..57f8a5dfdb
+index 0000000000..f557dbbddc
 --- /dev/null
 +++ b/packages/business-server/src/agent-run/notifyAgentRunFailed.ts
-@@ -0,0 +1,61 @@
+@@ -0,0 +1,84 @@
++import type { ChatMessageErrorAttribution } from '@lobechat/types';
++
 +import { notifyUser } from '../notification';
 +import { NOTIFICATION_CATEGORY, NOTIFICATION_TYPE } from '../notification/categories';
 +import { renderCopy } from '../notification/copy';
 +import { buildConversationPath, previewText, stripMarkdown } from '../notification/format';
 +
++/**
++ * Attributions whose error text is the user's to read.
++ *
++ * A `provider` or `user` error names the thing that broke — which key, which
++ * quota, which model — and naming it is the whole reason to open the push. A
++ * `harness` or `system` error is ours: a Postgres failure arrives formatted with
++ * table, column and constraint names plus PG's own `detail` (which can quote
++ * row values), and a transport failure quotes the host and port it could not
++ * reach. Those are diagnostics for an operator, and a lock screen is a surface
++ * the wrong audience reads.
++ */
++const SHAREABLE_ATTRIBUTIONS = new Set<ChatMessageErrorAttribution>(['provider', 'user']);
++
 +export interface NotifyAgentRunFailedParams {
 +  agentId?: string;
 +  /**
-+   * The provider's own error text — the only half that says *why* the run
-+   * broke. Flattened and capped before it reaches a phone.
++   * Who the error is attributed to. Decides whether {@link errorMessage} may
++   * reach a lock screen. An unattributed error has nothing else to say, so its
++   * text still leads — `unknown error` is worse than an unvetted sentence.
++   */
++  errorAttribution?: ChatMessageErrorAttribution;
++  /**
++   * The error's own text — the only half that says *why* the run broke.
++   * Flattened and capped before it reaches a phone.
 +   */
 +  errorMessage?: string;
 +  /**
-+   * Stable error taxonomy type (`network`, `quota`, `provider_outage`, …).
-+   * Stable and short, so it leads — but it classifies, it does not explain.
++   * Stable error taxonomy type (`RateLimitExceeded`, `pg_23505`, …). It
++   * classifies the failure without explaining it, so it leads only when the
++   * text cannot be shown.
 +   */
 +  errorType?: string;
 +  operationId: string;
@@ -1688,11 +1741,11 @@ index 0000000000..57f8a5dfdb
 + * already has its own intervention notification, and `lease_expired` is an
 + * infrastructure timeout that would otherwise buzz the phone on every restart.
 + *
-+ * The body leads with the taxonomy type and the secondary line carries the
-+ * provider's own text: `network` classifies the failure without explaining it,
-+ * and a lock screen is the one surface with no room to go looking. With no type
-+ * at all the message is the whole story, so it takes the body rather than
-+ * repeating itself one line down.
++ * The body leads with the error's own text, because the taxonomy type only
++ * classifies: `RateLimitExceeded` does not say which quota ran out, and a lock
++ * screen is the one surface with no room to go looking. The type takes over
++ * when the failure is ours to diagnose (see {@link SHAREABLE_ATTRIBUTIONS}) and
++ * when the run carried no text at all.
 + *
 + * The same recall gates apply as on completion: sub-agents, group members and
 + * share-visitor runs never reach this slot, and only interactive triggers
@@ -1701,13 +1754,14 @@ index 0000000000..57f8a5dfdb
 +export async function notifyAgentRunFailed(params: NotifyAgentRunFailedParams): Promise<void> {
 +  // A raw provider error can carry markdown, and it lands on a lock screen.
 +  const message = previewText(stripMarkdown(params.errorMessage ?? ''), '', 120) || undefined;
-+  const error = params.errorType ?? message ?? 'unknown error';
++  const isOurs =
++    params.errorAttribution !== undefined && !SHAREABLE_ATTRIBUTIONS.has(params.errorAttribution);
++  const error = (isOurs ? undefined : message) ?? params.errorType ?? 'unknown error';
 +
 +  await notifyUser({
 +    actionUrl: buildConversationPath({ agentId: params.agentId, topicId: params.topicId }),
 +    category: NOTIFICATION_CATEGORY.agent,
 +    content: renderCopy('agent_run_failed', { error }),
-+    context: params.errorType ? message : undefined,
 +    // Keyed by operation so a lifecycle retry cannot push the same failure twice.
 +    dedupeKey: `agent_run_failed:${params.operationId}`,
 +    metadata: params.agentId ? { agent: { id: params.agentId } } : undefined,
