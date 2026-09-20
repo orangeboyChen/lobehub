@@ -183,6 +183,18 @@ export const messagesReducer = (
 
       return produce(state, (draft) => {
         draft[index].plugin = merge(draft[index].plugin, value);
+        // Mirror the intervention onto the top-level projection: the
+        // pending-intervention list and the intervention card read
+        // `pluginIntervention`, not `plugin.intervention` (which the DB query
+        // never hydrates). Without this an optimistic approval left an
+        // AskUserQuestion card pending, so it stayed mounted with its Submit
+        // button stuck in loading.
+        if (value.intervention) {
+          draft[index].pluginIntervention = {
+            ...draft[index].pluginIntervention,
+            ...value.intervention,
+          };
+        }
         draft[index].updatedAt = Date.now();
       });
     }

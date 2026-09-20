@@ -3,9 +3,11 @@ import { type AgentRuntimeContext } from '@lobechat/agent-runtime';
 import { isHeterogeneousAgentModelId, MESSAGE_CANCEL_FLAT } from '@lobechat/const';
 import {
   type ChatTopicStatus,
+  classifyToolInterventionPresentation,
   type ConversationContext,
   type MessageMetadata,
   resolveAgentAgencyConfig,
+  type ToolIntervention,
   type UIChatMessage,
 } from '@lobechat/types';
 import { t } from 'i18next';
@@ -35,6 +37,7 @@ import { operationSelectors } from '@/store/chat/slices/operation/selectors';
 import type { Operation } from '@/store/chat/slices/operation/types';
 import { AI_RUNTIME_OPERATION_TYPES } from '@/store/chat/slices/operation/types';
 import { type ChatStore } from '@/store/chat/store';
+import { markInterventionResolvingLocally } from '@/store/chat/utils/interventionResolvingSession';
 import { messageMapKey } from '@/store/chat/utils/messageMapKey';
 import { type StoreSetter } from '@/store/types';
 import { useUserStore } from '@/store/user';
@@ -1583,6 +1586,51 @@ export class ConversationControlActionImpl {
   };
 
   /**
+   * Stamp the in-flight phase on a pending intervention, on both local
+   * projections (the tool row's `pluginIntervention` and the parent assistant's
+   * `tools[].intervention`).
+   *
+   * Local only — deliberately not persisted. `gatewayEventHandler` already
+   * treats `resolving` as a non-durable subscriber hint for the same reason:
+   * once it is written, `Intervention` disables every action on the card, and if
+   * the producer never ACKs that is permanent and survives a reload — the exact
+   * stuck-forever symptom this change exists to remove. In memory it still
+   * disables the card across remounts within the session, while a reload returns
+   * it to `pending` and submittable. A retry cannot double-apply: the durable
+   * claim and the legacy transport are both idempotent by `resolutionRequestId`.
+   */
+  #markInterventionResolving = (
+    context: OptimisticUpdateContext,
+    toolMessage: UIChatMessage,
+    intervention?: ToolIntervention,
+  ): void => {
+    const resolvingIntervention = { ...intervention, resolving: true, status: 'pending' as const };
+    // Record the mark in this session. The card only treats `resolving` as real
+    // when we set it here, so a leftover value in the database — an earlier
+    // build, or another subscriber — cannot disable the card forever.
+    markInterventionResolvingLocally(toolMessage.id);
+    this.#get().internal_dispatchMessage(
+      {
+        id: toolMessage.id,
+        type: 'updateMessage',
+        value: { pluginIntervention: resolvingIntervention },
+      },
+      context,
+    );
+    if (toolMessage.parentId && toolMessage.tool_call_id) {
+      this.#get().internal_dispatchMessage(
+        {
+          id: toolMessage.parentId,
+          tool_call_id: toolMessage.tool_call_id,
+          type: 'updateMessageTools',
+          value: { intervention: resolvingIntervention },
+        },
+        context,
+      );
+    }
+  };
+
+  /**
    * Resolve a heterogeneous-runtime intervention (CC AskUserQuestion, …).
    *
    * Why this action exists separately from `submitToolInteraction`:
@@ -1610,13 +1658,21 @@ export class ConversationControlActionImpl {
     context?: ConversationContext,
   ): Promise<void> => {
     const toolMessage = dbMessageSelectors.getDbMessageById(toolMessageId)(this.#get());
-    if (!toolMessage) return;
+    // Every early exit below means the answer cannot reach the producer. Return
+    // silently and the form's `submitting` flag (released only on a rejected
+    // submit) spins forever with nothing in the DB to explain it — the reported
+    // "click Submit, stuck in loading, refresh doesn't help". Fail loudly so the
+    // form leaves its loading state and the reason reaches the console.
+    // (It is not surfaced in the card itself: the shared form is i18n-free and
+    // has no error slot yet, so a user-visible message is still a follow-up.)
+    if (!toolMessage)
+      throw new Error(`[submitHeteroIntervention] unknown tool message ${toolMessageId}`);
 
     const toolCallId = toolMessage.tool_call_id;
-    if (!toolCallId) {
-      console.warn('[submitHeteroIntervention] tool message has no tool_call_id', toolMessageId);
-      return;
-    }
+    if (!toolCallId)
+      throw new Error(
+        `[submitHeteroIntervention] tool message ${toolMessageId} has no tool_call_id`,
+      );
 
     const effectiveContext: ConversationContext = context ?? {
       agentId: this.#get().activeAgentId,
@@ -1629,11 +1685,26 @@ export class ConversationControlActionImpl {
       toolMessage.pluginState as
         { heterogeneousIntervention?: { interactionKind?: unknown } } | undefined
     )?.heterogeneousIntervention;
-    const sourceAction = toHeterogeneousSourceAction(
-      actionType,
-      interventionState?.interactionKind,
-      payload ?? {},
-    );
+    // `interactionKind` is server-authored (`pluginState.heterogeneousIntervention`);
+    // a card raised from a client-side bridge event carries none of it, which left
+    // `toHeterogeneousSourceAction` with no branch to match on a submit and
+    // returned `undefined` — closing the durable claim to the only action that
+    // needs it most.
+    //
+    // Falling back to the shared classifier recovers `askUserQuestion` and
+    // nothing else: it emits `'question' | 'custom' | 'tool_approval'`, while
+    // the server's own field uses `'permission' | 'plan' | 'question'`, so only
+    // `'question'` is shared vocabulary. A batched permission/plan card with no
+    // persisted kind still derives `'custom'`, matches neither branch, and keeps
+    // falling through to the legacy transport — unchanged, and correct, since
+    // guessing a provider option id would be worse than not claiming.
+    const interactionKind =
+      interventionState?.interactionKind ??
+      classifyToolInterventionPresentation(
+        toolMessage.plugin?.identifier ?? '',
+        toolMessage.plugin?.apiName,
+      ).interactionKind;
+    const sourceAction = toHeterogeneousSourceAction(actionType, interactionKind, payload ?? {});
 
     // A persisted v2 card carries everything the server needs to locate and
     // authorize the intervention. Resolve it before consulting ephemeral
@@ -1649,33 +1720,15 @@ export class ConversationControlActionImpl {
       if (this.#discardAlreadyResolvedSource(sourceResolution)) return;
 
       if (sourceResolution.handled) {
-        const sourceOptimisticContext: OptimisticUpdateContext = { context: effectiveContext };
-        const resolvingIntervention = {
-          ...originalIntervention,
-          resolving: true,
-          status: 'pending' as const,
-        };
-        this.#get().internal_dispatchMessage(
-          {
-            id: toolMessageId,
-            type: 'updateMessage',
-            value: { pluginIntervention: resolvingIntervention },
-          },
-          sourceOptimisticContext,
+        this.#markInterventionResolving(
+          { context: effectiveContext },
+          toolMessage,
+          originalIntervention,
         );
-        if (toolMessage.parentId) {
-          this.#get().internal_dispatchMessage(
-            {
-              id: toolMessage.parentId,
-              tool_call_id: toolCallId,
-              type: 'updateMessageTools',
-              value: { intervention: resolvingIntervention },
-            },
-            sourceOptimisticContext,
-          );
-        }
         if (actionType === 'submit') {
-          await this.setInterventionAnswers(toolMessageId, payload ?? {}, sourceOptimisticContext);
+          await this.setInterventionAnswers(toolMessageId, payload ?? {}, {
+            context: effectiveContext,
+          });
         }
         return;
       }
@@ -1688,13 +1741,28 @@ export class ConversationControlActionImpl {
     // until the durable path is unavailable or reports `handled: false`; it is
     // provenance for local desktop IPC / legacy fallback, never server auth.
     const { messageOperationMap } = this.#get();
+    // `messageOperationMap` is in-memory only — it is empty after a refresh or
+    // cold start, which is exactly when a pending card is still on screen.
+    //
+    // Fall back to the persisted `operationId` (stamped by
+    // `applyInterventionRequest`) only for cards that never carried a durable
+    // batch. A card that did have a batch but whose durable source reported
+    // `handled: false` is deliberately NOT routed here: it carries a sealed
+    // batch identity the source endpoint declined to claim, so bypassing it
+    // would answer a batch the durable path owns. It falls through and fails
+    // loudly instead.
+    const persistedOperationId = originalIntervention?.batchId
+      ? undefined
+      : originalIntervention?.operationId;
     const candidateOperationId =
       (toolMessage.parentId && messageOperationMap?.[toolMessage.parentId]) ??
-      messageOperationMap?.[toolMessageId];
+      messageOperationMap?.[toolMessageId] ??
+      persistedOperationId;
 
     if (!candidateOperationId) {
-      console.warn('[submitHeteroIntervention] no operationId for', toolMessageId);
-      return;
+      throw new Error(
+        `[submitHeteroIntervention] no operation provenance for tool message ${toolMessageId}`,
+      );
     }
 
     // Resolve the runtime execution op before choosing IPC vs remote transport.
@@ -1718,16 +1786,23 @@ export class ConversationControlActionImpl {
       );
     }
     const optimisticContext: OptimisticUpdateContext = operationAlive ? { operationId } : {};
-    const isLocalDesktopHetero = operation?.type === 'execHeterogeneousAgent';
+    // The operation is what says which transport owns the producer — and it is
+    // in-memory, so a reload erases it exactly when a pending card is still on
+    // screen. Without the persisted marker below, an op-less card would always
+    // take the remote branch and publish to a Redis stream that an
+    // Electron-hosted producer never long-polls, losing the answer silently.
+    const isLocalDesktopHetero =
+      operation?.type === 'execHeterogeneousAgent' ||
+      (!operationAlive && originalIntervention?.localDesktop === true);
 
     if (!isLocalDesktopHetero) {
-      // Publishing the user intent is not completion. Keep the interaction
-      // pending but mark its in-flight phase so a remount/retry cannot present
-      // an optimistic terminal state before the producer has consumed it.
-      await this.#get().optimisticUpdateMessagePlugin(
-        toolMessageId,
-        { intervention: { resolving: true, status: 'pending' } },
-        optimisticContext,
+      // Publishing the user intent is not completion: mark the in-flight phase
+      // so a remount cannot present an optimistic terminal state before the
+      // producer has consumed it.
+      this.#markInterventionResolving(
+        { context: effectiveContext },
+        toolMessage,
+        originalIntervention,
       );
       if (actionType === 'submit') {
         await this.setInterventionAnswers(toolMessageId, payload ?? {}, optimisticContext);
@@ -1822,7 +1897,18 @@ export class ConversationControlActionImpl {
       console.error('[submitHeteroIntervention] submitIntervention failed:', err);
       await this.#get().optimisticUpdateMessagePlugin(
         toolMessageId,
-        { intervention: originalIntervention ?? { status: 'pending' } },
+        // Clear `resolving` explicitly: it is a local-only hint (see the
+        // in-flight dispatch above), but it now sits in the store, so a later
+        // retry reads it back as part of `originalIntervention`. Restoring it
+        // verbatim would persist the hint and strand the card disabled with no
+        // producer left to ACK it — and a reload could not clear it.
+        {
+          intervention: {
+            ...originalIntervention,
+            resolving: false,
+            status: originalIntervention?.status ?? 'pending',
+          },
+        },
         optimisticContext,
       );
       if (isLocalDesktopHetero) {

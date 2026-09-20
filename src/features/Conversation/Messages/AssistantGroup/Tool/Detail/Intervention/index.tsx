@@ -5,6 +5,7 @@ import { memo, Suspense, useCallback, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useSingleton } from '@/hooks/useSingleton';
+import { isInterventionResolvingLocally } from '@/store/chat/utils/interventionResolvingSession';
 import { useUserStore } from '@/store/user';
 import { toolInterventionSelectors } from '@/store/user/selectors';
 
@@ -120,7 +121,12 @@ const Intervention = memo<InterventionProps>(
     const isCustomInteraction = isCustomInteractionIdentifier(identifier, apiName);
 
     const topicId = message?.topicId;
-    const interventionResolving = message?.pluginIntervention?.resolving === true;
+    // Only honour `resolving` when this session stamped it. The value is also
+    // read back from the database, and rows written by earlier builds still
+    // carry it: those disabled the card and pinned Submit in `loading` on
+    // mount, and no reload could clear them because the flag is durable.
+    const interventionResolving =
+      message?.pluginIntervention?.resolving === true && isInterventionResolvingLocally(id);
     const submitToolInteraction = useConversationStore((s) => s.submitToolInteraction);
     const skipToolInteraction = useConversationStore((s) => s.skipToolInteraction);
     const cancelToolInteraction = useConversationStore((s) => s.cancelToolInteraction);

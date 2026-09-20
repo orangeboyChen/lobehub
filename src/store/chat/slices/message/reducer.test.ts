@@ -326,6 +326,66 @@ describe('messagesReducer', () => {
       const newState = messagesReducer(initialState, payload);
       expect(newState).toEqual(initialState);
     });
+
+    // Regression: the pending-intervention list gates on the tool row's
+    // top-level `pluginIntervention.status`, not on `plugin.intervention`. An
+    // approved AskUserQuestion whose patch only reached `plugin` stayed
+    // pending, so its card never unmounted and Submit spun forever.
+    it('should mirror an intervention patch onto the tool row pluginIntervention', () => {
+      const toolMessage: UIChatMessage = {
+        id: 'toolMessage',
+        role: 'tool',
+        content: 'Awaiting an answer',
+        createdAt: 1629264000000,
+        updatedAt: 1629264000000,
+        plugin: {
+          apiName: 'askUserQuestion',
+          arguments: '{}',
+          identifier: 'lobe-user-interaction',
+          type: 'default',
+        },
+        pluginIntervention: { batchId: 'batch-1', operationId: 'op-1', status: 'pending' },
+        tool_call_id: 'abc',
+      };
+
+      const newState = messagesReducer([toolMessage], {
+        type: 'updateMessagePlugin',
+        id: 'toolMessage',
+        value: { intervention: { status: 'approved' } },
+      });
+
+      const updatedMessage = newState.find((m) => m.id === 'toolMessage');
+
+      // The durable identity survives: only the patched fields change.
+      expect(updatedMessage?.pluginIntervention).toEqual({
+        batchId: 'batch-1',
+        operationId: 'op-1',
+        status: 'approved',
+      });
+    });
+
+    it('should leave pluginIntervention alone when no intervention is patched', () => {
+      const toolMessage: UIChatMessage = {
+        id: 'toolMessage',
+        role: 'tool',
+        content: 'Tool content',
+        createdAt: 1629264000000,
+        updatedAt: 1629264000000,
+        plugin: { apiName: 'calculator', arguments: '', identifier: 'tool1', type: 'default' },
+        pluginIntervention: { status: 'pending' },
+        tool_call_id: 'abc',
+      };
+
+      const newState = messagesReducer([toolMessage], {
+        type: 'updateMessagePlugin',
+        id: 'toolMessage',
+        value: { identifier: 'newPlugin' },
+      });
+
+      expect(newState.find((m) => m.id === 'toolMessage')?.pluginIntervention).toEqual({
+        status: 'pending',
+      });
+    });
   });
 
   describe('updateMessageTools', () => {

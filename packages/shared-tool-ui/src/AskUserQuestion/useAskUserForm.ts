@@ -1,5 +1,5 @@
 import type { BuiltinInterventionProps } from '@lobechat/types';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   buildSubmitPayload,
@@ -98,6 +98,8 @@ export const useAskUserForm = ({
     () => initial.supplementActive && !initial.escapeActive,
   );
   const [submitting, setSubmitting] = useState(false);
+  /** Latches the countdown fallback so a rejected submit cannot re-fire it. */
+  const fallbackFiredRef = useRef(false);
   const [activeTab, setActiveTab] = useState<string>(() => {
     // Resume on the first unanswered question rather than always at Q1.
     const idx = questions.findIndex((q) => !isQuestionAnswered(q, initial.picks, initial.custom));
@@ -382,16 +384,25 @@ export const useAskUserForm = ({
   // Timeout fallback for legacy question forms: when the countdown hits zero
   // and the user hasn't submitted, fill option 1 of each unanswered question and submit. Beats
   // letting the bridge time out into a `cancelled` isError — the model gets a
-  // structured answer it can act on. Single-shot via the `submitting` guard.
+  // structured answer it can act on.
+  //
+  // Single-shot: the fallback must fire exactly once, so it is latched by a ref
+  // rather than by the `submitting` guard. That guard only held while a failed
+  // submit left `submitting` permanently true — now that a rejected submit
+  // releases the flag (and with it the `submitWith` identity this effect
+  // depends on), guarding on it would re-fire the fallback on every failure and
+  // spin on an unroutable card for the rest of the session.
   //
   // Escape-mode special case: if the user is in escape mode with non-empty text
   // when the clock hits zero, submit that text as-is rather than discarding it.
   useEffect(() => {
     if (!expired || submitting || disabled || questions.length === 0) return;
+    if (fallbackFiredRef.current) return;
     // A stable id means this is a provider-owned choice (permission/plan or a
     // newer exact-id question). Never infer consent by selecting option one:
     // let the producer timeout/cancel fail closed.
     if (hasProviderOwnedOptionIds) return;
+    fallbackFiredRef.current = true;
     if (escapeActive && escapeAvailable && escapeText.trim().length > 0) {
       void submitWith({ [FREEFORM_PAYLOAD_KEY]: escapeText.trim() });
       return;
