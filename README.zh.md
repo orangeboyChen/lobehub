@@ -14,6 +14,7 @@
 - 本地功能：
   - `bark-push-notification`：补齐 OSS 的通知槽，让自托管部署写入 inbox 记录并通过 Bark 推送到 iOS。设备侧用 `BARK_KEY` 配置（自建 relay 再配 `BARK_SERVER_URL`）；通知长什么样由代码按场景决定，不是部署开关：
     - agent 头像作为通知图标、agent 名字作为折叠分组，同一个 agent 的推送会叠在一起
+    - 运行失败时标题会带上出错的会话（`[topic] agent`）—— 否则锁屏上每个失败都长得一样，分不清是哪次会话
     - 待人工审批用 `critical` 并持续响铃，定时任务失败用 `timeSensitive`，熔断暂停的任务用 `critical`，生成任务完成用 `passive`
     - 除非确实是单用户实例，否则请设置 `BARK_USER_ID` —— 不设的话所有账号的通知都会推到这台手机上
 - 上游 PR：
