@@ -191,6 +191,15 @@ export interface StreamChunkData {
   content?: string;
   pluginState?: Record<string, unknown>;
   reasoning?: string;
+  /**
+   * Marks the beginning of a thinking pass for providers that deliver
+   * reasoning as one opaque item instead of a delta stream (Codex ships the
+   * whole `reasoning` text on `item.completed`, with no per-delta channel).
+   * Carries no content — consumers use it to open the "thinking..." state at
+   * `item.started` so it spans the whole pass instead of flashing for the
+   * single frame where the completed text lands.
+   */
+  reasoningStart?: boolean;
   snapshotMode?: 'replace';
   snapshotSeq?: number;
   /**

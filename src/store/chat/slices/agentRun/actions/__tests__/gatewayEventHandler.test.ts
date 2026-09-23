@@ -472,6 +472,41 @@ describe('createGatewayEventHandler', () => {
       expect(store.completeOperation).not.toHaveBeenCalled();
     });
 
+    it('starts a reasoning op from a contentless reasoningStart chunk (Codex opaque reasoning items)', async () => {
+      const store = createMockStore();
+      const handler = createHandler(store);
+
+      // Codex delivers the whole thinking text on `item.completed` only, so the
+      // adapter opens the pass with a contentless marker at `item.started`.
+      handler(makeEvent('stream_chunk', { chunkType: 'reasoning', reasoningStart: true }));
+      await flush();
+
+      expect(store.startOperation).toHaveBeenCalledTimes(1);
+      expect(store.startOperation).toHaveBeenCalledWith({
+        context: expect.objectContaining({ messageId: 'msg-initial' }),
+        parentOperationId: 'op-1',
+        type: 'reasoning',
+      });
+      // No content to write yet — the marker only flips the "thinking" state.
+      expect(store.internal_dispatchMessage).not.toHaveBeenCalled();
+      // Still thinking: the op stays open until text / tools / stream_end.
+      expect(store.completeOperation).not.toHaveBeenCalled();
+
+      handler(makeEvent('stream_chunk', { chunkType: 'reasoning', reasoning: 'the whole pass' }));
+      await flush();
+
+      // Same op reused — the start marker already opened it.
+      expect(store.startOperation).toHaveBeenCalledTimes(1);
+      expect(store.internal_dispatchMessage).toHaveBeenLastCalledWith(
+        {
+          id: 'msg-initial',
+          type: 'updateMessage',
+          value: { reasoning: { content: 'the whole pass' } },
+        },
+        { operationId: 'op-1' },
+      );
+    });
+
     it('completes the reasoning op when text starts streaming', async () => {
       const store = createMockStore();
       const handler = createHandler(store);

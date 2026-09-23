@@ -22,6 +22,7 @@ const CODEX_COLLAB_TOOL_CALL_API = 'collab_tool_call';
 const CODEX_COMMAND_API = 'command_execution';
 const CODEX_FILE_CHANGE_API = 'file_change';
 const CODEX_MCP_TOOL_CALL_API = 'mcp_tool_call';
+const CODEX_REASONING_API = 'reasoning';
 const CODEX_TODO_LIST_API = 'todo_list';
 const CODEX_WEB_SEARCH_API = 'web_search';
 const CODEX_USAGE_SETTINGS_URL = 'https://chatgpt.com/codex/settings/usage';
@@ -959,6 +960,11 @@ export class CodexAdapter implements AgentEventAdapter {
   private handleItemStarted(item: any): HeterogeneousAgentEvent[] {
     if (!item?.id || !item?.type || item.type === 'agent_message') return [];
 
+    // Reasoning is output, not a tool: it must not become a tool card, and it
+    // must not count as tool activity (which would cut an extra step before
+    // the next agent message).
+    if (item.type === CODEX_REASONING_API) return this.handleReasoningStarted();
+
     this.hasToolActivitySinceAgentMessage = true;
 
     const tool = toToolPayload(item);
@@ -1066,6 +1072,31 @@ export class CodexAdapter implements AgentEventAdapter {
     ];
   }
 
+  /**
+   * Codex has no reasoning delta channel — the thinking text only lands on
+   * `item.completed`. Emit a contentless `reasoningStart` chunk here so the
+   * "thinking..." UI covers the whole pass instead of only the frame where the
+   * completed text arrives.
+   */
+  private handleReasoningStarted(): HeterogeneousAgentEvent[] {
+    return [
+      ...this.consumePendingTurnStart(),
+      this.makeEvent('stream_chunk', { chunkType: 'reasoning', reasoningStart: true }),
+    ];
+  }
+
+  private handleReasoningCompleted(item: any): HeterogeneousAgentEvent[] {
+    const text = typeof item?.text === 'string' ? item.text.trim() : '';
+    // Encrypted-only reasoning items carry no readable text; nothing to show
+    // beyond the already-emitted thinking state.
+    if (!text) return this.consumePendingTurnStart();
+
+    return [
+      ...this.consumePendingTurnStart(),
+      this.makeEvent('stream_chunk', { chunkType: 'reasoning', reasoning: text }),
+    ];
+  }
+
   private handleItemCompleted(item: any): HeterogeneousAgentEvent[] {
     if (!item?.type) return [];
 
@@ -1083,6 +1114,8 @@ export class CodexAdapter implements AgentEventAdapter {
 
       return this.handleAgentMessageContent(item.id, item.text);
     }
+
+    if (item.type === CODEX_REASONING_API) return this.handleReasoningCompleted(item);
 
     if (!item.id) return [];
     this.streamedCommandOutput.delete(item.id);
