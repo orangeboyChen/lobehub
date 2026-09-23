@@ -614,46 +614,6 @@ index 6f3c99ca..bcd8907d 100644
      }
      if (memberIds.length <= 1) return undefined;
  
-diff --git a/packages/database/src/models/__tests__/messages/message.pluginsForOperation.test.ts b/packages/database/src/models/__tests__/messages/message.pluginsForOperation.test.ts
-index 103f13d0..fe1e15c1 100644
---- a/packages/database/src/models/__tests__/messages/message.pluginsForOperation.test.ts
-+++ b/packages/database/src/models/__tests__/messages/message.pluginsForOperation.test.ts
-@@ -77,11 +77,9 @@ const captureEmittedSql = async (
-     logQuery: (sql: string, params: unknown[]) => captured.push({ params, sql }),
-   };
-   const client = (serverDB as unknown as { $client: { waitReady?: unknown } }).$client;
--  const db = (
--    'waitReady' in (client ?? {})
--      ? pgliteDrizzle({ client: client as any, logger, schema })
--      : nodeDrizzle(client as any, { logger, schema })
--  ) as unknown as LobeChatDatabase;
-+  const db = ('waitReady' in (client ?? {})
-+    ? pgliteDrizzle({ client: client as any, logger, schema })
-+    : nodeDrizzle(client as any, { logger, schema })) as unknown as LobeChatDatabase;
-   await run(db);
-   return captured;
- };
-@@ -268,8 +266,18 @@ describe('MessageModel.listMessagePluginsForOperation', () => {
-           userId,
-         })),
-       );
--      await seedToolCall({ createdAt: T1, id: 'in-window', threadId: 'thread1', topicId: 'topic1' });
--      await seedToolCall({ createdAt: T2, id: 'in-window-2', threadId: 'thread1', topicId: 'topic1' });
-+      await seedToolCall({
-+        createdAt: T1,
-+        id: 'in-window',
-+        threadId: 'thread1',
-+        topicId: 'topic1',
-+      });
-+      await seedToolCall({
-+        createdAt: T2,
-+        id: 'in-window-2',
-+        threadId: 'thread1',
-+        topicId: 'topic1',
-+      });
-       await seedToolCall({
-         createdAt: new Date('2027-01-01T00:00:00.000Z'),
-         id: 'hetero',
 diff --git a/packages/prompts/src/prompts/agentGroup/__snapshots__/index.test.ts.snap b/packages/prompts/src/prompts/agentGroup/__snapshots__/index.test.ts.snap
 index 7d4affed..0fc2a9c5 100644
 --- a/packages/prompts/src/prompts/agentGroup/__snapshots__/index.test.ts.snap
