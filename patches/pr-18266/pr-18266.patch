@@ -969,33 +969,23 @@ index e864995d..358a8ee3 100644
  import { useChatStore } from '@/store/chat';
  import { topicSelectors } from '@/store/chat/selectors';
  import { selectRuntimeType } from '@/store/chat/slices/agentRun/actions/dispatch/agentDispatcher';
-@@ -227,6 +229,7 @@ const resolveHeteroRunContext = (
- const runHeterogeneousFromExistingMessage = async (
+@@ -231,6 +233,7 @@ export const resolveHeteroRunContext = (
+ export const runHeterogeneousFromExistingMessage = async (
    chatStore: ReturnType<typeof useChatStore.getState>,
    params: {
 +    assistantMessageId?: string;
      context: ConversationContext;
      heterogeneousProvider: HeterogeneousProviderConfig;
      /** Image attachments from the original user message — forwarded to the CLI for vision support */
-@@ -236,8 +239,15 @@ const runHeterogeneousFromExistingMessage = async (
-     prompt: string;
-   },
- ): Promise<string> => {
--  const { context, heterogeneousProvider, imageList, parentMessageId, parentOperationId, prompt } =
--    params;
-+  const {
+@@ -258,6 +261,7 @@ export const runHeterogeneousFromExistingMessage = async (
+   terminalError?: boolean;
+ }> => {
+   const {
 +    assistantMessageId,
-+    context,
-+    heterogeneousProvider,
-+    imageList,
-+    parentMessageId,
-+    parentOperationId,
-+    prompt,
-+  } = params;
-   const agentId = context.agentId;
-   if (!agentId) throw new Error('agentId is required for heterogeneous agent');
- 
-@@ -256,21 +266,29 @@ const runHeterogeneousFromExistingMessage = async (
+     context,
+     heterogeneousProvider,
+     imageList,
+@@ -292,25 +296,38 @@ export const runHeterogeneousFromExistingMessage = async (
      topicPin,
    );
  
@@ -1013,7 +1003,11 @@ index e864995d..358a8ee3 100644
 -
 -  // Pull the new row into the store so the loading bubble is visible while
 -  // the executor runs (the executor only dispatches updates, not creates).
--  await chatStore.refreshMessages();
+-  // Scoped to THIS context: restart recovery runs this for a topic the user
+-  // may not be looking at, and an unscoped refresh would hit the active topic
+-  // instead — leaving the new row out of the store, so every step the executor
+-  // chains under it renders as an orphan group.
+-  await chatStore.refreshMessages(context);
 +  let assistantMsgId = assistantMessageId;
 +  if (!assistantMsgId) {
 +    const assistantMessage = await messageService.createMessage({
@@ -1029,18 +1023,27 @@ index e864995d..358a8ee3 100644
 +            }
 +          : undefined,
 +      parentId: parentMessageId,
++      // External CLIs own model selection; persist only the runtime provider up
++      // front. The adapter backfills the actual model later if the CLI reports it.
 +      provider: heterogeneousProvider.type,
 +      role: 'assistant',
 +      threadId: context.threadId ?? undefined,
 +      topicId: context.topicId ?? undefined,
 +    });
 +    assistantMsgId = assistantMessage.id;
-+    await chatStore.refreshMessages();
++
++    // Pull the new row into the store so the loading bubble is visible while
++    // the executor runs (the executor only dispatches updates, not creates).
++    // Scoped to THIS context: restart recovery runs this for a topic the user
++    // may not be looking at, and an unscoped refresh would hit the active topic
++    // instead — leaving the new row out of the store, so every step the executor
++    // chains under it renders as an orphan group.
++    await chatStore.refreshMessages(context);
 +  }
  
    const { operationId: heteroOpId } = chatStore.startOperation({
      context,
-@@ -279,12 +297,12 @@ const runHeterogeneousFromExistingMessage = async (
+@@ -319,12 +336,12 @@ export const runHeterogeneousFromExistingMessage = async (
      parentOperationId,
      type: 'execHeterogeneousAgent',
    });
@@ -1049,22 +1052,22 @@ index e864995d..358a8ee3 100644
  
    const { executeHeterogeneousAgent } =
      await import('@/store/chat/slices/agentRun/actions/transports/hetero/heterogeneousAgentExecutor');
-   await executeHeterogeneousAgent(() => useChatStore.getState(), {
+   const outcome = await executeHeterogeneousAgent(() => useChatStore.getState(), {
 -    assistantMessageId: assistantMsg.id,
 +    assistantMessageId: assistantMsgId,
      context,
      heterogeneousProvider: effectiveHeterogeneousProvider,
      imageList: imageList?.length ? imageList : undefined,
-@@ -295,7 +313,7 @@ const runHeterogeneousFromExistingMessage = async (
-     workingDirectory,
+@@ -339,7 +356,7 @@ export const runHeterogeneousFromExistingMessage = async (
    });
  
--  return assistantMsg.id;
-+  return assistantMsgId;
- };
- 
- export interface HeteroContinuationScheduleParams {
-@@ -313,6 +331,122 @@ interface RegenerateUserMessageSource {
+   return {
+-    assistantMessageId: assistantMsg.id,
++    assistantMessageId: assistantMsgId,
+     replayComplete: outcome?.replay?.complete,
+     terminalError: outcome?.terminalError,
+   };
+@@ -360,6 +377,122 @@ interface RegenerateUserMessageSource {
    readDbMessages: () => ConversationStore['dbMessages'];
  }
  
