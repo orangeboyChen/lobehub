@@ -81,6 +81,13 @@ export interface StreamChunkData {
   reasoning?: string;
   reasoningParts?: Array<{ text: string; type: 'text' } | { image: string; type: 'image' }>;
   /**
+   * Opens the thinking pass for providers that ship reasoning as one opaque
+   * item instead of a delta stream — Codex only delivers the full thinking
+   * text on `item.completed`, so the adapter emits this contentless marker at
+   * `item.started` to keep the "thinking..." state alive for the whole pass.
+   */
+  reasoningStart?: boolean;
+  /**
    * `lh hetero exec` coalesces main-agent text deltas into full-text
    * snapshots: `content` carries the WHOLE message so far and must replace
    * the accumulated text, not append to it. Absent on plain deltas.

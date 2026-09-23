@@ -539,6 +539,79 @@ describe('CodexAdapter', () => {
     });
   });
 
+  it('streams reasoning items into the reasoning channel instead of a tool card', () => {
+    const adapter = new CodexAdapter();
+
+    adapter.adapt({ type: 'turn.started' });
+    const started = adapter.adapt({
+      item: { id: 'item_53', type: 'reasoning' },
+      type: 'item.started',
+    });
+
+    expect(started).toHaveLength(1);
+    expect(started[0]).toMatchObject({
+      data: { chunkType: 'reasoning', reasoningStart: true },
+      type: 'stream_chunk',
+    });
+
+    const completed = adapter.adapt({
+      item: {
+        id: 'item_53',
+        text: 'Now the FFI agent. It depends on appender, which will be last.',
+        type: 'reasoning',
+      },
+      type: 'item.completed',
+    });
+
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toMatchObject({
+      data: {
+        chunkType: 'reasoning',
+        reasoning: 'Now the FFI agent. It depends on appender, which will be last.',
+      },
+      type: 'stream_chunk',
+    });
+  });
+
+  it('keeps reasoning out of the tool lifecycle and does not cut an extra step', () => {
+    const adapter = new CodexAdapter();
+
+    adapter.adapt({ type: 'turn.started' });
+    adapter.adapt({ item: { id: 'item_53', type: 'reasoning' }, type: 'item.started' });
+    adapter.adapt({
+      item: { id: 'item_53', text: 'Plan the refactor first.', type: 'reasoning' },
+      type: 'item.completed',
+    });
+
+    const message = adapter.adapt({
+      item: { id: 'item_54', text: 'Done planning.', type: 'agent_message' },
+      type: 'item.completed',
+    });
+
+    // No tool events at all, and the reasoning pass must not be treated as tool
+    // activity — otherwise this message would open a second step.
+    expect(message).toHaveLength(1);
+    expect(message[0]).toMatchObject({
+      data: { chunkType: 'text', content: 'Done planning.' },
+      stepIndex: 0,
+      type: 'stream_chunk',
+    });
+  });
+
+  it('ignores reasoning completions that carry no readable text', () => {
+    const adapter = new CodexAdapter();
+
+    adapter.adapt({ type: 'turn.started' });
+    adapter.adapt({ item: { id: 'item_53', type: 'reasoning' }, type: 'item.started' });
+
+    const completed = adapter.adapt({
+      item: { encrypted_content: 'gAAAAABqBBf7', id: 'item_53', type: 'reasoning' },
+      type: 'item.completed',
+    });
+
+    expect(completed).toHaveLength(0);
+  });
+
   it('does not start a new step for an old pending tool completion', () => {
     const adapter = new CodexAdapter();
 

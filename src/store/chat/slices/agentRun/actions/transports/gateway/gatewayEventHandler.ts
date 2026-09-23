@@ -831,35 +831,43 @@ export const createGatewayEventHandler = (
             }
           }
 
-          if (data.chunkType === 'reasoning' && data.reasoning) {
-            // Same snapshot semantics as text above: `lh hetero exec`
-            // coalesces reasoning into `replace` snapshots; redelivered seqs
-            // are dropped instead of appended (which would duplicate the
-            // thinking text on a server-side batch retry).
-            const snapshotSeq =
-              data.snapshotMode === 'replace' && typeof data.snapshotSeq === 'number'
-                ? data.snapshotSeq
-                : undefined;
+          if (data.chunkType === 'reasoning' && (data.reasoning || data.reasoningStart)) {
+            // Codex ships reasoning as one opaque item (no delta channel), so the
+            // adapter emits a contentless `reasoningStart` chunk when thinking
+            // begins. Open the thinking operation here — otherwise the
+            // "thinking..." state would only appear for the single frame where
+            // the completed text lands.
+            startReasoningIfNeeded();
 
-            if (snapshotSeq !== undefined && snapshotSeq <= lastReasoningSnapshotSeq) {
-              // Redelivered snapshot — already applied.
-            } else {
-              startReasoningIfNeeded();
-              if (snapshotSeq === undefined) {
-                accumulatedReasoning += data.reasoning;
+            if (data.reasoning) {
+              // Same snapshot semantics as text above: `lh hetero exec`
+              // coalesces reasoning into `replace` snapshots; redelivered seqs
+              // are dropped instead of appended (which would duplicate the
+              // thinking text on a server-side batch retry).
+              const snapshotSeq =
+                data.snapshotMode === 'replace' && typeof data.snapshotSeq === 'number'
+                  ? data.snapshotSeq
+                  : undefined;
+
+              if (snapshotSeq !== undefined && snapshotSeq <= lastReasoningSnapshotSeq) {
+                // Redelivered snapshot — already applied.
               } else {
-                lastReasoningSnapshotSeq = snapshotSeq;
-                accumulatedReasoning = data.reasoning;
+                if (snapshotSeq === undefined) {
+                  accumulatedReasoning += data.reasoning;
+                } else {
+                  lastReasoningSnapshotSeq = snapshotSeq;
+                  accumulatedReasoning = data.reasoning;
+                }
+                hasStreamedContent = true;
+                get().internal_dispatchMessage(
+                  {
+                    id: currentAssistantMessageId,
+                    type: 'updateMessage',
+                    value: { reasoning: { content: accumulatedReasoning } },
+                  },
+                  dispatchContext,
+                );
               }
-              hasStreamedContent = true;
-              get().internal_dispatchMessage(
-                {
-                  id: currentAssistantMessageId,
-                  type: 'updateMessage',
-                  value: { reasoning: { content: accumulatedReasoning } },
-                },
-                dispatchContext,
-              );
             }
           }
 
