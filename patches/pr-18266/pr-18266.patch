@@ -1392,28 +1392,6 @@ index e864995d..358a8ee3 100644
      const nextBranchIndex = childrenCount;
  
      // Switch to the new branch so the UI shows the incoming response immediately
-@@ -418,16 +763,16 @@ const regenerateUserMessageFromSource = async (
-     const postSwitchOp = operationSelectors.getOperationById(operationId)(useChatStore.getState());
-     if (postSwitchOp && postSwitchOp.status !== 'running') return;
- 
--    await ensureEffectiveAgencyAccess(context.agentId);
--    const { agencyConfig, isWorkspaceAgent, workspaceScoped } = getEffectiveAgencyConfig(
--      context.agentId,
--    );
-+    const executionAgentId = getRetryExecutionAgentId(context);
-+    await ensureEffectiveAgencyAccess(executionAgentId);
-+    const { agencyConfig, isWorkspaceAgent, workspaceScoped } =
-+      getEffectiveAgencyConfig(executionAgentId);
-     const heterogeneousProvider = agencyConfig?.heterogeneousProvider;
-     const runtimeType = selectRuntimeType({
-       boundDeviceId: agencyConfig?.boundDeviceId,
-       executionTarget: agencyConfig?.executionTarget,
-       heterogeneousProvider,
--      isGatewayMode: chatStore.isGatewayModeEnabled(context.agentId),
-+      isGatewayMode: chatStore.isGatewayModeEnabled(executionAgentId),
-       isWorkspaceAgent,
-       workspaceScoped,
-     });
 @@ -447,8 +792,9 @@ const regenerateUserMessageFromSource = async (
        // `onComplete` still fires at session end for the UI hook; re-completing
        // the already-settled wrapper is an idempotent no-op.
@@ -1434,38 +1412,6 @@ index e864995d..358a8ee3 100644
          heterogeneousProvider,
          // Forward the original user message's images so regenerate re-runs
          // the CLI with the same vision input as the first attempt. Without
-@@ -899,23 +1245,26 @@ export const generationSlice: StateCreator<
-     // tool/provider error on a grouped reply is not resumable this way.
-     if (!isHeterogeneousAgentStatusGuideError(erroredStep.error?.body)) return;
- 
--    await ensureEffectiveAgencyAccess(context.agentId);
-+    const executionContext = getRetryHeterogeneousExecutionContext(
-+      getRetryExecutionContext(erroredStep, context),
-+    );
-+    await ensureEffectiveAgencyAccess(executionContext.agentId);
-     const { agencyConfig, isWorkspaceAgent, workspaceScoped } = getEffectiveAgencyConfig(
--      context.agentId,
-+      executionContext.agentId,
-     );
-     const heterogeneousProvider = agencyConfig?.heterogeneousProvider;
-     const runtimeType = selectRuntimeType({
-       boundDeviceId: agencyConfig?.boundDeviceId,
-       executionTarget: agencyConfig?.executionTarget,
-       heterogeneousProvider,
--      isGatewayMode: chatStore.isGatewayModeEnabled(context.agentId),
-+      isGatewayMode: chatStore.isGatewayModeEnabled(executionContext.agentId),
-       isWorkspaceAgent,
-       workspaceScoped,
-     });
--    const agentId = context.agentId;
-+    const agentId = executionContext.agentId;
- 
-     const resumeSessionId = agentId
--      ? resolveHeteroRunContext(chatStore, context, agentId).resumeSessionId
-+      ? resolveHeteroRunContext(chatStore, executionContext, agentId).resumeSessionId
-       : undefined;
- 
-     // Nothing to continue from: the failed step IS the group's head (the run
 @@ -950,7 +1299,7 @@ export const generationSlice: StateCreator<
      }
  
