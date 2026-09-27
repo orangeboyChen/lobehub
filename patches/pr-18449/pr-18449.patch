@@ -256,12 +256,11 @@ index 0000000000..9971d9123c
 +  });
 +});
 diff --git a/src/features/Portal/GroupThread/Header/index.tsx b/src/features/Portal/GroupThread/Header/index.tsx
-index cfaba84558..dfcd53837b 100644
+index 456544b0be..b2f8ac1fee 100644
 --- a/src/features/Portal/GroupThread/Header/index.tsx
 +++ b/src/features/Portal/GroupThread/Header/index.tsx
-@@ -20,9 +20,13 @@ const Header = memo(() => {
-     clearPortalStack();
-   };
+@@ -16,7 +16,11 @@ const Header = memo<{ onClose?: () => void }>(({ onClose }) => {
+   const { t } = useTranslation('common');
    const activeThreadAgentId = useAgentGroupStore((s) => s.activeThreadAgentId);
 +  const groupMeta = useAgentGroupStore((s) =>
 +    s.activeGroupId ? s.groupMap[s.activeGroupId] : undefined,
@@ -271,16 +270,13 @@ index cfaba84558..dfcd53837b 100644
    const currentAgent = agents?.find((agent) => agent.id === activeThreadAgentId);
 +  const isSupervisor = groupMeta?.supervisorAgentId === currentAgent?.id;
  
-   return (
-     <NavHeader
-@@ -32,10 +36,18 @@ const Header = memo(() => {
-       left={
-         <Flexbox horizontal align={'center'} gap={8}>
+   const close = useGroupThreadClose(onClose);
+@@ -26,8 +30,16 @@ const Header = memo<{ onClose?: () => void }>(({ onClose }) => {
+       title={
+         <Flexbox horizontal align={'center'} gap={8} style={{ minWidth: 0 }}>
            <Avatar
 -            avatar={currentAgent?.avatar || DEFAULT_AVATAR}
 -            background={currentAgent?.backgroundColor ?? undefined}
-             shape={'square'}
-             size={20}
 +            avatar={
 +              isSupervisor
 +                ? groupMeta?.avatar || DEFAULT_AVATAR
@@ -291,9 +287,9 @@ index cfaba84558..dfcd53837b 100644
 +                ? (groupMeta?.backgroundColor ?? undefined)
 +                : (currentAgent?.backgroundColor ?? undefined)
 +            }
+             shape={'square'}
+             size={20}
            />
-           <div style={{ fontWeight: 600 }}>
-             {agentDisplayName(currentAgent, t('defaultSession', { ns: 'common' }))}
 diff --git a/src/routes/(main)/group/profile/features/Header/index.tsx b/src/routes/(main)/group/profile/features/Header/index.tsx
 index 98238da485..1be873456a 100644
 --- a/src/routes/(main)/group/profile/features/Header/index.tsx
