@@ -497,14 +497,15 @@ index 0000000000..ea201ce7d3
 +});
 diff --git a/apps/server/src/services/notification/__tests__/format.test.ts b/apps/server/src/services/notification/__tests__/format.test.ts
 new file mode 100644
-index 0000000000..3c4951c10f
+index 0000000000..f3671f6812
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/format.test.ts
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,136 @@
 +// @vitest-environment node
 +import { beforeEach, describe, expect, it, vi } from 'vitest';
 +
 +import {
++  bracketLabel,
 +  buildConversationPath,
 +  buildPublicUrl,
 +  clampText,
@@ -543,6 +544,29 @@ index 0000000000..3c4951c10f
 +  it('caps the preview and marks the truncation', () => {
 +    expect(previewText('abcdefghij', 'fallback', 5)).toBe('abcd…');
 +    expect(previewText('abcde', 'fallback', 5)).toBe('abcde');
++  });
++});
++
++describe('bracketLabel', () => {
++  it('is undefined when there is nothing to label', () => {
++    expect(bracketLabel(undefined)).toBeUndefined();
++    expect(bracketLabel('   ')).toBeUndefined();
++  });
++
++  it('wraps the label in brackets', () => {
++    expect(bracketLabel('Trip planning')).toBe('[Trip planning]');
++  });
++
++  it('caps a runaway topic title', () => {
++    expect(bracketLabel('x'.repeat(80), 10)).toBe('[xxxxxxxxx…]');
++  });
++
++  it('drops the label’s own brackets so the lead reads as one label', () => {
++    expect(bracketLabel('Sprint [draft]')).toBe('[Sprint draft]');
++  });
++
++  it('spends the cap on words, not on markdown', () => {
++    expect(bracketLabel('**Trip** planning')).toBe('[Trip planning]');
 +  });
 +});
 +
@@ -615,19 +639,21 @@ index 0000000000..3c4951c10f
 +});
 diff --git a/apps/server/src/services/notification/__tests__/notifyUser.test.ts b/apps/server/src/services/notification/__tests__/notifyUser.test.ts
 new file mode 100644
-index 0000000000..39d3f7cf95
+index 0000000000..54a1f50b14
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/notifyUser.test.ts
-@@ -0,0 +1,500 @@
+@@ -0,0 +1,587 @@
 +// @vitest-environment node
 +import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 +
 +import { NotificationModel } from '@/database/models/notification';
++import { TopicModel } from '@/database/models/topic';
 +
 +const {
 +  mockAppUrl,
 +  mockCreate,
 +  mockCreateDelivery,
++  mockFindTopicById,
 +  mockGetAgentAvatarsByIds,
 +  mockGetPreference,
 +  mockGetUserSettings,
@@ -636,6 +662,7 @@ index 0000000000..39d3f7cf95
 +  mockAppUrl: { value: undefined as string | undefined },
 +  mockCreate: vi.fn(),
 +  mockCreateDelivery: vi.fn(),
++  mockFindTopicById: vi.fn(),
 +  mockGetAgentAvatarsByIds: vi.fn(),
 +  mockGetPreference: vi.fn(),
 +  mockGetServerDB: vi.fn(),
@@ -661,6 +688,12 @@ index 0000000000..39d3f7cf95
 +vi.mock('@/database/models/agent', () => ({
 +  AgentModel: vi.fn(function () {
 +    return { getAgentAvatarsByIds: mockGetAgentAvatarsByIds };
++  }),
++}));
++
++vi.mock('@/database/models/topic', () => ({
++  TopicModel: vi.fn(function () {
++    return { findById: mockFindTopicById };
 +  }),
 +}));
 +
@@ -698,6 +731,7 @@ index 0000000000..39d3f7cf95
 +    mockGetServerDB.mockResolvedValue({});
 +    mockGetUserSettings.mockResolvedValue(undefined);
 +    mockGetPreference.mockResolvedValue({});
++    mockFindTopicById.mockResolvedValue(undefined);
 +    mockGetAgentAvatarsByIds.mockResolvedValue([]);
 +    mockCreate.mockResolvedValue({ id: 'n1' });
 +    mockCreateDelivery.mockResolvedValue({ id: 'd1' });
@@ -904,6 +938,7 @@ index 0000000000..39d3f7cf95
 +    mockGetServerDB.mockResolvedValue({});
 +    mockGetUserSettings.mockResolvedValue(undefined);
 +    mockGetPreference.mockResolvedValue({});
++    mockFindTopicById.mockResolvedValue(undefined);
 +    mockGetAgentAvatarsByIds.mockResolvedValue([]);
 +    mockCreate.mockResolvedValue({ id: 'n1' });
 +    mockCreateDelivery.mockResolvedValue({ id: 'd1' });
@@ -995,6 +1030,82 @@ index 0000000000..39d3f7cf95
 +    // APNs fetches the icon from its own network, so a relative path only
 +    // works once it is resolved against APP_URL.
 +    expect(pushBody(fetchMock).icon).toBe('https://app.example.com/avatars/agent-default.png');
++  });
++
++  it('leads a push that names its conversation with the topic', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++    mockGetAgentAvatarsByIds.mockResolvedValue([
++      { avatar: 'https://cdn.example.com/a1.png', id: 'a1', name: 'Researcher', title: null },
++    ]);
++    mockFindTopicById.mockResolvedValue({ id: 't1', title: 'Trip planning' });
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, actionUrl: '/agent/a1/t1', topicId: 't1' });
++
++    // The push has no inbox to open, so "which conversation" has to be in the
++    // title — otherwise a failure from an agent the reader uses in ten topics
++    // is indistinguishable from any of the others.
++    expect(mockFindTopicById).toHaveBeenCalledWith('t1');
++    expect(pushBody(fetchMock).title).toBe('[Trip planning] Researcher');
++    // Grouped by agent, not by topic: one stack per agent on the phone.
++    expect(pushBody(fetchMock).group).toBe('Researcher');
++  });
++
++  it('resolves the topic under the notified user and the run’s workspace', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++    mockFindTopicById.mockResolvedValue({ id: 't1', title: 'Trip planning' });
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, topicId: 't1', workspaceId: 'w1' });
++
++    // Scoped, so a topic id off a run payload cannot name somebody else's
++    // conversation back to this phone.
++    expect(TopicModel).toHaveBeenCalledWith(expect.anything(), 'u1', 'w1');
++  });
++
++  it('leaves the bracket off a push that carries no topic', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++    mockGetAgentAvatarsByIds.mockResolvedValue([
++      { avatar: 'https://cdn.example.com/a1.png', id: 'a1', name: 'Researcher', title: null },
++    ]);
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, actionUrl: '/agent/a1/t1' });
++
++    expect(mockFindTopicById).not.toHaveBeenCalled();
++    expect(pushBody(fetchMock).title).toBe('Researcher');
++  });
++
++  it('names the conversation even when no agent resolves', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++    mockFindTopicById.mockResolvedValue({ id: 't1', title: 'Trip planning' });
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, actionUrl: '/agent/a1/t1', topicId: 't1' });
++
++    expect(pushBody(fetchMock).title).toBe('[Trip planning] Agent run finished');
++  });
++
++  it('still pushes when the topic lookup blows up', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(okResponse());
++    vi.stubGlobal('fetch', fetchMock);
++    mockFindTopicById.mockRejectedValue(new Error('db down'));
++
++    const { notifyUser } = await load();
++
++    await notifyUser({ ...baseParams, actionUrl: '/agent/a1/t1', topicId: 't1' });
++
++    // A push that cannot name the conversation still says why it rang.
++    expect(fetchMock).toHaveBeenCalledTimes(1);
++    expect(pushBody(fetchMock).title).toBe('Agent run finished');
 +  });
 +
 +  it('falls back to the default avatar for an emoji', async () => {
@@ -1227,10 +1338,10 @@ index 0000000000..9b2253ad12
 +});
 diff --git a/apps/server/src/services/notification/__tests__/slots.test.ts b/apps/server/src/services/notification/__tests__/slots.test.ts
 new file mode 100644
-index 0000000000..35cea9a6e7
+index 0000000000..fb5cb5c0a7
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/slots.test.ts
-@@ -0,0 +1,312 @@
+@@ -0,0 +1,326 @@
 +// @vitest-environment node
 +import { beforeEach, describe, expect, it, vi } from 'vitest';
 +
@@ -1537,6 +1648,20 @@ index 0000000000..35cea9a6e7
 +    expect(lastCall()[0].content).toBe('The run failed: Rate limit exceeded');
 +  });
 +
++  it('names the conversation that broke', async () => {
++    await notifyAgentRunFailed({
++      agentId: 'a1',
++      errorMessage: 'Rate limit reached for requests',
++      operationId: 'op-16',
++      topicId: 't1',
++      userId: 'u1',
++    });
++
++    // Forwarded so the push title can lead with `[topic]`: the error text says
++    // what broke, but one agent carries many conversations.
++    expect(lastCall()[0].topicId).toBe('t1');
++  });
++
 +  it('falls back when the run carried no error at all', async () => {
 +    await notifyAgentRunFailed({ operationId: 'op-15', userId: 'u1' });
 +
@@ -1683,10 +1808,10 @@ index ef570beac5..5c0cb69c35 100644
 +}
 diff --git a/packages/business-server/src/agent-run/notifyAgentRunFailed.ts b/packages/business-server/src/agent-run/notifyAgentRunFailed.ts
 new file mode 100644
-index 0000000000..f557dbbddc
+index 0000000000..6ffd44c5b3
 --- /dev/null
 +++ b/packages/business-server/src/agent-run/notifyAgentRunFailed.ts
-@@ -0,0 +1,84 @@
+@@ -0,0 +1,88 @@
 +import type { ChatMessageErrorAttribution } from '@lobechat/types';
 +
 +import { notifyUser } from '../notification';
@@ -1766,6 +1891,10 @@ index 0000000000..f557dbbddc
 +    dedupeKey: `agent_run_failed:${params.operationId}`,
 +    metadata: params.agentId ? { agent: { id: params.agentId } } : undefined,
 +    title: renderCopy('agent_run_failed_title'),
++    // Names the conversation in the push title: the error text says what broke,
++    // but several conversations share an agent, so without the topic the reader
++    // has to open the app to learn which one failed.
++    topicId: params.topicId,
 +    type: NOTIFICATION_TYPE.agentRunFailed,
 +    userId: params.userId,
 +    workspaceId: params.workspaceId,
@@ -2152,10 +2281,10 @@ index 0000000000..14cccfcbfc
 +  });
 diff --git a/packages/business-server/src/notification/format.ts b/packages/business-server/src/notification/format.ts
 new file mode 100644
-index 0000000000..7316390d5b
+index 0000000000..38786020a2
 --- /dev/null
 +++ b/packages/business-server/src/notification/format.ts
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,111 @@
 +import { getAppConfig } from '@/envs/app';
 +
 +/** Hard cap for a single-line field; returns undefined for blank input. */
@@ -2203,6 +2332,22 @@ index 0000000000..7316390d5b
 + */
 +export const previewText = (text?: string, fallback = '', maxLength = 200): string =>
 +  clampText(text ? stripMarkdown(text) : undefined, maxLength) ?? fallback;
++
++/**
++ * A `[label]` lead for a push title, or undefined when there is no label.
++ *
++ * Bracketing is what tells the reader the words name a conversation rather
++ * than continue the sentence, so the label's own brackets are dropped — a
++ * topic titled `Sprint [draft]` would otherwise read as two nested labels.
++ */
++export const bracketLabel = (text?: string | null, maxLength = 40): string | undefined => {
++  const label = clampText(
++    text ? stripMarkdown(text).replaceAll(/[[\]]/g, '') : undefined,
++    maxLength,
++  );
++
++  return label && `[${label}]`;
++};
 +
 +/**
 + * Relative SPA path for a conversation.
@@ -2253,10 +2398,10 @@ index 0000000000..7316390d5b
 +};
 diff --git a/packages/business-server/src/notification/index.ts b/packages/business-server/src/notification/index.ts
 new file mode 100644
-index 0000000000..16cda61508
+index 0000000000..2e8185ff95
 --- /dev/null
 +++ b/packages/business-server/src/notification/index.ts
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,161 @@
 +import type { NotificationMetadata } from '@lobechat/types';
 +import debug from 'debug';
 +
@@ -2268,6 +2413,7 @@ index 0000000000..16cda61508
 +import { buildPublicUrl, stripMarkdown } from './format';
 +import { resolvePresentation } from './levels';
 +import { resolvePushEnabled } from './settings';
++import { resolveTopicPushLabel } from './topicMeta';
 +
 +const log = debug('lobe-notification');
 +
@@ -2300,6 +2446,11 @@ index 0000000000..16cda61508
 +  dedupeKey?: string;
 +  metadata?: NotificationMetadata;
 +  title: string;
++  /**
++   * The conversation this is about, when there is one. Resolved into a
++   * `[topic]` lead on the push title — see {@link resolveTopicPushLabel}.
++   */
++  topicId?: string;
 +  /** Scenario type, e.g. `completed`. Keys `push.items[category]`. */
 +  type: string;
 +  userId: string;
@@ -2370,8 +2521,16 @@ index 0000000000..16cda61508
 +    // the avatar from its live store. A push has no client, so the id is
 +    // resolved here: Bark needs a real image URL for the icon, and the agent's
 +    // name is what collapses its pushes into one stack on the phone.
-+    const agent = await resolveAgentPushMeta(db, params.userId, params.metadata?.agent?.id);
++    const [agent, topicLabel] = await Promise.all([
++      resolveAgentPushMeta(db, params.userId, params.metadata?.agent?.id),
++      resolveTopicPushLabel(db, params.userId, params.topicId, params.workspaceId),
++    ]);
 +    const presentation = resolvePresentation(params.category, params.type);
++
++    // A failure push that does not say which conversation broke is a failure
++    // the reader still has to go looking for, so the topic leads whatever the
++    // title would otherwise have been — never replaces it.
++    const lead = [topicLabel, agent.name ?? params.title].filter(Boolean).join(' ');
 +
 +    const result = await sendBarkNotification({
 +      // The row keeps its markdown so the inbox can render it; the phone gets
@@ -2383,9 +2542,10 @@ index 0000000000..16cda61508
 +      level: presentation.level,
 +      subtitle: params.context ? stripMarkdown(params.context) : undefined,
 +      // The row keeps its markdown so the inbox can render it; the phone gets
-+      // one line of plain text — including the title, since an agent name is
-+      // user-authored and a stray `**` there would reach the lock screen too.
-+      title: stripMarkdown(agent.name ?? params.title),
++      // one line of plain text — including the title, since an agent or topic
++      // name is user-authored and a stray `**` there would reach the lock
++      // screen too.
++      title: stripMarkdown(lead || params.title),
 +      url: buildPublicUrl(params.actionUrl),
 +    });
 +
@@ -2529,6 +2689,46 @@ index 0000000000..5a439718f1
 +  if (push?.enabled === false) return false;
 +
 +  return push?.items?.[params.category]?.[params.type] !== false;
++};
+diff --git a/packages/business-server/src/notification/topicMeta.ts b/packages/business-server/src/notification/topicMeta.ts
+new file mode 100644
+index 0000000000..99842a1b34
+--- /dev/null
++++ b/packages/business-server/src/notification/topicMeta.ts
+@@ -0,0 +1,34 @@
++import { TopicModel } from '@/database/models/topic';
++import type { LobeChatDatabase } from '@/database/type';
++
++import { bracketLabel } from './format';
++
++/**
++ * The conversation a push is about, as a `[title]` lead for its title.
++ *
++ * The inbox row deep-links into the conversation, so a reader who opens it
++ * learns which one it was — a lock screen has no such second step. Without the
++ * topic, a failed run from an agent the user talks to in ten conversations
++ * looks like every other one, and the only way to find out is to tap through.
++ *
++ * Only the topics this user can see resolve: `TopicModel` scopes by owner (and
++ * by workspace when one is in scope), so a topic id off a run payload cannot
++ * name somebody else's conversation back to this phone.
++ */
++export const resolveTopicPushLabel = async (
++  db: LobeChatDatabase,
++  userId: string,
++  topicId?: string,
++  workspaceId?: string | null,
++): Promise<string | undefined> => {
++  if (!topicId) return undefined;
++
++  try {
++    const topic = await new TopicModel(db, userId, workspaceId ?? undefined).findById(topicId);
++
++    return bracketLabel(topic?.title);
++  } catch {
++    // A push that cannot name the conversation still says why it rang.
++    return undefined;
++  }
 +};
 diff --git a/packages/business-server/src/task/notifyScheduledTaskResult.ts b/packages/business-server/src/task/notifyScheduledTaskResult.ts
 index 5d0edba576..a3fe333d8c 100644

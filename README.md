@@ -14,6 +14,7 @@ The upstream image needs a small patch set for iOS viewport behavior, input zoom
 - Local features:
   - `bark-push-notification`: fill in the OSS notification slots so a self-hosted deployment writes inbox rows and pushes to iOS through Bark. Configure the device with `BARK_KEY` (and `BARK_SERVER_URL` for a self-hosted relay); how a notification presents itself is decided per scenario in code, not by the deployment:
     - the agent's avatar becomes the notification icon and its name the collapse group, so one agent's pushes stack together
+    - a failed run leads with the conversation that broke (`[topic] agent`) — without it every failure from a busy agent looks alike on a lock screen
     - a parked human approval arrives as `critical` and keeps ringing, a failed scheduled tick as `timeSensitive`, a fuse-stopped task as `critical`, and a finished generation as `passive`
     - set `BARK_USER_ID` unless the instance really is single-user — without it every account's notifications land on the configured phone
 - Upstream PRs:
