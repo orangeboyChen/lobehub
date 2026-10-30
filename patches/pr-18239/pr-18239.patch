@@ -1,11 +1,52 @@
 diff --git a/packages/database/src/models/__tests__/session.test.ts b/packages/database/src/models/__tests__/session.test.ts
-index f1ef42b6a6..a9cb5ee87b 100644
+index 96e22407e09be8eaab28f2065709dc4382b4cb97..6ac0832a31c25ba43aca1d0d023e402b9dd5c7f1 100644
 --- a/packages/database/src/models/__tests__/session.test.ts
 +++ b/packages/database/src/models/__tests__/session.test.ts
-@@ -115,6 +115,24 @@ describe('SessionModel', () => {
-       expect(result.sessionGroups).toHaveLength(0);
+@@ -72,6 +72,141 @@ describe('SessionModel', () => {
      });
- 
+   });
+
++  describe('queryWithGroups', () => {
++    it('should return sessions grouped by group', async () => {
++      // Create test data
++      await serverDB.transaction(async (trx) => {
++        await trx.insert(users).values([{ id: '456' }]);
++        await trx.insert(sessionGroups).values([
++          { userId, name: 'Group 1', id: 'group1' },
++          { userId, name: 'Group 2', id: 'group2' },
++        ]);
++        await trx.insert(sessions).values([
++          { id: '1', userId, groupId: 'group1' },
++          { id: '2', userId, groupId: 'group1' },
++          { id: '23', userId, groupId: 'group1', pinned: true },
++          { id: '3', userId, groupId: 'group2' },
++          { id: '4', userId },
++          { id: '5', userId, pinned: true },
++          { id: '7', userId: '456' },
++        ]);
++      });
++
++      // Call the queryWithGroups method
++      const result = await sessionModel.queryWithGroups();
++
++      // Assert results
++      expect(result.sessions).toHaveLength(6);
++      expect(result.sessionGroups).toHaveLength(2);
++      expect(result.sessionGroups[0].id).toBe('group1');
++      expect(result.sessionGroups[0].name).toBe('Group 1');
++
++      expect(result.sessionGroups[1].id).toBe('group2');
++    });
++
++    it('should return empty groups if no sessions', async () => {
++      // Call the queryWithGroups method
++      const result = await sessionModel.queryWithGroups();
++
++      // Assert results
++      expect(result.sessions).toHaveLength(0);
++      expect(result.sessionGroups).toHaveLength(0);
++    });
++
 +    it('should include non-virtual agents without a linked session', async () => {
 +      await serverDB.insert(agents).values([
 +        { id: 'orphan-agent', title: 'Orphan Agent', userId, model: 'gpt-4' },
@@ -24,26 +65,104 @@ index f1ef42b6a6..a9cb5ee87b 100644
 +      });
 +    });
 +
-     it('should map group sessions with members correctly', async () => {
-       // Create a group session with multiple agents
-       await serverDB.transaction(async (trx) => {
++    it('should map group sessions with members correctly', async () => {
++      // Create a group session with multiple agents
++      await serverDB.transaction(async (trx) => {
++        // Create a group session
++        await trx.insert(sessions).values({
++          id: 'group-session-1',
++          userId,
++          type: 'group',
++          title: 'Test Group',
++          description: 'A test group session',
++          avatar: 'group-avatar',
++          backgroundColor: 'blue',
++        });
++
++        // Create agents
++        await trx.insert(agents).values([
++          { id: 'agent-1', userId, title: 'Agent 1', model: 'gpt-4' },
++          { id: 'agent-2', userId, title: 'Agent 2', model: 'gpt-3.5-turbo' },
++          { id: 'agent-3', userId, title: 'Agent 3', model: 'claude-2' },
++        ]);
++
++        // Link agents to the group session
++        await trx.insert(agentsToSessions).values([
++          { sessionId: 'group-session-1', agentId: 'agent-1', userId },
++          { sessionId: 'group-session-1', agentId: 'agent-2', userId },
++          { sessionId: 'group-session-1', agentId: 'agent-3', userId },
++        ]);
++      });
++
++      const result = await sessionModel.queryWithGroups();
++
++      // Verify group session mapping
++      expect(result.sessions).toHaveLength(1);
++      const groupSession = result.sessions[0] as any;
++
++      expect(groupSession.type).toBe('group');
++      expect(groupSession.meta).toEqual({
++        avatar: 'group-avatar',
++        backgroundColor: 'blue',
++        description: 'A test group session',
++        tags: undefined,
++        title: 'Test Group',
++      });
++
++      // Verify members are mapped correctly
++      expect(groupSession.members).toHaveLength(3);
++      expect(groupSession.members[0]).toMatchObject({
++        agentId: 'agent-1',
++        chatGroupId: 'group-session-1',
++        enabled: true,
++        order: 0,
++        role: 'participant',
++        title: 'Agent 1',
++        model: 'gpt-4',
++      });
++      expect(groupSession.members[1]).toMatchObject({
++        agentId: 'agent-2',
++        chatGroupId: 'group-session-1',
++        enabled: true,
++        order: 1,
++        role: 'participant',
++        title: 'Agent 2',
++        model: 'gpt-3.5-turbo',
++      });
++      expect(groupSession.members[2]).toMatchObject({
++        agentId: 'agent-3',
++        chatGroupId: 'group-session-1',
++        enabled: true,
++        order: 2,
++        role: 'participant',
++        title: 'Agent 3',
++        model: 'claude-2',
++      });
++    });
++  });
++
+   describe('findById', () => {
+     it('should find session by ID', async () => {
+       await serverDB.insert(sessions).values([
 diff --git a/packages/database/src/models/session.ts b/packages/database/src/models/session.ts
-index 0d912bfb0b..cc37966929 100644
+index 3098f4a21253e713726f47ed562785ff2a98d608..a89f8a01296a0c566963f2ea96a1c5ff95ccea83 100644
 --- a/packages/database/src/models/session.ts
 +++ b/packages/database/src/models/session.ts
-@@ -83,7 +83,7 @@ export class SessionModel {
+@@ -128,6 +128,111 @@ export class SessionModel {
+     return Array.from(groupedResults.values());
    };
- 
-   queryWithGroups = async (): Promise<ChatSessionList> => {
--    // Query all sessions
+
++  queryWithGroups = async (): Promise<ChatSessionList> => {
 +    // Query all sessions (each session is joined with its agent)
-     const result = await this.query();
- 
-     const groups = await this.db.query.sessionGroups.findMany({
-@@ -93,12 +93,86 @@ export class SessionModel {
- 
-     const mappedSessions = result.map((item) => this.mapSessionItem(item as any));
- 
++    const result = await this.query();
++
++    const groups = await this.db.query.sessionGroups.findMany({
++      orderBy: [asc(sessionGroups.sort), desc(sessionGroups.createdAt)],
++      where: and(this.ownership()),
++    });
++
++    const mappedSessions = result.map((item) => this.mapSessionItem(item as any));
++
 +    // Backfill: agents that have no session attached are invisible to mobile/SPA
 +    // because the query above is `from(sessions)`. Wrap them as virtual session
 +    // items so the sidebar shows the same set of agents as desktop's
@@ -59,13 +178,12 @@ index 0d912bfb0b..cc37966929 100644
 +        new Date((b as any).updatedAt).getTime() - new Date((a as any).updatedAt).getTime(),
 +    );
 +
-     return {
-       sessionGroups: groups as unknown as ChatSessionList['sessionGroups'],
--      sessions: mappedSessions,
++    return {
++      sessionGroups: groups as unknown as ChatSessionList['sessionGroups'],
 +      sessions: allSessions,
-     };
-   };
- 
++    };
++  };
++
 +  /**
 +   * Find agents owned by current user/workspace that are NOT linked to any
 +   * session via `agentsToSessions`. Used to backfill the mobile sidebar so
@@ -125,34 +243,183 @@ index 0d912bfb0b..cc37966929 100644
 +    } as unknown as LobeAgentSession;
 +  };
 +
-   queryByKeyword = async (keyword: string) => {
-     if (!keyword) return [];
- 
-@@ -106,7 +180,11 @@ export class SessionModel {
- 
-     const data = await this.findSessionsByKeywords({ keyword: keywordLowerCase });
- 
--    return data.map((item) => this.mapSessionItem(item as any));
++  queryByKeyword = async (keyword: string) => {
++    if (!keyword) return [];
++
++    const keywordLowerCase = keyword.toLowerCase();
++
++    const data = await this.findSessionsByKeywords({ keyword: keywordLowerCase });
++
 +    return data.map((item) =>
 +      (item as LobeAgentSession).isVirtualSession
 +        ? (item as LobeAgentSession)
 +        : this.mapSessionItem(item as any),
 +    );
-   };
- 
++  };
++
    findByIdOrSlug = async (
-@@ -621,14 +699,14 @@ export class SessionModel {
-       });
- 
-       // Filter and map results, ensuring valid session associations
--      return results
--        .filter((item) => item.agentsToSessions && item.agentsToSessions.length > 0)
--        .map(
--          (item) =>
--            (item.agentsToSessions as Array<{ session: SessionItem | null | undefined }>)[0]
--              ?.session,
--        )
--        .filter((session) => session !== null && session !== undefined);
+     idOrSlug: string,
+   ): Promise<(SessionItem & { agent: AgentItem }) | undefined> => {
+@@ -471,4 +576,173 @@ export class SessionModel {
+       .where(and(eq(sessions.id, id), this.ownership()))
+       .returning();
+   };
++
++  updateConfig = async (sessionId: string, data: PartialDeep<AgentItem> | undefined | null) => {
++    if (!data || Object.keys(data).length === 0) return;
++
++    const session = await this.findByIdOrSlug(sessionId);
++    if (!session) return;
++
++    if (!session.agent) {
++      throw new Error(
++        'this session is not assign with agent, please contact with admin to fix this issue.',
++      );
++    }
++
++    // First process the params field: undefined means delete, null means disable flag
++    const existingParams = session.agent.params ?? {};
++    const updatedParams: Record<string, any> = { ...existingParams };
++
++    if (data.params) {
++      const incomingParams = data.params as Record<string, any>;
++      Object.keys(incomingParams).forEach((key) => {
++        const incomingValue = incomingParams[key];
++
++        // undefined means explicitly delete this field
++        if (incomingValue === undefined) {
++          delete updatedParams[key];
++          return;
++        }
++
++        // All other values (including null) are directly overwritten, null means disable this param on the frontend
++        updatedParams[key] = incomingValue;
++      });
++    }
++
++    // Build data to be merged, excluding params (processed separately)
++
++    const { params: _params, ...restData } = data;
++    const mergedValue = merge(session.agent, restData);
++
++    // Apply the processed parameters
++    mergedValue.params = Object.keys(updatedParams).length > 0 ? updatedParams : undefined;
++
++    // Final cleanup: ensure no undefined or null values enter the database
++    if (mergedValue.params) {
++      const params = mergedValue.params as Record<string, any>;
++      Object.keys(params).forEach((key) => {
++        if (params[key] === undefined) {
++          delete params[key];
++        }
++      });
++      if (Object.keys(params).length === 0) {
++        mergedValue.params = undefined;
++      }
++    }
++
++    return this.db
++      .update(agents)
++      .set(mergedValue)
++      .where(and(eq(agents.id, session.agent.id), this.agentsOwnership()));
++  };
++
++  // **************** Helper *************** //
++
++  private genId = () => idGenerator('sessions');
++
++  private mapSessionItem = ({
++    agentsToSessions,
++    title,
++    backgroundColor,
++    description,
++    avatar,
++    groupId,
++    type,
++    ...res
++  }: SessionItem & { agentsToSessions?: { agent: AgentItem }[] }):
++    LobeAgentSession | LobeGroupSession => {
++    const meta = {
++      avatar: avatar ?? undefined,
++      backgroundColor: backgroundColor ?? undefined,
++      description: description ?? undefined,
++      tags: undefined,
++      title: title ?? undefined,
++    };
++
++    if (type === 'group') {
++      // For group sessions, return without agent-specific fields
++      // Transform agentsToSessions to include both relationship and agent data
++      const members =
++        agentsToSessions?.map((item, index) => {
++          const member = {
++            // Start with agent properties for compatibility
++            ...item.agent,
++            // Override with ChatGroupAgentItem properties
++            agentId: item.agent.id,
++            chatGroupId: res.id,
++            enabled: true,
++            order: index,
++            role: 'participant',
++            // Keep agent timestamps for now (could be overridden if needed)
++          };
++          return member;
++        }) || [];
++
++      return {
++        ...res,
++        group: groupId,
++        members,
++        meta,
++        type: 'group',
++      } as LobeGroupSession;
++    }
++
++    // For agent sessions, include agent-specific fields
++    // TODO: Need a better implementation in the future, currently only taking the first one
++    const agent = agentsToSessions?.[0]?.agent;
++    return {
++      ...res,
++      config: agent ? (agent as any) : { model: '', plugins: [] }, // Ensure config exists for agent sessions
++      group: groupId,
++      meta: {
++        avatar: agent?.avatar ?? avatar ?? undefined,
++        backgroundColor: agent?.backgroundColor ?? backgroundColor ?? undefined,
++        description: agent?.description ?? description ?? undefined,
++
++        marketIdentifier: agent?.marketIdentifier ?? undefined,
++        tags: agent?.tags ?? undefined,
++        title: agent?.title ?? title ?? undefined,
++      },
++      model: agent?.model || '',
++      type: 'agent',
++    } as LobeAgentSession;
++  };
++
++  findSessionsByKeywords = async (params: {
++    current?: number;
++    keyword: string;
++    pageSize?: number;
++  }) => {
++    const { keyword, pageSize = 9999, current = 0 } = params;
++    const offset = current * pageSize;
++
++    try {
++      const bm25Query = sanitizeBm25Query(keyword);
++
++      const results = await this.db.query.agents.findMany({
++        limit: pageSize,
++        offset,
++        // Keep deterministic ordering for keyword search results
++        orderBy: [asc(agents.id)],
++        where: and(
++          this.agentsOwnership(),
++          sql`(${agents.title} @@@ ${bm25Query} OR ${agents.description} @@@ ${bm25Query})`,
++        ),
++        with: { agentsToSessions: { columns: {}, with: { session: true } } },
++      });
++
++      // Filter and map results, ensuring valid session associations
 +      return results.flatMap((item) => {
 +        const linkedSession =
 +          (item.agentsToSessions as Array<{ session?: SessionItem | null }> | undefined)?.[0]
@@ -161,11 +428,14 @@ index 0d912bfb0b..cc37966929 100644
 +        if (item.virtual) return [];
 +        return [this.buildVirtualSessionForAgent(item as AgentItem)];
 +      });
-     } catch (e) {
-       console.error('findSessionsByKeywords error:', e, { keyword });
-       return [];
++    } catch (e) {
++      console.error('findSessionsByKeywords error:', e, { keyword });
++      return [];
++    }
++  };
+ }
 diff --git a/packages/types/src/session/agentSession.ts b/packages/types/src/session/agentSession.ts
-index a7cbe1a1c1..b9792e1d92 100644
+index a7cbe1a1c1e150a6cf5293d65923c6eaf250c6d4..b9792e1d923ab21495778eb9116f99f024daafdb 100644
 --- a/packages/types/src/session/agentSession.ts
 +++ b/packages/types/src/session/agentSession.ts
 @@ -25,6 +25,8 @@ export interface LobeAgentSession {
@@ -178,39 +448,97 @@ index a7cbe1a1c1..b9792e1d92 100644
    marketIdentifier?: string;
    meta: MetaData;
 diff --git a/src/features/MobileHome/SessionListContent/List/Item/Actions.tsx b/src/features/MobileHome/SessionListContent/List/Item/Actions.tsx
-index 5a1ebce963..891aa1a10c 100644
 --- a/src/features/MobileHome/SessionListContent/List/Item/Actions.tsx
 +++ b/src/features/MobileHome/SessionListContent/List/Item/Actions.tsx
-@@ -29,7 +29,7 @@ import { isForbiddenError, isOwnerOnlyForbiddenError } from '@/utils/forbiddenEr
- interface ActionProps {
-   group: string | undefined;
-   id: string;
--  openCreateGroupModal: () => void;
+@@ -1,189 +1,253 @@
+-import { type SidebarAgentItem } from '@lobechat/types';
+-import { type DropdownItem, Icon, toast } from '@lobehub/ui';
+-import { ActionIcon, confirmModal, DropdownMenu } from '@lobehub/ui';
+-import { Check, Copy, ListTree, MoreVertical, Pin, PinOff, Plus, Trash } from 'lucide-react';
+-import { useState } from 'react';
++import { ActionIcon, confirmModal, DropdownMenu, Icon, toast } from '@lobehub/ui';
++import { type ItemType } from 'antd/es/menu/interface';
++import isEqual from 'fast-deep-equal';
++import {
++  Check,
++  ExternalLink,
++  ListTree,
++  LucideCopy,
++  LucidePlus,
++  MoreVertical,
++  Pin,
++  PinOff,
++  Trash,
++} from 'lucide-react';
++import { memo, useMemo } from 'react';
+ import { useTranslation } from 'react-i18next';
+
+-import { useResourceAccess } from '@/features/ResourcePermission/useResourceAccess';
+-import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
++import { isDesktop } from '@/const/index';
+ import { usePermission } from '@/hooks/usePermission';
+-import { useResourceManageable } from '@/hooks/useResourceManageable';
+-import { chatGroupService } from '@/services/chatGroup';
++import { useGlobalStore } from '@/store/global';
+ import { useHomeStore } from '@/store/home';
+-import { homeAgentListSelectors } from '@/store/home/selectors';
+-import { getDeleteErrorMessageKey } from '@/utils/forbiddenError';
+-
+-import { openCreateGroupModal } from '../../Modals/CreateGroupModal';
+-
+-const Actions = ({
+-  item,
+-  groupId,
+-  setOpen,
+-}: {
+-  item: SidebarAgentItem;
+-  groupId?: string | null;
++import { useSessionStore } from '@/store/session';
++import { sessionHelpers } from '@/store/session/helpers';
++import { sessionGroupSelectors, sessionSelectors } from '@/store/session/selectors';
++import { SessionDefaultGroup } from '@/types/index';
++import { isForbiddenError, isOwnerOnlyForbiddenError } from '@/utils/forbiddenError';
++
++interface ActionProps {
++  group: string | undefined;
++  id: string;
 +  openCreateGroupModal: (isVirtualAgent: boolean) => void;
-   parentType: 'agent' | 'group';
++  parentType: 'agent' | 'group';
    setOpen: (open: boolean) => void;
- }
-@@ -42,10 +42,11 @@ const Actions = memo<ActionProps>(({ group, id, openCreateGroupModal, parentType
-   const openAgentInNewWindow = useGlobalStore((s) => s.openAgentInNewWindow);
- 
-   const sessionCustomGroups = useSessionStore(sessionGroupSelectors.sessionGroupItems, isEqual);
--  const [pin, removeSession, pinSession, sessionType, duplicateSession, updateSessionGroup] =
+-}) => {
+-  const navigate = useWorkspaceAwareNavigate();
+-  const { t } = useTranslation(['chat', 'common']);
++}
++
++const Actions = memo<ActionProps>(({ group, id, openCreateGroupModal, parentType, setOpen }) => {
++  const { t } = useTranslation('chat');
+   const { allowed: canCreate, reason: createReason } = usePermission('create_content');
+   const { allowed: canEdit, reason: editReason } = usePermission('edit_own_content');
+-  const access = useResourceAccess(item.type === 'group' ? 'agentGroup' : 'agent', item.id);
+-  const manageable = useResourceManageable(item.userId);
+-  const editable = canEdit && access.isAccessResolved && access.canEditResource;
+-  const groups = useHomeStore(
+-    item.visibility === 'private'
+-      ? homeAgentListSelectors.privateAgentGroups
+-      : homeAgentListSelectors.agentGroups,
++
++  const openAgentInNewWindow = useGlobalStore((s) => s.openAgentInNewWindow);
++
++  const sessionCustomGroups = useSessionStore(sessionGroupSelectors.sessionGroupItems, isEqual);
 +  const [session, pin, removeSession, pinSession, sessionType, duplicateSession, updateSessionGroup] =
-     useSessionStore((s) => {
-       const session = sessionSelectors.getSessionById(id)(s);
-       return [
++    useSessionStore((s) => {
++      const session = sessionSelectors.getSessionById(id)(s);
++      return [
 +        session,
-         sessionHelpers.getSessionPinned(session),
-         s.removeSession,
-         s.pinSession,
-@@ -55,10 +56,17 @@ const Actions = memo<ActionProps>(({ group, id, openCreateGroupModal, parentType
-       ];
-     });
- 
--  const [pinAgentGroup, removeAgentGroup] = useHomeStore((s) => [
--    s.pinAgentGroup,
--    s.removeAgentGroup,
--  ]);
++        sessionHelpers.getSessionPinned(session),
++        s.removeSession,
++        s.pinSession,
++        session.type,
++        s.duplicateSession,
++        s.updateSessionGroupId,
++      ];
++    });
++
 +  const [pinAgentGroup, removeAgentGroup, pinAgent, duplicateAgent, removeAgent, updateAgentGroup] =
 +    useHomeStore((s) => [
 +      s.pinAgentGroup,
@@ -222,146 +550,482 @@ index 5a1ebce963..891aa1a10c 100644
 +    ]);
 +
 +  const isVirtualAgent = sessionType === 'agent' && (session as any)?.isVirtualSession === true;
- 
-   const isDefault = group === SessionDefaultGroup.Default;
- 
-@@ -77,7 +85,7 @@ const Actions = memo<ActionProps>(({ group, id, openCreateGroupModal, parentType
-               if (parentType === 'group') {
-                 pinAgentGroup(id, !pin);
-               } else {
--                pinSession(id, !pin);
++
++  const isDefault = group === SessionDefaultGroup.Default;
++
++  const items = useMemo(
++    () =>
++      (
++        [
++          {
++            disabled: !canEdit,
++            icon: <Icon icon={pin ? PinOff : Pin} />,
++            key: 'pin',
++            label: t(pin ? 'pinOff' : 'pin'),
++            title: editReason,
++            onClick: () => {
++              if (!canEdit) return;
++              if (parentType === 'group') {
++                pinAgentGroup(id, !pin);
++              } else {
 +                isVirtualAgent ? pinAgent(id, !pin) : pinSession(id, !pin);
-               }
-             },
-           },
-@@ -91,7 +99,7 @@ const Actions = memo<ActionProps>(({ group, id, openCreateGroupModal, parentType
-               domEvent.stopPropagation();
-               if (!canCreate) return;
- 
--              duplicateSession(id);
++              }
++            },
++          },
++          {
++            disabled: !canCreate,
++            icon: <Icon icon={LucideCopy} />,
++            key: 'duplicate',
++            label: t('duplicate', { ns: 'common' }),
++            title: createReason,
++            onClick: ({ domEvent }) => {
++              domEvent.stopPropagation();
++              if (!canCreate) return;
++
 +              isVirtualAgent ? duplicateAgent(id) : duplicateSession(id);
-             },
-           },
-           ...(isDesktop
-@@ -120,7 +128,7 @@ const Actions = memo<ActionProps>(({ group, id, openCreateGroupModal, parentType
-                 title: editReason,
-                 onClick: () => {
-                   if (!canEdit) return;
--                  updateSessionGroup(id, groupId);
++            },
++          },
++          ...(isDesktop
++            ? [
++                {
++                  icon: <Icon icon={ExternalLink} />,
++                  key: 'openInNewWindow',
++                  label: t('openInNewWindow'),
++                  onClick: ({ domEvent }: { domEvent: Event }) => {
++                    domEvent.stopPropagation();
++                    openAgentInNewWindow(id);
++                  },
++                },
++              ]
++            : []),
++          {
++            type: 'divider',
++          },
++          {
++            children: [
++              ...sessionCustomGroups.map(({ id: groupId, name }) => ({
++                disabled: !canEdit,
++                icon: group === groupId ? <Icon icon={Check} /> : <div />,
++                key: groupId,
++                label: name,
++                title: editReason,
++                onClick: () => {
++                  if (!canEdit) return;
 +                  isVirtualAgent ? updateAgentGroup(id, groupId) : updateSessionGroup(id, groupId);
-                 },
-               })),
-               {
-@@ -131,7 +139,9 @@ const Actions = memo<ActionProps>(({ group, id, openCreateGroupModal, parentType
-                 title: editReason,
-                 onClick: () => {
-                   if (!canEdit) return;
--                  updateSessionGroup(id, SessionDefaultGroup.Default);
++                },
++              })),
++              {
++                disabled: !canEdit,
++                icon: isDefault ? <Icon icon={Check} /> : <div />,
++                key: 'defaultList',
++                label: t('defaultList'),
++                title: editReason,
++                onClick: () => {
++                  if (!canEdit) return;
 +                  isVirtualAgent
 +                    ? updateAgentGroup(id, SessionDefaultGroup.Default)
 +                    : updateSessionGroup(id, SessionDefaultGroup.Default);
-                 },
-               },
-               {
-@@ -146,7 +156,7 @@ const Actions = memo<ActionProps>(({ group, id, openCreateGroupModal, parentType
-                 onClick: ({ domEvent }) => {
-                   domEvent.stopPropagation();
-                   if (!canCreate) return;
--                  openCreateGroupModal();
++                },
++              },
++              {
++                type: 'divider',
++              },
++              {
++                disabled: !canCreate,
++                icon: <Icon icon={LucidePlus} />,
++                key: 'createGroup',
++                label: <div>{t('sessionGroup.createGroup')}</div>,
++                title: createReason,
++                onClick: ({ domEvent }) => {
++                  domEvent.stopPropagation();
++                  if (!canCreate) return;
 +                  openCreateGroupModal(isVirtualAgent);
-                 },
-               },
-             ],
-@@ -177,7 +187,7 @@ const Actions = memo<ActionProps>(({ group, id, openCreateGroupModal, parentType
-                       await removeAgentGroup(id);
-                       toast.success(t('confirmRemoveGroupSuccess'));
-                     } else {
--                      await removeSession(id);
++                },
++              },
++            ],
++            disabled: !canEdit,
++            icon: <Icon icon={ListTree} />,
++            key: 'moveGroup',
++            label: t('sessionGroup.moveGroup'),
++            title: editReason,
++          },
++          {
++            type: 'divider',
++          },
++          {
++            danger: true,
++            disabled: !canEdit,
++            icon: <Icon icon={Trash} />,
++            key: 'delete',
++            label: t('delete', { ns: 'common' }),
++            title: editReason,
++            onClick: ({ domEvent }) => {
++              domEvent.stopPropagation();
++              if (!canEdit) return;
++              confirmModal({
++                okButtonProps: { danger: true },
++                onOk: async () => {
++                  try {
++                    if (parentType === 'group') {
++                      await removeAgentGroup(id);
++                      toast.success(t('confirmRemoveGroupSuccess'));
++                    } else {
 +                      await (isVirtualAgent ? removeAgent(id) : removeSession(id));
-                       toast.success(t('confirmRemoveSessionSuccess'));
-                     }
-                   } catch (error) {
-@@ -220,6 +230,11 @@ const Actions = memo<ActionProps>(({ group, id, openCreateGroupModal, parentType
-       sessionType,
-       t,
-       updateSessionGroup,
++                      toast.success(t('confirmRemoveSessionSuccess'));
++                    }
++                  } catch (error) {
++                    toast.error(
++                      isOwnerOnlyForbiddenError(error)
++                        ? t('deleteSharedOwnerOnly', { ns: 'common' })
++                        : isForbiddenError(error)
++                          ? t('manageOnlyCreator', { ns: 'common' })
++                          : t('operationFailed', { ns: 'common' }),
++                    );
++                  }
++                },
++                title:
++                  sessionType === 'group'
++                    ? t('confirmRemoveChatGroupItemAlert')
++                    : t('confirmRemoveSessionItemAlert'),
++              });
++            },
++          },
++        ] as ItemType[]
++      ).filter(Boolean),
++    [
++      canCreate,
++      canEdit,
++      createReason,
++      duplicateSession,
++      editReason,
++      group,
++      id,
++      isDefault,
++      openAgentInNewWindow,
++      openCreateGroupModal,
++      parentType,
++      pin,
++      pinAgentGroup,
++      pinSession,
++      removeAgentGroup,
++      removeSession,
++      sessionCustomGroups,
++      sessionType,
++      t,
++      updateSessionGroup,
 +      isVirtualAgent,
 +      pinAgent,
 +      duplicateAgent,
 +      removeAgent,
 +      updateAgentGroup,
-     ],
++    ],
    );
- 
+-  const [
+-    pinAgent,
+-    pinAgentGroup,
+-    duplicateAgent,
+-    duplicateAgentGroup,
+-    removeAgent,
+-    removeAgentGroup,
+-    updateAgentGroup,
+-    refreshAgentList,
+-  ] = useHomeStore((s) => [
+-    s.pinAgent,
+-    s.pinAgentGroup,
+-    s.duplicateAgent,
+-    s.duplicateAgentGroup,
+-    s.removeAgent,
+-    s.removeAgentGroup,
+-    s.updateAgentGroup,
+-    s.refreshAgentList,
+-  ]);
+-  const [loading, setLoading] = useState(false);
+-  const run = async (action: () => Promise<void>) => {
+-    if (loading) return;
+-    setLoading(true);
+-    try {
+-      await action();
+-    } finally {
+-      setLoading(false);
+-    }
+-  };
+-  const move = (target: string | null) =>
+-    run(async () => {
+-      if (item.type === 'group') {
+-        await chatGroupService.updateGroup(item.id, { groupId: target });
+-        await refreshAgentList();
+-      } else await updateAgentGroup(item.id, target);
+-    });
+-  const items: DropdownItem[] = [
+-    {
+-      key: 'pin',
+-      title: editReason,
+-      disabled: !editable,
+-      icon: <Icon icon={item.pinned ? PinOff : Pin} />,
+-      label: t(item.pinned ? 'pinOff' : 'pin'),
+-      onClick: () =>
+-        run(() => (item.type === 'group' ? pinAgentGroup : pinAgent)(item.id, !item.pinned)),
+-    },
+-    {
+-      key: 'duplicate',
+-      title: createReason,
+-      disabled:
+-        !canCreate ||
+-        !access.isAccessResolved ||
+-        !(item.type === 'group' ? access.canEditResource : access.canUseResource),
+-      icon: <Icon icon={Copy} />,
+-      label: t('duplicate', { ns: 'common' }),
+-      onClick: () =>
+-        run(async () => {
+-          const id = await (item.type === 'group' ? duplicateAgentGroup : duplicateAgent)(item.id);
+-          if (id) navigate(`/${item.type === 'group' ? 'group' : 'agent'}/${id}`);
+-        }),
+-    },
+-    { type: 'divider' },
+-    {
+-      key: 'moveGroup',
+-      title: editReason,
+-      disabled: !editable,
+-      icon: <Icon icon={ListTree} />,
+-      label: t('sessionGroup.moveGroup'),
+-      children: [
+-        ...groups.map((group) => ({
+-          key: group.id,
+-          icon: group.id === groupId ? <Icon icon={Check} /> : undefined,
+-          label: group.name,
+-          onClick: () => move(group.id),
+-        })),
+-        {
+-          key: 'default',
+-          icon: groupId === null ? <Icon icon={Check} /> : undefined,
+-          label: t('defaultList'),
+-          onClick: () => move(null),
+-        },
+-        { type: 'divider' },
+-        {
+-          key: 'createGroup',
+-          title: createReason,
+-          disabled: !canCreate,
+-          icon: <Icon icon={Plus} />,
+-          label: t('sessionGroup.createGroup'),
+-          onClick: () => openCreateGroupModal(item.id, item.type, item.visibility),
+-        },
+-      ],
+-    },
+-    { type: 'divider' },
+-    {
+-      key: 'delete',
+-      title: editReason,
+-      danger: true,
+-      disabled: !editable || !manageable || !access.canManageResource,
+-      icon: <Icon icon={Trash} />,
+-      label: t('delete', { ns: 'common' }),
+-      onClick: () =>
+-        confirmModal({
+-          title: t('delete', { ns: 'common' }),
+-          content: t(
+-            item.type === 'group'
+-              ? 'confirmRemoveChatGroupItemAlert'
+-              : 'confirmRemoveSessionItemAlert',
+-          ),
+-          okText: t('delete', { ns: 'common' }),
+-          okButtonProps: { danger: true },
+-          onOk: () =>
+-            run(async () => {
+-              try {
+-                await (item.type === 'group' ? removeAgentGroup : removeAgent)(item.id);
+-                toast.success(
+-                  t(
+-                    item.type === 'group'
+-                      ? 'confirmRemoveGroupSuccess'
+-                      : 'confirmRemoveSessionSuccess',
+-                  ),
+-                );
+-              } catch (error) {
+-                toast.error(t(getDeleteErrorMessageKey(error), { ns: 'common' }));
+-              }
+-            }),
+-        }),
+-    },
+-  ];
++
+   return (
+-    <div
+-      role="presentation"
+-      onClick={(e) => {
+-        if (e.currentTarget.contains(e.target as Node)) {
+-          e.preventDefault();
+-          e.stopPropagation();
+-        }
+-      }}
+-    >
+-      <DropdownMenu items={items} onOpenChange={setOpen}>
+-        <ActionIcon
+-          icon={MoreVertical}
+-          loading={loading}
+-          size={{ blockSize: 28, size: 16 }}
+-          title={t('more', { ns: 'common' })}
+-        />
+-      </DropdownMenu>
+-    </div>
++    <DropdownMenu items={items} onOpenChange={setOpen}>
++      <ActionIcon
++        icon={MoreVertical}
++        size={{
++          blockSize: 28,
++          size: 16,
++        }}
++      />
++    </DropdownMenu>
+   );
+-};
++});
++
+ export default Actions;
 diff --git a/src/features/MobileHome/SessionListContent/List/Item/index.tsx b/src/features/MobileHome/SessionListContent/List/Item/index.tsx
-index 3ad6a3e2e3..a2e36555df 100644
+index 6c97dba96a55333513fc080da9ff9216fac38c38..0fddc8c3cd525e794647b40ee8e65bd617e4614d 100644
 --- a/src/features/MobileHome/SessionListContent/List/Item/index.tsx
 +++ b/src/features/MobileHome/SessionListContent/List/Item/index.tsx
-@@ -78,7 +78,7 @@ const SessionItem = memo<SessionItemProps>(({ id }) => {
-       <Actions
-         group={group}
-         id={id}
--        openCreateGroupModal={() => openCreateGroupModal(id)}
+@@ -16,12 +16,64 @@ import Actions from './Actions';
+ const AgentItem = ({ item, groupId }: { item: SidebarAgentItem; groupId?: string | null }) => {
+   const { t } = useTranslation('chat');
+   const [open, setOpen] = useState(false);
+-  const activeAgentId = useAgentStore((s) => s.activeAgentId);
+-  const activeGroupId = useAgentGroupStore((s) => s.activeGroupId);
+-  const loading = useChatStore(
+-    item.type === 'group'
+-      ? operationSelectors.isGroupVisiblyRunning(item.id)
+-      : operationSelectors.isAgentVisiblyRunning(item.id),
++
++  const openAgentInNewWindow = useGlobalStore((s) => s.openAgentInNewWindow);
++
++  const [active] = useSessionStore((s) => [s.activeId === id]);
++  const [loading] = useChatStore((s) => [
++    operationSelectors.isAgentRuntimeVisiblyRunning(s) && id === s.activeAgentId,
++  ]);
++
++  const [pin, title, avatar, avatarBackground, updateAt, members, model, group, sessionType] =
++    useSessionStore((s) => {
++      const session = sessionSelectors.getSessionById(id)(s);
++      const meta = session.meta;
++
++      return [
++        sessionHelpers.getSessionPinned(session),
++        sessionMetaSelectors.getTitle(meta),
++        sessionMetaSelectors.getAvatar(meta),
++        meta.backgroundColor,
++        session?.updatedAt,
++        (session as LobeGroupSession).members,
++        session.type === 'agent' ? (session as any).model : undefined,
++        session?.group,
++        session.type,
++      ];
++    });
++
++  // Only hide the model tag for the inbox session itself (Lobe AI)
++  const showModel = sessionType === 'agent' && model && id !== INBOX_SESSION_ID;
++
++  const handleDoubleClick = () => {
++    if (isDesktop) {
++      openAgentInNewWindow(id);
++    }
++  };
++
++  const handleDragStart = (e: React.DragEvent) => {
++    // Set drag data to identify the session being dragged
++    e.dataTransfer.setData('text/plain', id);
++  };
++
++  const handleDragEnd = (e: React.DragEvent) => {
++    // If drag ends without being dropped in a valid target, open in new window
++    if (isDesktop && e.dataTransfer.dropEffect === 'none') {
++      openAgentInNewWindow(id);
++    }
++  };
++
++  const actions = useMemo(
++    () => (
++      <Actions
++        group={group}
++        id={id}
 +        openCreateGroupModal={(isVirtualAgent) => openCreateGroupModal(id, isVirtualAgent)}
-         parentType={sessionType}
-         setOpen={setOpen}
-       />
++        parentType={sessionType}
++        setOpen={setOpen}
++      />
++    ),
++    [group, id],
+   );
+   return (
+     <ListItem
 diff --git a/src/features/MobileHome/SessionListContent/Modals/CreateGroupModal.tsx b/src/features/MobileHome/SessionListContent/Modals/CreateGroupModal.tsx
-index 28b021ebd3..f5b3dc058f 100644
+index 11e6c991f4a15b696b1a639cc09239a898939ea1..989aabb762dee50b280d0b72b138be86cf5bf190 100644
 --- a/src/features/MobileHome/SessionListContent/Modals/CreateGroupModal.tsx
 +++ b/src/features/MobileHome/SessionListContent/Modals/CreateGroupModal.tsx
-@@ -6,13 +6,15 @@ import { useTranslation } from 'react-i18next';
- 
- import { usePermission } from '@/hooks/usePermission';
+@@ -15,20 +15,24 @@ import { usePermission } from '@/hooks/usePermission';
+ import { chatGroupService } from '@/services/chatGroup';
  import { useGlobalStore } from '@/store/global';
-+import { useHomeStore } from '@/store/home';
- import { useSessionStore } from '@/store/session';
- 
+ import { useHomeStore } from '@/store/home';
++import { useSessionStore } from '@/store/session';
+
  interface CreateGroupContentProps {
    id: string;
+-  itemType: 'agent' | 'group';
+-  visibility?: 'private' | 'public';
 +  isVirtualAgent?: boolean;
  }
- 
--const CreateGroupContent = memo<CreateGroupContentProps>(({ id }) => {
+
+-const CreateGroupContent = memo<CreateGroupContentProps>(({ id, itemType, visibility }) => {
 +const CreateGroupContent = memo<CreateGroupContentProps>(({ id, isVirtualAgent }) => {
    const { t } = useTranslation(['chat', 'common']);
    const { close } = useModalContext();
    const { allowed: canCreate } = usePermission('create_content');
-@@ -22,6 +24,7 @@ const CreateGroupContent = memo<CreateGroupContentProps>(({ id }) => {
-     s.updateSessionGroupId,
-     s.addSessionGroup,
-   ]);
+
+   const toggleExpandSessionGroup = useGlobalStore((s) => s.toggleExpandSessionGroup);
+-  const [updateAgentGroup, addCustomGroup] = useHomeStore((s) => [s.updateAgentGroup, s.addGroup]);
++  const [updateSessionGroup, addCustomGroup] = useSessionStore((s) => [
++    s.updateSessionGroupId,
++    s.addSessionGroup,
++  ]);
 +  const updateAgentGroup = useHomeStore((s) => s.updateAgentGroup);
- 
+
    const [input, setInput] = useState('');
    const [loading, setLoading] = useState(false);
-@@ -37,7 +40,7 @@ const CreateGroupContent = memo<CreateGroupContentProps>(({ id }) => {
+@@ -43,11 +47,8 @@ const CreateGroupContent = memo<CreateGroupContentProps>(({ id, itemType, visibi
+
      setLoading(true);
      try {
-       const groupId = await addCustomGroup(input);
--      await updateSessionGroup(id, groupId);
+-      const groupId = await addCustomGroup(input, visibility);
+-      if (itemType === 'group') {
+-        await chatGroupService.updateGroup(id, { groupId });
+-        await useHomeStore.getState().refreshAgentList();
+-      } else await updateAgentGroup(id, groupId);
++      const groupId = await addCustomGroup(input);
 +      await (isVirtualAgent ? updateAgentGroup(id, groupId) : updateSessionGroup(id, groupId));
        toggleExpandSessionGroup(groupId, true);
        toast.success(t('sessionGroup.createSuccess'));
        close();
-@@ -70,9 +73,9 @@ const CreateGroupContent = memo<CreateGroupContentProps>(({ id }) => {
- 
+@@ -80,13 +81,9 @@ const CreateGroupContent = memo<CreateGroupContentProps>(({ id, itemType, visibi
+
  CreateGroupContent.displayName = 'MobileCreateGroupContent';
- 
--export const openCreateGroupModal = (id: string) =>
+
+-export const openCreateGroupModal = (
+-  id: string,
+-  itemType: 'agent' | 'group',
+-  visibility?: 'private' | 'public',
+-) =>
 +export const openCreateGroupModal = (id: string, isVirtualAgent?: boolean) =>
    createModal({
--    content: <CreateGroupContent id={id} />,
+-    content: <CreateGroupContent id={id} itemType={itemType} visibility={visibility} />,
 +    content: <CreateGroupContent id={id} isVirtualAgent={isVirtualAgent} />,
      footer: null,
      styles: { content: { padding: 0 } },
      title: translate('sessionGroup.createGroup', { ns: 'chat' }),
 diff --git a/src/store/home/slices/sidebarUI/action.test.ts b/src/store/home/slices/sidebarUI/action.test.ts
-index 3ec091cf14..402a75e31d 100644
+index 58cb15d9b3d84b4d623d1d77acc39ccfab186eb1..a32ba20dc9ca3b084ce6af1871bd0120aa3dee60 100644
 --- a/src/store/home/slices/sidebarUI/action.test.ts
 +++ b/src/store/home/slices/sidebarUI/action.test.ts
 @@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
- 
+
  import { getActiveWorkspaceId } from '@/business/client/hooks/useActiveWorkspaceId';
  import { INBOX_SESSION_ID } from '@/const/session';
 +import { mutate } from '@/libs/swr';
@@ -369,91 +1033,93 @@ index 3ec091cf14..402a75e31d 100644
  import { agentService } from '@/services/agent';
  import { chatGroupService } from '@/services/chatGroup';
  import { homeService } from '@/services/home';
-@@ -58,6 +60,8 @@ afterEach(() => {
+@@ -59,6 +61,8 @@ afterEach(() => {
    vi.restoreAllMocks();
  });
- 
+
 +vi.mock('@/libs/swr', () => ({ mutate: vi.fn() }));
 +
  describe('createSidebarUISlice', () => {
    // ========== Agent Operations ==========
    describe('pinAgent', () => {
-@@ -74,6 +78,7 @@ describe('createSidebarUISlice', () => {
- 
+@@ -75,6 +79,7 @@ describe('createSidebarUISlice', () => {
+
        expect(agentService.updateAgentPinned).toHaveBeenCalledWith(mockAgentId, true);
        expect(spyOnRefresh).toHaveBeenCalled();
 +      expect(mutate).toHaveBeenCalledWith(sessionKeys.list(true));
      });
- 
+
      it('should unpin an agent and refresh agent list', async () => {
-@@ -181,6 +186,7 @@ describe('createSidebarUISlice', () => {
- 
+@@ -182,6 +187,7 @@ describe('createSidebarUISlice', () => {
+
        expect(agentService.removeAgent).toHaveBeenCalledWith(mockAgentId);
        expect(spyOnRefresh).toHaveBeenCalled();
 +      expect(mutate).toHaveBeenCalledWith(sessionKeys.list(true));
      });
- 
+
      it('should switch to inbox when removing the active session', async () => {
 @@ -228,6 +234,7 @@ describe('createSidebarUISlice', () => {
- 
+
        expect(agentService.duplicateAgent).toHaveBeenCalledWith(mockAgentId, 'Copied Agent');
        expect(spyOnRefresh).toHaveBeenCalled();
 +      expect(mutate).toHaveBeenCalledWith(sessionKeys.list(true));
        expect(mockSetActiveAgentId).toHaveBeenCalledWith(mockNewAgentId);
      });
- 
+
 @@ -283,6 +290,7 @@ describe('createSidebarUISlice', () => {
- 
+
        expect(homeService.updateAgentSessionGroupId).toHaveBeenCalledWith(mockAgentId, mockGroupId);
        expect(spyOnRefresh).toHaveBeenCalled();
 +      expect(mutate).toHaveBeenCalledWith(sessionKeys.list(true));
      });
- 
+
      it('should set group to default when groupId is null', async () => {
 diff --git a/src/store/home/slices/sidebarUI/action.ts b/src/store/home/slices/sidebarUI/action.ts
-index aefb3360c6..dcb412c989 100644
+index 03e407545ccaa0423914336333d63082f44adfeb..45f5e59cd0a929d51faa656c642d34d3bcd27ea2 100644
 --- a/src/store/home/slices/sidebarUI/action.ts
 +++ b/src/store/home/slices/sidebarUI/action.ts
 @@ -1,6 +1,8 @@
- import { toast } from '@lobehub/ui/base-ui';
+ import { toast } from '@lobehub/ui';
  import { t } from 'i18next';
- 
+
 +import { mutate } from '@/libs/swr';
 +import { sessionKeys } from '@/libs/swr/keys';
  import { agentService } from '@/services/agent';
  import { chatGroupService } from '@/services/chatGroup';
  import { homeService } from '@/services/home';
-@@ -28,6 +30,10 @@ export class SidebarUIActionImpl {
+@@ -28,7 +30,11 @@ export class SidebarUIActionImpl {
      this.#get = get;
    }
- 
+
+-  duplicateAgent = async (agentId: string, newTitle?: string): Promise<string | undefined> => {
 +  #refreshSidebar = async (): Promise<void> => {
 +    await Promise.all([this.#get().refreshAgentList(), mutate(sessionKeys.list(true))]);
 +  };
 +
-   duplicateAgent = async (agentId: string, newTitle?: string): Promise<void> => {
++  duplicateAgent = async (agentId: string, newTitle?: string): Promise<void> => {
      const loadingToast = toast.loading(t('duplicateSession.loading', { ns: 'chat' }));
- 
+
+     const result = await agentService.duplicateAgent(agentId, newTitle);
 @@ -39,7 +45,7 @@ export class SidebarUIActionImpl {
        return;
      }
- 
+
 -    await this.#get().refreshAgentList();
 +    await this.#refreshSidebar();
      loadingToast.close();
      toast.success(t('duplicateSession.success', { ns: 'chat' }));
- 
-@@ -74,7 +80,7 @@ export class SidebarUIActionImpl {
+
+@@ -76,7 +82,7 @@ export class SidebarUIActionImpl {
    // want an item in their own sidebar hides it instead (personal layer).
    pinAgent = async (agentId: string, pinned: boolean): Promise<void> => {
      await agentService.updateAgentPinned(agentId, pinned);
 -    await this.#get().refreshAgentList();
 +    await this.#refreshSidebar();
    };
- 
+
    pinAgentGroup = async (groupId: string, pinned: boolean): Promise<void> => {
-@@ -84,7 +90,7 @@ export class SidebarUIActionImpl {
- 
+@@ -86,7 +92,7 @@ export class SidebarUIActionImpl {
+
    removeAgent = async (agentId: string): Promise<void> => {
      await agentService.removeAgent(agentId);
 -    await this.#get().refreshAgentList();
@@ -461,12 +1127,35 @@ index aefb3360c6..dcb412c989 100644
      // deleting an agent cascade-deletes its topics + messages on the server; drop
      // their message cache too so it doesn't orphan in IndexedDB (never expires)
      void evictMessageCache((ctx) => ctx.agentId === agentId);
-@@ -114,7 +120,7 @@ export class SidebarUIActionImpl {
+@@ -116,7 +122,7 @@ export class SidebarUIActionImpl {
    updateAgentGroup = async (agentId: string, groupId: string | null): Promise<void> => {
      const normalized = groupId === 'default' ? null : groupId;
      await homeService.updateAgentSessionGroupId(agentId, normalized);
 -    await this.#get().refreshAgentList();
 +    await this.#refreshSidebar();
    };
- 
+
    addGroup = async (name: string, visibility?: 'private' | 'public'): Promise<string> => {
+diff --git a/src/libs/swr/keys.ts b/src/libs/swr/keys.ts
+index 3eb1505..5eb6b8f 100644
+--- a/src/libs/swr/keys.ts
++++ b/src/libs/swr/keys.ts
+@@ -889,0 +890,6 @@ export const onboardingKeys = {
++// ---- session list -------------------------------------------------------
++export const sessionKeys = {
++  list: def('session:list', (isLogin: boolean | undefined) => ['session:list', isLogin]),
++  search: def('session:search', (keyword?: string) => ['session:search', keyword]),
++};
++
+@@ -1014,0 +1021 @@ export const swrKeys = {
++  session: sessionKeys,
+diff --git a/packages/types/src/session/index.ts b/packages/types/src/session/index.ts
+index 04972cf..ca3555a 100644
+--- a/packages/types/src/session/index.ts
++++ b/packages/types/src/session/index.ts
+@@ -5,0 +6,5 @@ export * from './sessionGroup';
++export interface ChatSessionList {
++  sessionGroups: LobeSessionGroups;
++  sessions: LobeSessions;
++}
++

@@ -1,72 +1,8 @@
-diff --git a/src/store/chat/slices/agentRun/actions/__tests__/gatewayEventHandler.test.ts b/src/store/chat/slices/agentRun/actions/__tests__/gatewayEventHandler.test.ts
-index e89eacff2ad8d57bb52d02ae2b3d8f50d3cb934a..f0099dde56c644eda1c1260e8e485d5af9119ceb 100644
---- a/src/store/chat/slices/agentRun/actions/__tests__/gatewayEventHandler.test.ts
-+++ b/src/store/chat/slices/agentRun/actions/__tests__/gatewayEventHandler.test.ts
-@@ -78,7 +78,11 @@ function createMockStore() {
- 
- function createHandler(
-   store: ReturnType<typeof createMockStore>,
--  overrides?: { assistantMessageId?: string; gatewayOperationId?: string },
-+  overrides?: {
-+    assistantMessageId?: string;
-+    gatewayOperationId?: string;
-+    onRunTerminal?: (event: { succeeded: boolean }) => Promise<void>;
-+  },
- ) {
-   const get = vi.fn(() => store) as any;
-   const assistantMessageId = overrides?.assistantMessageId ?? 'msg-initial';
-@@ -88,6 +92,7 @@ function createHandler(
-     context,
-     gatewayOperationId: overrides?.gatewayOperationId,
-     operationId: 'op-1',
-+    onRunTerminal: overrides?.onRunTerminal,
-     // The gateway transport injects the shared run lifecycle (built once per run
-     // in gateway.ts). Build the real one here so the terminal completeRun /
-     // afterRunComplete path under test runs against the mock store.
-@@ -1531,6 +1536,17 @@ describe('createGatewayEventHandler', () => {
-       );
-     });
- 
-+    it('settles the topic on agent_runtime_end without waiting for the Gateway session to close', async () => {
-+      const store = createMockStore();
-+      const onRunTerminal = vi.fn().mockResolvedValue(undefined);
-+      const handler = createHandler(store, { onRunTerminal });
-+
-+      handler(makeEvent('agent_runtime_end'));
-+      await flush();
-+
-+      expect(onRunTerminal).toHaveBeenCalledWith({ succeeded: true });
-+    });
-+
-     it.each(['interrupted', 'waiting_for_async_tool'])(
-       'agent_runtime_end with reason "%s" completes the op but does NOT mark unread (cancel/park)',
-       async (reason) => {
-@@ -1545,6 +1561,17 @@ describe('createGatewayEventHandler', () => {
-       },
-     );
- 
-+    it('settles an error terminal as unsuccessful without waiting for session close', async () => {
-+      const store = createMockStore();
-+      const onRunTerminal = vi.fn().mockResolvedValue(undefined);
-+      const handler = createHandler(store, { onRunTerminal });
-+
-+      handler(makeEvent('error', { message: 'failed' }));
-+      await flush();
-+
-+      expect(onRunTerminal).toHaveBeenCalledWith({ succeeded: false });
-+    });
-+
-     // the agent_runtime_end handler completes the op once via
-     // the shared run lifecycle, and gateway.ts onSessionComplete no longer
-     // double-completes (it only completes as the terminal-missing fallback). The
 diff --git a/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts b/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
-index 4e4fa09f3edeefb51987edbccf97e86c5d3bfb29..8c998ce9c2202a046b984f7119452851de4e1218 100644
+index 302de55..670b72c 100644
 --- a/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
 +++ b/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
-@@ -825,6 +825,13 @@ export class GatewayActionImpl {
-       // the same WS that gatewayConnections is keyed on.
-       gatewayOperationId: result.operationId,
-       operationId: gatewayOpId,
+@@ -1555,0 +1556,7 @@ export class GatewayActionImpl {
 +      onRunTerminal: ({ succeeded }) =>
 +        this.settleTopicOperation({
 +          context: resolvedMessageContext,
@@ -74,22 +10,140 @@ index 4e4fa09f3edeefb51987edbccf97e86c5d3bfb29..8c998ce9c2202a046b984f7119452851
 +          succeeded,
 +          topicId: result.topicId,
 +        }),
-       // Shared run lifecycle: drives the terminal completeRun / afterRunComplete
-       // for the gateway transport (op completion + unread + queue drain +
-       // notification) at `agent_runtime_end` / `error`.
-@@ -1023,6 +1030,8 @@ export class GatewayActionImpl {
-       // the same WS that gatewayConnections is keyed on.
-       gatewayOperationId: operationId,
-       operationId: gatewayOpId,
+@@ -1607,22 +1614,3 @@ export class GatewayActionImpl {
+-
+-        // An external hetero producer does not run on this socket: the CLI
+-        // streams through `heteroIngest` and ends through `heteroFinish`, so no
+-        // transport signal proves it stopped — a terminal resume status (no DO
+-        // session yet), a raw `session_complete` / terminal `status_change` for
+-        // a run still producing, or ONE auth failure fanned out across the mux.
+-        // Settling on those clears `runningOperation`, and the server then
+-        // discards every later batch as stale. Only an in-band terminal for THIS
+-        // op is authoritative; otherwise the server owns the settle, and the
+-        // local row only follows once the server proves the run over. Unknown
+-        // (`undefined`, rolling deploys) is preserved; normal runs send `null`.
+-        if (!terminalReceived && result.heteroType !== null) {
+-          const { agentId, groupId } = resolvedMessageContext;
+-          const { operationId, topicId } = result;
+-          if (topicId && !agentShareId)
+-            this.#retireExternalRow({ agentId, groupId, operationId, topicId });
+-          return;
+-        }
+-
+-        const effectiveSucceeded = isSuccessfulGatewayCompletion({
+-          authFailed,
+-          completion,
++        void this.settleTopicOperation({
++          context: resolvedMessageContext,
++          operationId: result.operationId,
+@@ -1629,0 +1618 @@ export class GatewayActionImpl {
++          topicId: result.topicId,
+@@ -1631,42 +1619,0 @@ export class GatewayActionImpl {
+-
+-        // The supervisor still owns the topic while a member continuation ends.
+-        if (result.topicId && !continuesGroupMember) {
+-          // The server already settled this topic: the runtime's `finish`
+-          // executor settles to 'unread' before it publishes the terminal event
+-          // this callback rides on, so by now the mark is legitimately gone and
+-          // a settle from here would only ever return 'missing'.
+-          //
+-          // What the server could NOT know is whether the user is watching. The
+-          // settle below performs that correction with the completed operation
+-          // id: after the marker is gone, the model only accepts unread → active
+-          // when `lastSettledOperationId` still matches. It also remains the
+-          // backstop when `clearRunningMark` failed and left the marker in place.
+-          const viewing = this.#get().activeTopicId === result.topicId;
+-          // Share visitors cannot settle the creator-owned topic row (the topic
+-          // router is owner-scoped) — the local clear below still runs.
+-          const settle = agentShareId
+-            ? undefined
+-            : topicService.settleRunningOperation(
+-                result.topicId,
+-                result.operationId,
+-                viewing || !effectiveSucceeded ? 'active' : 'unread',
+-              );
+-          // Also clear the local store copy — the server settle above does NOT
+-          // touch the Zustand topic map that useGatewayReconnect (and the sidebar
+-          // spinner) read. Mirror the same 'active' decision passed to the server
+-          // call above; omit it for the unwatched-clean-completion case, which
+-          // `markTopicUnread` owns. Ownership-guarded on its own (see
+-          // clearLocalRunningOperation), so it is safe to call either way.
+-          const settledWithoutMarker = this.clearLocalRunningOperation({
+-            agentId: resolvedMessageContext.agentId,
+-            groupId: resolvedMessageContext.groupId,
+-            operationId: result.operationId,
+-            status: viewing || !effectiveSucceeded ? 'active' : undefined,
+-            topicId: result.topicId,
+-          });
+-          this.#restoreRunningOnSettleConflict(settle, settledWithoutMarker, {
+-            agentId: resolvedMessageContext.agentId,
+-            groupId: resolvedMessageContext.groupId,
+-            topicId: result.topicId,
+-          });
+-        }
+@@ -1937,0 +1885,2 @@ export class GatewayActionImpl {
 +      onRunTerminal: ({ succeeded }) =>
 +        this.settleTopicOperation({ context, operationId, succeeded, topicId }),
-       runLifecycle: buildRunLifecycle(this.#get, {
-         context,
-         parentMessageId: assistantMessageId,
-@@ -1124,6 +1133,46 @@ export class GatewayActionImpl {
-     });
-   };
- 
+@@ -1989,5 +1938,4 @@ export class GatewayActionImpl {
+-        const effectiveSucceeded = isSuccessfulGatewayCompletion({
+-          authFailed,
+-          completion,
+-          succeeded,
+-        });
++        // The run lifecycle already completed the op when a terminal event
++        // arrived; an auth failure carries no such event, so finalize it here so
++        // the local op never sticks `running`.
++        if (authFailed) this.#get().completeOperation(gatewayOpId);
+@@ -1995,47 +1943 @@ export class GatewayActionImpl {
+-        // Settle through the server exactly as executeGatewayAgent's
+-        // onSessionComplete does: ONE call that clears the marker and writes the
+-        // terminal status inside the topic row lock, comparing the operation id
+-        // so a late close from another tab cannot settle a newer run.
+-        //
+-        // It used to be two independent writes: an unconditional marker clear
+-        // plus an `active` status write skipped for an unwatched clean finish,
+-        // left to `markTopicUnread`. When that did not land the topic stayed
+-        // `running` forever with no marker left for any settle to match (seen
+-        // self-hosted: 7 topics stuck after a reload, the path this one serves).
+-        const viewing = this.#get().activeTopicId === topicId;
+-        // Share visitors cannot settle the creator-owned topic row (the topic
+-        // router is owner-scoped) — the local clear below still runs. Same
+-        // split as executeGatewayAgent's onSessionComplete.
+-        //
+-        // Deliberately NOT also gated on a local supersede read. This tab's topic
+-        // map is only a guess about whether another run claimed the topic, and
+-        // the settle below is authoritative in a way the guess cannot be: it
+-        // writes only while the SERVER's mark still names THIS operation, and
+-        // answers `conflict` for a newer one, which `#restoreRunningOnSettleConflict`
+-        // already consumes by re-pinning `running` and refetching the newer mark.
+-        // Skipping the call on the guess dropped the settle entirely whenever the
+-        // map was stale or the newer run never landed its server-side mark, and
+-        // nothing retried it — the row then kept `status='running'` with a
+-        // `runningOperation` naming a finished operation. `executeGatewayAgent`'s
+-        // onSessionComplete (the path this one mirrors) has never had that guard.
+-        const settle = agentShareId
+-          ? undefined
+-          : topicService.settleRunningOperation(
+-              topicId,
+-              operationId,
+-              viewing || !effectiveSucceeded ? 'active' : 'unread',
+-            );
+-        // Mirror into the local store — the server settle does NOT touch the
+-        // Zustand topic map that useGatewayReconnect (and the sidebar spinner)
+-        // read. Status omitted for the unwatched-clean case, which
+-        // `markTopicUnread` owns locally; same split as the primary path.
+-        const settledWithoutMarker = this.clearLocalRunningOperation({
+-          agentId: context.agentId,
+-          operationId,
+-          status: viewing || !effectiveSucceeded ? 'active' : undefined,
+-          topicId,
+-        });
+-        this.#restoreRunningOnSettleConflict(settle, settledWithoutMarker, {
+-          agentId: context.agentId,
+-          topicId,
+-        });
++        void this.settleTopicOperation({ context, operationId, succeeded, topicId });
+@@ -2097,0 +2000,44 @@ export class GatewayActionImpl {
 +  private settleTopicOperation = async (params: {
 +    context: ConversationContext;
 +    operationId: string;
@@ -109,7 +163,11 @@ index 4e4fa09f3edeefb51987edbccf97e86c5d3bfb29..8c998ce9c2202a046b984f7119452851
 +    const state = this.#get();
 +    const scope =
 +      context.scope === 'group' || context.scope === 'group_agent' ? context.scope : undefined;
-+    const key = topicMapKey({ agentId: context.agentId, groupId: context.groupId, scope });
++    const key = topicMapKey({
++      agentId: context.agentId,
++      groupId: context.groupId,
++      scope,
++    });
 +    const topic = state.topicDataMap[key]?.items?.find((item) => item.id === topicId);
 +    const localOwner = topic?.metadata?.runningOperation?.operationId;
 +    if (!topic || (localOwner && localOwner !== operationId)) return;
@@ -130,48 +188,32 @@ index 4e4fa09f3edeefb51987edbccf97e86c5d3bfb29..8c998ce9c2202a046b984f7119452851
 +    });
 +  };
 +
-   /**
-    * Build the `createMemberHandler` factory for a run's event router, with a
-    * single memoized group-tree hydration shared across all of that run's member
 diff --git a/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts b/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts
-index e5a67ff6b5ca79fefa6edb2e903ffb27b04adb92..071d6d41957032080307db81331b3af406a3a2e7 100644
+index 8b94b2c..7cd37c6 100644
 --- a/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts
 +++ b/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts
-@@ -387,6 +387,12 @@ export const createGatewayEventHandler = (
-      */
-     gatewayOperationId?: string;
-     operationId: string;
+@@ -299,0 +300,6 @@ export const createGatewayEventHandler = (
 +    /**
 +     * Settle the persisted topic row as soon as the runtime terminal arrives.
 +     * The Gateway session may stay connected after `agent_runtime_end`, so
 +     * waiting for `onSessionComplete` can leave the topic stuck `running`.
 +     */
 +    onRunTerminal?: (event: { succeeded: boolean }) => Promise<void>;
-     /**
-      * Shared run lifecycle for this run, assembled by the caller (gateway.ts).
-      * Only the gateway transport supplies it — it drives the terminal lifecycle
-@@ -408,7 +414,7 @@ export const createGatewayEventHandler = (
-     runtimeType?: 'gateway' | 'hetero';
-   },
- ) => {
+@@ -321 +327 @@ export const createGatewayEventHandler = (
 -  const { context, operationId, runLifecycle } = params;
 +  const { context, onRunTerminal, operationId, runLifecycle } = params;
-   const gatewayOperationId = params.gatewayOperationId ?? operationId;
-   const runtimeType = params.runtimeType ?? 'gateway';
- 
-@@ -1262,6 +1268,7 @@ export const createGatewayEventHandler = (
-               ...lifecycleEventBase,
-               status,
-             });
+@@ -1374,8 +1380,2 @@ export const createGatewayEventHandler = (
+-            if (status === 'failed') {
+-              // The failed row's content is the loading placeholder: announce the error.
+-              await runLifecycle.afterRunComplete({
+-                ...lifecycleEventBase,
+-                notification: { error: findTerminalAssistantError(terminalMessages) },
+-                status,
+-              });
+-            } else if (!requeued && status === 'completed') {
 +            await onRunTerminal?.({ succeeded: status === 'completed' });
-             if (!requeued && status === 'completed') {
-               // Notification body, resolved most-authoritative first:
-               //
-@@ -1342,6 +1349,7 @@ export const createGatewayEventHandler = (
-           // legacy completeOperation for any other caller for safety.
-           if (runtimeType === 'gateway' && runLifecycle) {
-             await runLifecycle.completeRun({ ...lifecycleEventBase, status: 'failed' });
++            if (!requeued && status === 'completed') {
+@@ -1471 +1471,2 @@ export const createGatewayEventHandler = (
+-            await runLifecycle.completeRun(failedEvent);
++            await runLifecycle.completeRun({ ...lifecycleEventBase, status: 'failed' });
 +            await onRunTerminal?.({ succeeded: false });
-           } else {
-             get().completeOperation(operationId);
-           }

@@ -1,12 +1,20 @@
 diff --git a/.env.example b/.env.example
-index 2b596fc730..19146e144c 100644
+index ae6934c83c6b5da55b5fc4c9b8d497ad3f619a1a..976295e6d7499cf1308019f7f1174f2cf167c9b2 100644
 --- a/.env.example
 +++ b/.env.example
-@@ -506,3 +506,34 @@ OPENAI_API_KEY=sk-xxxxxxxxx
- 
+@@ -527,12 +527,33 @@ OPENAI_API_KEY=sk-xxxxxxxxx
  # Verify-im link token TTL in seconds (default 1800 = 30 min)
  # LOBE_LINK_TOKEN_TTL_SECONDS=1800
-+
+ 
+-########################################
+-######### Skills Installation ##########
+-########################################
+-
+-# Optional public Market origin used only for Skill installation instruction links.
+-# Example: https://market.example.com generates https://market.example.com/s/skills/<identifier>.
+-# Leave unset to keep official lobehub.com links, even when MARKET_BASE_URL is configured.
+-# This does not change the Market API endpoint or authentication.
+-# MARKET_SKILL_INSTALL_BASE_URL=https://market.example.com
 +# #######################################
 +# ####### Push Notifications (Bark) #####
 +# #######################################
@@ -37,77 +45,20 @@ index 2b596fc730..19146e144c 100644
 +#     -d '{"title":"LobeHub","body":"test"}'
 +# A silent deployment usually means BARK_USER_ID does not match the account that
 +# triggered the run — run with DEBUG=lobe-notification to see why a push was skipped.
-diff --git a/apps/server/src/services/agentRuntime/CompletionLifecycle.ts b/apps/server/src/services/agentRuntime/CompletionLifecycle.ts
-index 44fd58daf1..6740cbfedb 100644
---- a/apps/server/src/services/agentRuntime/CompletionLifecycle.ts
-+++ b/apps/server/src/services/agentRuntime/CompletionLifecycle.ts
-@@ -3,2 +3,2 @@
--import { RequestTrigger } from '@lobechat/types';
-+import { type ChatMessageErrorAttribution, RequestTrigger } from '@lobechat/types';
- import { deserializeParts } from '@lobechat/utils';
-@@ -7,6 +7,7 @@ import debug from 'debug';
- 
- import { notifyAgentInterventionRequired } from '@/business/server/agent-run/agentInterventionReview';
- import { notifyAgentRunCompleted } from '@/business/server/agent-run/notifyAgentRunCompleted';
-+import { notifyAgentRunFailed } from '@/business/server/agent-run/notifyAgentRunFailed';
- import {
-   AgentOperationModel,
-   type ChildUsageRollup,
-@@ -751,7 +752,6 @@ export class CompletionLifecycle {
- 
-     await notifyAgentRunCompleted({
-       agentId: event.agentId || undefined,
--      duration: event.duration,
-       lastAssistantContent: event.lastAssistantContent,
-       operationId,
-       topicId: event.topicId,
-@@ -762,6 +762,45 @@ export class CompletionLifecycle {
-     });
-   }
- 
-+  /**
-+   * The mirror of {@link recallUserOnCompletion} for the `error` terminal.
-+   *
-+   * Only a genuine failure belongs here — see `notifyAgentRunFailed` for why
-+   * `interrupted`, `waiting_for_human` and `lease_expired` stay silent.
-+   */
-+  private async recallUserOnFailure(
-+    operationId: string,
-+    event: {
-+      agentId?: string;
-+      errorAttribution?: ChatMessageErrorAttribution;
-+      errorMessage?: string;
-+      errorType?: string;
-+      topicId?: string;
-+    },
-+    runOrigin: { trigger?: unknown; userId?: string } | undefined,
-+  ): Promise<void> {
-+    const { isChildRun, trigger } = await this.resolveRunRecallFacts(operationId, runOrigin);
-+    if (isChildRun) {
-+      log('[%s] Skipping failure push for internal child run', operationId);
-+      return;
-+    }
-+    if (trigger !== undefined && !USER_RECALLABLE_TRIGGERS.has(trigger)) {
-+      log('[%s] Skipping failure push for non-interactive trigger %s', operationId, trigger);
-+      return;
-+    }
-+
-+    await notifyAgentRunFailed({
-+      agentId: event.agentId || undefined,
-+      errorAttribution: event.errorAttribution,
-+      errorMessage: event.errorMessage,
-+      errorType: event.errorType,
-+      operationId,
-+      topicId: event.topicId,
-+      userId: runOrigin?.userId || this.userId,
-+      workspaceId: this.workspaceId,
-+    });
-+  }
-+
-   /**
-    * Register the operation's Works: entity files edited this round
-    * (pptx/xlsx/docx/pdf, …) as `file` Works — one version per operation,
-@@ -959,15 +998,25 @@ export class CompletionLifecycle {
+diff --git a/apps/server/src/services/agentRuntime/CompletionLifecycle/index.ts b/apps/server/src/services/agentRuntime/CompletionLifecycle/index.ts
+index bac36b017b072cfa0c944dabbe6ed4c6e141d7e0..3f8b5b2ee60f1110462b512c23be91f9f8872a7c 100644
+--- a/apps/server/src/services/agentRuntime/CompletionLifecycle/index.ts
++++ b/apps/server/src/services/agentRuntime/CompletionLifecycle/index.ts
+@@ -25,7 +25,7 @@ import {
+ import { buildLifecycleEvent, extractErrorMessage } from './lifecycleEvent';
+ import { extractOutboundAttachments, extractTextFromMessageContent } from './messageContent';
+ import { persistCompletion } from './persistence';
+-import { recallUserOnCompletion } from './recall';
++import { recallUserOnCompletion, recallUserOnFailure } from './recall';
+ import { emitSignalEvents, isAgentShareRun } from './signals';
+ import type {
+   CompleteOperationOptions,
+@@ -409,15 +409,22 @@ export class CompletionLifecycle {
        // repeatedly running the shared agent, and the notification would deep-link
        // into a visitor topic (`topics.senderId`) that is deliberately excluded
        // from creator-facing surfaces.
@@ -128,21 +79,85 @@ index 44fd58daf1..6740cbfedb 100644
 +          void this.recallUserOnCompletion(operationId, event, runOrigin).catch((error) =>
 +            log('[%s] Completion notification failed (non-fatal): %O', operationId, error),
 +          );
-+        // `error` is the only non-success terminal worth a push: `interrupted`
-+        // is the user cancelling, `waiting_for_human` already has its own
-+        // intervention notification, and `lease_expired` /
-+        // `waiting_for_async_tool` are infrastructure waits that would buzz the
-+        // phone for something the user did not ask about.
++        // Only a genuine error is worth a failure push. User cancellation,
++        // human approval parking, and infrastructure waits have their own UI.
 +        else if (reason === 'error')
-+          void this.recallUserOnFailure(operationId, event, runOrigin).catch((error) =>
++          void recallUserOnFailure(this.deps(), operationId, event, runOrigin).catch((error) =>
 +            log('[%s] Failure notification failed (non-fatal): %O', operationId, error),
 +          );
        }
  
-       // Delivery checker: on a successful completion, run the confirmed verify
+       const settledTopicId = typeof runOrigin.topicId === 'string' ? runOrigin.topicId : undefined;
+diff --git a/apps/server/src/services/agentRuntime/CompletionLifecycle/recall.ts b/apps/server/src/services/agentRuntime/CompletionLifecycle/recall.ts
+index 3d5bcf77bff09fdb0d4258c739cb95e48dbefd01..0b694222131ed2dc05dcc625e2f363f775665864 100644
+--- a/apps/server/src/services/agentRuntime/CompletionLifecycle/recall.ts
++++ b/apps/server/src/services/agentRuntime/CompletionLifecycle/recall.ts
+@@ -1,10 +1,11 @@
+ /**
+  * Completion push recall for runs the user is waiting on.
+  */
+-import { RequestTrigger } from '@lobechat/types';
++import { type ChatMessageErrorAttribution, RequestTrigger } from '@lobechat/types';
+ import debug from 'debug';
+ 
+ import { notifyAgentRunCompleted } from '@/business/server/agent-run/notifyAgentRunCompleted';
++import { notifyAgentRunFailed } from '@/business/server/agent-run/notifyAgentRunFailed';
+ 
+ import type { CompletionLifecycleDeps } from './types';
+ 
+@@ -78,7 +79,6 @@ export async function recallUserOnCompletion(
+ 
+   await notifyAgentRunCompleted({
+     agentId: event.agentId || undefined,
+-    duration: event.duration,
+     lastAssistantContent: event.lastAssistantContent,
+     operationId,
+     topicId: event.topicId,
+@@ -88,3 +88,41 @@ export async function recallUserOnCompletion(
+     workspaceId: deps.workspaceId,
+   });
+ }
++
++/**
++ * Recall the user when an interactive run ends with a genuine failure.
++ * Cancellation and parked approval states have their own UI and stay silent.
++ */
++export async function recallUserOnFailure(
++  deps: CompletionLifecycleDeps,
++  operationId: string,
++  event: {
++    agentId?: string;
++    errorAttribution?: ChatMessageErrorAttribution;
++    errorMessage?: string;
++    errorType?: string;
++    topicId?: string;
++  },
++  runOrigin: { trigger?: unknown; userId?: string } | undefined,
++): Promise<void> {
++  const { isChildRun, trigger } = await resolveRunRecallFacts(deps, operationId, runOrigin);
++  if (isChildRun) {
++    log('[%s] Skipping failure push for internal child run', operationId);
++    return;
++  }
++  if (trigger !== undefined && !USER_RECALLABLE_TRIGGERS.has(trigger)) {
++    log('[%s] Skipping failure push for non-interactive trigger %s', operationId, trigger);
++    return;
++  }
++
++  await notifyAgentRunFailed({
++    agentId: event.agentId || undefined,
++    errorAttribution: event.errorAttribution,
++    errorMessage: event.errorMessage,
++    errorType: event.errorType,
++    operationId,
++    topicId: event.topicId,
++    userId: runOrigin?.userId || deps.userId,
++    workspaceId: deps.workspaceId,
++  });
++}
 diff --git a/apps/server/src/services/notification/__tests__/bark.test.ts b/apps/server/src/services/notification/__tests__/bark.test.ts
 new file mode 100644
-index 0000000000..33e8c4be99
+index 0000000000000000000000000000000000000000..33e8c4be996cafba651ece0ebcfeedfaf9a216cb
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/bark.test.ts
 @@ -0,0 +1,257 @@
@@ -405,7 +420,7 @@ index 0000000000..33e8c4be99
 +});
 diff --git a/apps/server/src/services/notification/__tests__/categories.test.ts b/apps/server/src/services/notification/__tests__/categories.test.ts
 new file mode 100644
-index 0000000000..240db0ace9
+index 0000000000000000000000000000000000000000..240db0ace93d1af405b3e1098e621e0604d5afd1
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/categories.test.ts
 @@ -0,0 +1,45 @@
@@ -456,7 +471,7 @@ index 0000000000..240db0ace9
 +});
 diff --git a/apps/server/src/services/notification/__tests__/config.test.ts b/apps/server/src/services/notification/__tests__/config.test.ts
 new file mode 100644
-index 0000000000..ea201ce7d3
+index 0000000000000000000000000000000000000000..ea201ce7d39d77600a03e005ec25eba8889f7df7
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/config.test.ts
 @@ -0,0 +1,35 @@
@@ -497,7 +512,7 @@ index 0000000000..ea201ce7d3
 +});
 diff --git a/apps/server/src/services/notification/__tests__/format.test.ts b/apps/server/src/services/notification/__tests__/format.test.ts
 new file mode 100644
-index 0000000000..3c4951c10f
+index 0000000000000000000000000000000000000000..3c4951c10feaf4a39dfcbf4967c4c1802dbac997
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/format.test.ts
 @@ -0,0 +1,112 @@
@@ -615,7 +630,7 @@ index 0000000000..3c4951c10f
 +});
 diff --git a/apps/server/src/services/notification/__tests__/notifyUser.test.ts b/apps/server/src/services/notification/__tests__/notifyUser.test.ts
 new file mode 100644
-index 0000000000..39d3f7cf95
+index 0000000000000000000000000000000000000000..39d3f7cf956c47c8a902bce1a453de4c997227d7
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/notifyUser.test.ts
 @@ -0,0 +1,500 @@
@@ -1121,7 +1136,7 @@ index 0000000000..39d3f7cf95
 +});
 diff --git a/apps/server/src/services/notification/__tests__/settings.test.ts b/apps/server/src/services/notification/__tests__/settings.test.ts
 new file mode 100644
-index 0000000000..9b2253ad12
+index 0000000000000000000000000000000000000000..9b2253ad1210939cf073930c2bbb5ba1041b9ced
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/settings.test.ts
 @@ -0,0 +1,100 @@
@@ -1227,7 +1242,7 @@ index 0000000000..9b2253ad12
 +});
 diff --git a/apps/server/src/services/notification/__tests__/slots.test.ts b/apps/server/src/services/notification/__tests__/slots.test.ts
 new file mode 100644
-index 0000000000..35cea9a6e7
+index 0000000000000000000000000000000000000000..35cea9a6e7c0b07359ec50c5010e71d0282d58a5
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/slots.test.ts
 @@ -0,0 +1,312 @@
@@ -1544,7 +1559,7 @@ index 0000000000..35cea9a6e7
 +  });
 +});
 diff --git a/packages/business-server/package.json b/packages/business-server/package.json
-index 20d659af0b..5877272c48 100644
+index 20d659af0b9facf937e693b26160e7bb5fc07c2e..5877272c489bcc1bfafbaec6844940391a20905e 100644
 --- a/packages/business-server/package.json
 +++ b/packages/business-server/package.json
 @@ -11,6 +11,8 @@
@@ -1558,7 +1573,7 @@ index 20d659af0b..5877272c48 100644
    }
  }
 diff --git a/packages/business-server/src/agent-run/agentInterventionReview.ts b/packages/business-server/src/agent-run/agentInterventionReview.ts
-index a1d8bff61c..dd98f7145b 100644
+index 9ae9850dfa28587859d1958b37d55da630218639..6d0211076a24d5a68d0a6a984781e17413a612a4 100644
 --- a/packages/business-server/src/agent-run/agentInterventionReview.ts
 +++ b/packages/business-server/src/agent-run/agentInterventionReview.ts
 @@ -1,5 +1,10 @@
@@ -1572,7 +1587,7 @@ index a1d8bff61c..dd98f7145b 100644
  export type AgentInterventionReviewStatus =
    | 'approved'
    | 'cancelled'
-@@ -583,8 +588,42 @@ export async function acknowledgeAgentInterventionProducerResolution(
+@@ -625,8 +630,42 @@ export async function acknowledgeAgentInterventionProducerResolution(
   * Push / Live Activity fanout happens only after that create boundary and must
   * be caught, logged, or durably retried inside the Cloud implementation. A
   * downstream delivery failure must never reject this slot after persistence.
@@ -1619,7 +1634,7 @@ index a1d8bff61c..dd98f7145b 100644
 +  );
 +}
 diff --git a/packages/business-server/src/agent-run/notifyAgentRunCompleted.ts b/packages/business-server/src/agent-run/notifyAgentRunCompleted.ts
-index ef570beac5..5c0cb69c35 100644
+index ef570beac5978856a853554d75bda23bcf1d60bf..5c0cb69c35f329dc5915eecaf89109b61177d8af 100644
 --- a/packages/business-server/src/agent-run/notifyAgentRunCompleted.ts
 +++ b/packages/business-server/src/agent-run/notifyAgentRunCompleted.ts
 @@ -1,6 +1,10 @@
@@ -1683,7 +1698,7 @@ index ef570beac5..5c0cb69c35 100644
 +}
 diff --git a/packages/business-server/src/agent-run/notifyAgentRunFailed.ts b/packages/business-server/src/agent-run/notifyAgentRunFailed.ts
 new file mode 100644
-index 0000000000..f557dbbddc
+index 0000000000000000000000000000000000000000..f557dbbddc4d148c3937f152cfc1d007397d9e71
 --- /dev/null
 +++ b/packages/business-server/src/agent-run/notifyAgentRunFailed.ts
 @@ -0,0 +1,84 @@
@@ -1772,7 +1787,7 @@ index 0000000000..f557dbbddc
 +  });
 +}
 diff --git a/packages/business-server/src/image-generation/notifyImageCompleted.ts b/packages/business-server/src/image-generation/notifyImageCompleted.ts
-index 9ce4cc2b45..48668f95f1 100644
+index 9ce4cc2b4504b56ad11beb8a10a5555933fe5b71..48668f95f19d81731dba8ac25d99031598c66ac4 100644
 --- a/packages/business-server/src/image-generation/notifyImageCompleted.ts
 +++ b/packages/business-server/src/image-generation/notifyImageCompleted.ts
 @@ -1,3 +1,8 @@
@@ -1811,7 +1826,7 @@ index 9ce4cc2b45..48668f95f1 100644
 +}
 diff --git a/packages/business-server/src/notification/agentMeta.ts b/packages/business-server/src/notification/agentMeta.ts
 new file mode 100644
-index 0000000000..d90e78cf5c
+index 0000000000000000000000000000000000000000..d90e78cf5cf0cd875cf9b1bd7ce42244062c3e16
 --- /dev/null
 +++ b/packages/business-server/src/notification/agentMeta.ts
 @@ -0,0 +1,89 @@
@@ -1906,7 +1921,7 @@ index 0000000000..d90e78cf5c
 +};
 diff --git a/packages/business-server/src/notification/bark.ts b/packages/business-server/src/notification/bark.ts
 new file mode 100644
-index 0000000000..91b99294a0
+index 0000000000000000000000000000000000000000..91b99294a084aaabbf2b1da4f9afe76845b6a30b
 --- /dev/null
 +++ b/packages/business-server/src/notification/bark.ts
 @@ -0,0 +1,144 @@
@@ -2056,7 +2071,7 @@ index 0000000000..91b99294a0
 +};
 diff --git a/packages/business-server/src/notification/categories.ts b/packages/business-server/src/notification/categories.ts
 new file mode 100644
-index 0000000000..64686e2a42
+index 0000000000000000000000000000000000000000..64686e2a42fd452cf834b4c99640cf1da4fca864
 --- /dev/null
 +++ b/packages/business-server/src/notification/categories.ts
 @@ -0,0 +1,30 @@
@@ -2092,7 +2107,7 @@ index 0000000000..64686e2a42
 +} as const;
 diff --git a/packages/business-server/src/notification/config.ts b/packages/business-server/src/notification/config.ts
 new file mode 100644
-index 0000000000..ff88ded200
+index 0000000000000000000000000000000000000000..ff88ded2005245ee1289769a009dbff75f481b30
 --- /dev/null
 +++ b/packages/business-server/src/notification/config.ts
 @@ -0,0 +1,28 @@
@@ -2126,7 +2141,7 @@ index 0000000000..ff88ded200
 +};
 diff --git a/packages/business-server/src/notification/copy.ts b/packages/business-server/src/notification/copy.ts
 new file mode 100644
-index 0000000000..14cccfcbfc
+index 0000000000000000000000000000000000000000..14cccfcbfc6c0433fa7d9279bab0acdf0bcd07da
 --- /dev/null
 +++ b/packages/business-server/src/notification/copy.ts
 @@ -0,0 +1,20 @@
@@ -2152,7 +2167,7 @@ index 0000000000..14cccfcbfc
 +  });
 diff --git a/packages/business-server/src/notification/format.ts b/packages/business-server/src/notification/format.ts
 new file mode 100644
-index 0000000000..7316390d5b
+index 0000000000000000000000000000000000000000..7316390d5befc5b1f7f86be1df136a10ebd52a4d
 --- /dev/null
 +++ b/packages/business-server/src/notification/format.ts
 @@ -0,0 +1,95 @@
@@ -2253,7 +2268,7 @@ index 0000000000..7316390d5b
 +};
 diff --git a/packages/business-server/src/notification/index.ts b/packages/business-server/src/notification/index.ts
 new file mode 100644
-index 0000000000..16cda61508
+index 0000000000000000000000000000000000000000..16cda6150879c6217b773962cb6f1e58e74efd5d
 --- /dev/null
 +++ b/packages/business-server/src/notification/index.ts
 @@ -0,0 +1,146 @@
@@ -2405,7 +2420,7 @@ index 0000000000..16cda61508
 +};
 diff --git a/packages/business-server/src/notification/levels.ts b/packages/business-server/src/notification/levels.ts
 new file mode 100644
-index 0000000000..22ded83615
+index 0000000000000000000000000000000000000000..22ded8361521641845032ac6f494bc7723034ebb
 --- /dev/null
 +++ b/packages/business-server/src/notification/levels.ts
 @@ -0,0 +1,65 @@
@@ -2476,7 +2491,7 @@ index 0000000000..22ded83615
 +  PRESENTATION[`${category}/${type}`] ?? DEFAULT_PRESENTATION;
 diff --git a/packages/business-server/src/notification/settings.ts b/packages/business-server/src/notification/settings.ts
 new file mode 100644
-index 0000000000..5a439718f1
+index 0000000000000000000000000000000000000000..5a439718f1dd48792c801b18ba713b6d73f7383f
 --- /dev/null
 +++ b/packages/business-server/src/notification/settings.ts
 @@ -0,0 +1,50 @@
@@ -2531,7 +2546,7 @@ index 0000000000..5a439718f1
 +  return push?.items?.[params.category]?.[params.type] !== false;
 +};
 diff --git a/packages/business-server/src/task/notifyScheduledTaskResult.ts b/packages/business-server/src/task/notifyScheduledTaskResult.ts
-index 5d0edba576..a3fe333d8c 100644
+index 2ff1aa017d3a22c4f50464ab87694820fb7d7373..342e2e99f4a1a175e1b801a02744d520564dbd22 100644
 --- a/packages/business-server/src/task/notifyScheduledTaskResult.ts
 +++ b/packages/business-server/src/task/notifyScheduledTaskResult.ts
 @@ -1,3 +1,8 @@
@@ -2615,7 +2630,7 @@ index 5d0edba576..a3fe333d8c 100644
 +  });
 +}
 diff --git a/packages/business-server/src/video-generation/notifyVideoCompleted.ts b/packages/business-server/src/video-generation/notifyVideoCompleted.ts
-index 55decfd1fc..1332fb5457 100644
+index 55decfd1fcf035e208a9e43e6ba467c676019301..1332fb54570b3bbbb6e727e0fd7f3a47f150e0ef 100644
 --- a/packages/business-server/src/video-generation/notifyVideoCompleted.ts
 +++ b/packages/business-server/src/video-generation/notifyVideoCompleted.ts
 @@ -1,3 +1,8 @@
@@ -2654,7 +2669,7 @@ index 55decfd1fc..1332fb5457 100644
 +}
 diff --git a/packages/env/src/notification.ts b/packages/env/src/notification.ts
 new file mode 100644
-index 0000000000..9ab7ec0c5e
+index 0000000000000000000000000000000000000000..9ab7ec0c5e5832176f7ef3ae33e9b082babdfb2a
 --- /dev/null
 +++ b/packages/env/src/notification.ts
 @@ -0,0 +1,49 @@
@@ -2708,13 +2723,21 @@ index 0000000000..9ab7ec0c5e
 +  });
 +};
 diff --git a/packages/locales/src/default/notification.ts b/packages/locales/src/default/notification.ts
-index 55ddbbe4d6..86cf9914d2 100644
+index d8f44b299295b1495b1ab71c6328da987cf72cbf..75a02a262a02e81da803c0cadb34acf4edfbb24e 100644
 --- a/packages/locales/src/default/notification.ts
 +++ b/packages/locales/src/default/notification.ts
-@@ -14,6 +14,8 @@ export default {
+@@ -16,14 +16,8 @@ export default {
    'agent_intervention_required_title': '{{agent}} needs your review',
    'agent_run_completed': '{{preview}}',
    'agent_run_completed_title': 'Agent task completed',
+-  'agent_task_run_failed': 'Your task "{{jobName}}" failed. Open the task to see the full error.',
+-  'agent_task_run_failed_heartbeat_timeout':
+-    'Your task "{{jobName}}" stopped responding and was marked as failed. Open the task to run it again.',
+-  'agent_task_run_failed_heartbeat_timeout_title': 'Task timed out',
+-  'agent_task_run_failed_insufficient_budget':
+-    'Your task "{{jobName}}" couldn\'t run because your account is out of credits. Top up or upgrade your plan to continue.',
+-  'agent_task_run_failed_insufficient_budget_title': 'Task failed: insufficient credits',
+-  'agent_task_run_failed_title': 'Task failed',
 +  'agent_run_failed': 'The run failed: {{error}}',
 +  'agent_run_failed_title': 'Agent run failed',
    'agent_transfer_reassigned':
@@ -2722,7 +2745,7 @@ index 55ddbbe4d6..86cf9914d2 100644
    'agent_transfer_reassigned_title': 'Agent reassigned',
 diff --git a/src/app/(backend)/webapi/agent/avatar/[id]/renderAgentAvatarPng.ts b/src/app/(backend)/webapi/agent/avatar/[id]/renderAgentAvatarPng.ts
 new file mode 100644
-index 0000000000..64ac24599a
+index 0000000000000000000000000000000000000000..64ac24599ad40447174418b34b0dd8cb7ad5da67
 --- /dev/null
 +++ b/src/app/(backend)/webapi/agent/avatar/[id]/renderAgentAvatarPng.ts
 @@ -0,0 +1,138 @@
@@ -2866,7 +2889,7 @@ index 0000000000..64ac24599a
 +};
 diff --git a/src/app/(backend)/webapi/agent/avatar/[id]/route.ts b/src/app/(backend)/webapi/agent/avatar/[id]/route.ts
 new file mode 100644
-index 0000000000..eca81ba66c
+index 0000000000000000000000000000000000000000..eca81ba66cd436f0f7b1f5dce18957630819832b
 --- /dev/null
 +++ b/src/app/(backend)/webapi/agent/avatar/[id]/route.ts
 @@ -0,0 +1,46 @@
