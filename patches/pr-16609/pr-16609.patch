@@ -1,9 +1,707 @@
+diff --git a/src/features/Connectors/ConnectorDetail/index.test.tsx b/src/features/Connectors/ConnectorDetail/index.test.tsx
+index 2e529387bd6fd203e1991b7b83592022520c1700..db02b1eb743a45571c11ca57041786a6caad3d9e 100644
+--- a/src/features/Connectors/ConnectorDetail/index.test.tsx
++++ b/src/features/Connectors/ConnectorDetail/index.test.tsx
+@@ -9,6 +9,7 @@ import { ConnectorSourceType } from '@/database/schemas';
+ import ConnectorDetail from './index';
+ 
+ const mocks = vi.hoisted(() => ({
++  headerWidth: 1024,
+   toolState: {
+     connectorTools: {
+       createTools: [],
+@@ -42,6 +43,10 @@ const mocks = vi.hoisted(() => ({
+   },
+ }));
+ 
++vi.mock('ahooks', () => ({
++  useSize: () => ({ height: 42, width: mocks.headerWidth }),
++}));
++
+ vi.mock('react-i18next', () => ({
+   useTranslation: () => ({
+     t: (_key: string, options?: { defaultValue?: string } | string) =>
+@@ -60,6 +65,37 @@ vi.mock('@/hooks/useResourceManageable', () => ({
+   useResourceManageable: () => true,
+ }));
+ 
++vi.mock('@lobehub/ui', () => ({
++  Tooltip: ({ children }: { children: ReactNode }) => children,
++}));
++
++vi.mock('antd', () => ({
++  App: { useApp: () => ({ message: { error: vi.fn() } }) },
++}));
++
++// Stub the base-ui Button to a native button — it needs a MotionProvider the
++// app sets up globally but the unit env doesn't.
++vi.mock('@lobehub/ui/base-ui', () => ({
++  Button: ({
++    'aria-label': ariaLabel,
++    children,
++    disabled,
++    title,
++    onClick,
++  }: {
++    'aria-label'?: string;
++    children?: ReactNode;
++    disabled?: boolean;
++    title?: string;
++    onClick?: () => void;
++  }) => (
++    <button aria-label={ariaLabel} disabled={disabled} title={title} type="button" onClick={onClick}>
++      {children}
++    </button>
++  ),
++  confirmModal: vi.fn(),
++}));
++
+ vi.mock('@/store/tool', () => ({
+   useToolStore<T>(selector: (state: typeof mocks.toolState) => T): T {
+     return selector(mocks.toolState);
+@@ -95,6 +131,7 @@ vi.mock('./ToolPermissionGroup', () => ({
+ describe('ConnectorDetail', () => {
+   beforeEach(() => {
+     vi.clearAllMocks();
++    mocks.headerWidth = 1024;
+     mocks.toolState.connectorTools = {
+       createTools: [],
+       deleteTools: [],
+@@ -135,93 +172,28 @@ describe('ConnectorDetail', () => {
+     expect(screen.getByRole('button', { name: 'Uninstall' })).toBeInTheDocument();
+   });
+ 
+-  it('keeps authorization and identity in Overview and moves permissions to Tools', () => {
+-    mocks.toolState.connectors[0] = {
+-      ...mocks.toolState.connectors[0],
+-      authorizedByName: 'Avery',
+-      status: 'connected',
+-    };
+-    mocks.toolState.connectorTools = {
+-      ...mocks.toolState.connectorTools,
+-      readTools: [{ id: 'tool-1' }] as never[],
+-    };
++  it('collapses icon buttons when the header is narrow', () => {
++    mocks.headerWidth = 500;
++    mocks.toolState.connectors = [
++      {
++        id: 'connector-1',
++        identifier: 'custom-id',
++        metadata: { description: 'Workspace notes' },
++        mcpConnectionType: 'http',
++        name: 'Custom',
++        sourceType: ConnectorSourceType.custom,
++      },
++    ];
+ 
+     render(<ConnectorDetail connectorId="connector-1" />);
+ 
+-    // Overview: connection status, identity and lifecycle actions; no permission matrix.
+-    expect(screen.getByText('connector.connected')).toBeInTheDocument();
+-    expect(screen.getByText('Avery')).toBeInTheDocument();
+-    expect(screen.getByRole('button', { name: 'Uninstall' })).toBeInTheDocument();
+-    expect(screen.queryByTestId('permission-group')).not.toBeInTheDocument();
+-
+-    fireEvent.click(screen.getByRole('tab', { name: /connector\.tab\.tools/ }));
+-
+-    // Tools: the permission groups and reset, without the lifecycle actions.
+-    expect(screen.getAllByTestId('permission-group')).toHaveLength(4);
++    expect(screen.getByText('Custom')).toBeInTheDocument();
+     expect(screen.getByRole('button', { name: 'Reset permissions' })).toBeInTheDocument();
+-    expect(screen.queryByRole('button', { name: 'Uninstall' })).not.toBeInTheDocument();
+-  });
+-
+-  it('reports an authorization error instead of "not connected"', () => {
+-    mocks.toolState.connectors[0] = { ...mocks.toolState.connectors[0], status: 'error' };
+-
+-    render(<ConnectorDetail connectorId="connector-1" />);
+-
+-    expect(screen.getByText('connector.authError')).toBeInTheDocument();
+-    expect(screen.queryByText('connector.notConnected')).not.toBeInTheDocument();
+-  });
+-
+-  it('labels a marketplace plugin without an OAuth provider as a community tool', () => {
+-    render(<ConnectorDetail connectorId="connector-1" />);
+-
+-    expect(screen.getByText('connector.kind.community')).toBeInTheDocument();
+-    expect(screen.queryByText('connector.kind.oauth')).not.toBeInTheDocument();
+-  });
+-
+-  it('shows a disconnected connector as not connected even though its status stays connected', () => {
+-    mocks.toolState.connectors[0] = {
+-      ...mocks.toolState.connectors[0],
+-      isEnabled: false,
+-      status: 'connected',
+-    };
+-
+-    render(<ConnectorDetail connectorId="connector-1" />);
+-
+-    expect(screen.getByText('connector.notConnected')).toBeInTheDocument();
+-    expect(screen.queryByText('connector.connected')).not.toBeInTheDocument();
+-  });
+-
+-  it('shows a disconnected connector as not connected even after an authorization error', () => {
+-    mocks.toolState.connectors[0] = {
+-      ...mocks.toolState.connectors[0],
+-      isEnabled: false,
+-      status: 'error',
+-    };
+-
+-    render(<ConnectorDetail connectorId="connector-1" />);
+-
+-    expect(screen.getByText('connector.notConnected')).toBeInTheDocument();
+-    expect(screen.queryByText('connector.authError')).not.toBeInTheDocument();
+-  });
+-
+-  it('shows an uninstalled built-in tool as uninstalled, matching the list', () => {
+-    mocks.toolState.connectors[0] = {
+-      id: 'connector-1',
+-      identifier: 'lobe-web-browsing',
+-      name: 'Web Browsing',
+-      sourceType: ConnectorSourceType.builtin,
+-    };
+-    mocks.toolState.uninstalledBuiltinTools = ['lobe-web-browsing'];
+-
+-    const { unmount } = render(<ConnectorDetail connectorId="connector-1" />);
+-
+-    expect(screen.getByText('tools.builtins.uninstalled')).toBeInTheDocument();
+-    expect(screen.queryByText('connector.enabled')).not.toBeInTheDocument();
+-
+-    unmount();
+-    mocks.toolState.uninstalledBuiltinTools = [];
+-    render(<ConnectorDetail connectorId="connector-1" />);
+-
+-    expect(screen.getByText('connector.enabled')).toBeInTheDocument();
++    expect(screen.queryByText('Sync')).not.toBeInTheDocument();
++    expect(screen.queryByText('Edit')).not.toBeInTheDocument();
++    expect(screen.queryByText('Delete')).not.toBeInTheDocument();
++    expect(screen.getByRole('button', { name: 'Sync' })).toBeInTheDocument();
++    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
++    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+   });
+ });
 diff --git a/src/features/Connectors/ConnectorDetail/index.tsx b/src/features/Connectors/ConnectorDetail/index.tsx
-index b24e2823..756d2ac4 100644
+index b24e2823af897016c6a9f3ed361139d9637b05e9..bda4de0bffcd6acaf9b216a7d57d1004971f1252 100644
 --- a/src/features/Connectors/ConnectorDetail/index.tsx
 +++ b/src/features/Connectors/ConnectorDetail/index.tsx
-@@ -1,3 +1,4 @@
-+// PR-16609 compatibility marker: connector actions use the current responsive header.
+@@ -1,10 +1,11 @@
  import { getComposioAppByIdentifier, getLobehubSkillProviderById } from '@lobechat/const';
- import { Button, confirmModal, Flexbox, Tabs, Text, toast, Tooltip } from '@lobehub/ui';
- import { cssVar } from '@lobehub/ui/stylex/cssVar.stylex';
+-import { Button, confirmModal, Flexbox, Tabs, Text, toast, Tooltip } from '@lobehub/ui';
+-import { cssVar } from '@lobehub/ui/stylex/cssVar.stylex';
+-import * as stylex from '@stylexjs/stylex';
+-import { PencilIcon, RefreshCwIcon, Trash2 } from 'lucide-react';
++import { Tooltip } from '@lobehub/ui';
++import { Button, confirmModal, toast } from '@lobehub/ui/base-ui';
++import { useSize } from 'ahooks';
++import { createStaticStyles } from 'antd-style';
++import { PencilIcon, RefreshCwIcon, Trash2, Unplug } from 'lucide-react';
+ import type { ReactNode } from 'react';
+-import { memo, useCallback, useState } from 'react';
++import { memo, useCallback, useRef, useState } from 'react';
+ import { useTranslation } from 'react-i18next';
+ 
+ import type { ConnectorToolPermission } from '@/database/schemas';
+@@ -23,6 +24,56 @@ import ConnectorOverviewInfo, { getConnectorKind } from './ConnectorOverviewInfo
+ import { getLocalizedConnectorDetail } from './localization';
+ import ToolPermissionGroup from './ToolPermissionGroup';
+ 
++const COMPACT_HEADER_WIDTH = 760;
++
++const styles = createStaticStyles(({ css, cssVar }) => ({
++  actionButton: css`
++    display: inline-flex;
++    flex-shrink: 0;
++    align-items: center;
++    justify-content: center;
++
++    line-height: 1;
++  `,
++  actionLabel: css`
++    white-space: nowrap;
++  `,
++  actions: css`
++    display: flex;
++    flex-shrink: 0;
++    flex-wrap: wrap;
++    gap: 8px;
++    align-items: center;
++    justify-content: flex-end;
++
++    max-width: 100%;
++  `,
++  header: css`
++    display: flex;
++    gap: 12px;
++    align-items: center;
++    justify-content: space-between;
++
++    min-height: 42px;
++    padding-block: 12px;
++    padding-inline: 16px;
++    border-block-end: 1px solid ${cssVar.colorBorderSecondary};
++  `,
++  headerTitle: css`
++    overflow: hidden;
++    flex: 1 1 auto;
++
++    min-width: 0;
++
++    font-size: 14px;
++    font-weight: 500;
++    line-height: 1.5;
++    color: ${cssVar.colorText};
++    text-overflow: ellipsis;
++    white-space: nowrap;
++  `,
++}));
++
+ interface ConnectorDetailProps {
+   /**
+    * Title of the owning agent when this is an agent-dimension connector. Drives
+@@ -116,9 +167,9 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+   ({ agentTitle, connectorId, lifecycleActions, middleSlot, onDelete }) => {
+     const { t } = useTranslation('tool');
+     const { t: ts } = useTranslation('setting');
+-
++    const headerRef = useRef<HTMLDivElement | null>(null);
+     const [customModalOpen, setCustomModalOpen] = useState(false);
+-    const [tab, setTab] = useState<ConnectorDetailTab>('overview');
++    const headerSize = useSize(headerRef);
+ 
+     const connector = useToolStore(connectorSelectors.connectorById(connectorId));
+     const { readTools, createTools, updateTools, deleteTools } = useToolStore(
+@@ -141,6 +192,7 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+     const isMcpConnector = connector?.sourceType === ConnectorSourceType.custom;
+     const isBuiltin = connector?.sourceType === ConnectorSourceType.builtin;
+     const isMarketplace = connector?.sourceType === ConnectorSourceType.marketplace;
++    const isCompactHeader = (headerSize?.width ?? Number.POSITIVE_INFINITY) < COMPACT_HEADER_WIDTH;
+ 
+     // Members co-maintain shared connectors unless the workspace restricted it;
+     // editing the stored credentials stays with the creator or a workspace
+@@ -275,7 +327,6 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+       t: ts,
+     });
+ 
+-    // Sync button label: re-sync tool list from manifest (does NOT reset permissions)
+     const syncLabel =
+       connector?.sourceType === ConnectorSourceType.custom
+         ? t('connector.sync', 'Sync')
+@@ -304,237 +355,199 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+       }
+     };
+ 
+-    const actions = (
+-      <>
+-        {/* Sync/Refresh: re-sync tool list from manifest */}
+-        <ManageTooltip title={canSync ? undefined : credentialsTooltip}>
+-          <Button
+-            disabled={!canSync}
+-            icon={<RefreshCwIcon size={14} />}
+-            loading={syncing}
+-            size="small"
+-            onClick={handleSync}
+-          >
+-            {syncLabel}
+-          </Button>
+-        </ManageTooltip>
+-        {/* Edit button for custom MCP connectors — only http type has a server URL to edit */}
+-        {isMcpConnector && connector?.mcpConnectionType === 'http' && (
+-          <ManageTooltip title={credentialsTooltip}>
+-            <Button
+-              disabled={!canManageCredentials}
+-              icon={<PencilIcon size={14} />}
+-              size="small"
+-              onClick={() => setCustomModalOpen(true)}
+-            >
+-              {t('connector.edit', 'Edit')}
+-            </Button>
+-          </ManageTooltip>
+-        )}
+-        {lifecycleActions !== undefined ? (
+-          lifecycleActions
+-        ) : (
+-          <>
+-            {/* Disconnect / Delete for custom MCP connectors */}
+-            {isMcpConnector && (
++    const renderCompactableButton = ({
++      danger,
++      disabled,
++      icon,
++      label,
++      loading,
++      onClick,
++    }: {
++      danger?: boolean;
++      disabled?: boolean;
++      icon: ReactNode;
++      label: string;
++      loading?: boolean;
++      onClick: () => void | Promise<void>;
++    }) => (
++      <Button
++        aria-label={label}
++        className={styles.actionButton}
++        danger={danger}
++        disabled={disabled}
++        icon={icon}
++        loading={loading}
++        size="small"
++        title={isCompactHeader ? label : undefined}
++        onClick={onClick}
++      >
++        {!isCompactHeader && <span className={styles.actionLabel}>{label}</span>}
++      </Button>
++    );
++
++    return (
++      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
++        <div className={styles.header} ref={headerRef}>
++          <div className={styles.headerTitle}>{connectorName}</div>
++          <div className={styles.actions}>
++            <ManageTooltip title={manageTooltip}>
++              <Button
++                disabled={!canManage}
++                size="small"
++                onClick={async () => {
++                  try {
++                    await resetConnectorPermissions(connectorId);
++                  } catch (error) {
++                    notifyActionError(error);
++                  }
++                }}
++              >
++                {t('connector.resetPermissions', 'Reset permissions')}
++              </Button>
++            </ManageTooltip>
++            <ManageTooltip title={canSync ? undefined : manageTooltip}>
++              {renderCompactableButton({
++                disabled: !canSync,
++                icon: <RefreshCwIcon size={14} />,
++                label: syncLabel,
++                loading: syncing,
++                onClick: handleSync,
++              })}
++            </ManageTooltip>
++            {isMcpConnector && connector?.mcpConnectionType === 'http' && (
++              <ManageTooltip title={manageTooltip}>
++                {renderCompactableButton({
++                  disabled: !canManage,
++                  icon: <PencilIcon size={14} />,
++                  label: t('connector.edit', 'Edit'),
++                  onClick: () => setCustomModalOpen(true),
++                })}
++              </ManageTooltip>
++            )}
++            {lifecycleActions !== undefined ? (
++              lifecycleActions
++            ) : (
+               <>
+-                <ManageTooltip title={manageTooltip}>
+-                  <Button
+-                    danger
+-                    disabled={!canManage}
+-                    size="small"
+-                    onClick={async () => {
+-                      setRemoveError(undefined);
+-                      try {
+-                        await disconnectConnector(connectorId);
+-                      } catch (error) {
+-                        notifyRemoveError(error);
+-                      }
+-                    }}
+-                  >
+-                    {t('connector.disconnect', 'Disconnect')}
+-                  </Button>
+-                </ManageTooltip>
+-                <ManageTooltip title={manageTooltip}>
+-                  <Button
+-                    danger
+-                    disabled={!canManage}
+-                    icon={<Trash2 size={14} />}
+-                    size="small"
+-                    onClick={() => {
+-                      confirmModal({
+-                        content: deleteConfirmContent,
+-                        okButtonProps: { danger: true },
+-                        onOk: async () => {
+-                          setRemoveError(undefined);
++                {isMcpConnector && (
++                  <>
++                    <ManageTooltip title={manageTooltip}>
++                      {renderCompactableButton({
++                        danger: true,
++                        disabled: !canManage,
++                        icon: <Unplug size={14} />,
++                        label: t('connector.disconnect', 'Disconnect'),
++                        onClick: async () => {
+                           try {
+-                            await deleteConnector(connectorId);
+-                            onDelete?.();
++                            await disconnectConnector(connectorId);
+                           } catch (error) {
+-                            notifyRemoveError(error);
++                            notifyActionError(error);
+                           }
+                         },
+-                        title: t('connector.deleteConfirm', 'Delete this connector?'),
+-                      });
+-                    }}
+-                  >
+-                    {t('connector.delete', 'Delete')}
+-                  </Button>
+-                </ManageTooltip>
++                      })}
++                    </ManageTooltip>
++                    <ManageTooltip title={manageTooltip}>
++                      {renderCompactableButton({
++                        danger: true,
++                        disabled: !canManage,
++                        icon: <Trash2 size={14} />,
++                        label: t('connector.delete', 'Delete'),
++                        onClick: () => {
++                          confirmModal({
++                            content: deleteConfirmContent,
++                            okButtonProps: { danger: true },
++                            onOk: async () => {
++                              try {
++                                await deleteConnector(connectorId);
++                                onDelete?.();
++                              } catch (error) {
++                                notifyActionError(error);
++                              }
++                            },
++                            title: t('connector.deleteConfirm', 'Delete this connector?'),
++                          });
++                        },
++                      })}
++                    </ManageTooltip>
++                  </>
++                )}
++                {/* Uninstall for builtin and marketplace tools */}
++                {(isBuiltin || isMarketplace) && (
++                  <ManageTooltip title={manageTooltip}>
++                    {renderCompactableButton({
++                      danger: true,
++                      disabled: !canManage,
++                      icon: <Trash2 size={14} />,
++                      label: t('connector.uninstall', 'Uninstall'),
++                      onClick: handleUninstall,
++                    })}
++                  </ManageTooltip>
++                )}
+               </>
+             )}
+-            {/* Uninstall for builtin and marketplace tools */}
+-            {(isBuiltin || isMarketplace) && (
+-              <ManageTooltip title={credentialsTooltip}>
+-                <Button
+-                  danger
+-                  disabled={!canManageCredentials}
+-                  icon={<Trash2 size={14} />}
+-                  size="small"
+-                  onClick={handleUninstall}
+-                >
+-                  {t('connector.uninstall', 'Uninstall')}
+-                </Button>
+-              </ManageTooltip>
+-            )}
+-          </>
+-        )}
+-      </>
+-    );
+-
+-    const overview = (
+-      <Flexbox gap={24}>
+-        {removeError?.connectorId === connectorId && (
+-          <ConnectorActionErrorText error={removeError.error} name={connectorName} />
+-        )}
+-
+-        {connectorDescription && (
+-          <Section label={t('connector.overview.about')}>
+-            <div {...stylex.props(styles.description)}>{connectorDescription}</div>
+-          </Section>
+-        )}
+-
+-        <Section label={t('connector.overview.connection')}>
+-          <ConnectorOverviewInfo connector={connector} />
+-          <Flexbox horizontal gap={8} paddingBlock={'4px 0'} wrap={'wrap'}>
+-            {actions}
+-          </Flexbox>
+-        </Section>
+-
+-        {middleSlot}
+-      </Flexbox>
+-    );
++          </div>
++        </div>
+ 
+-    const tools = hasTools ? (
+-      <Flexbox gap={16}>
+-        <Flexbox horizontal align={'center'} gap={16} justify={'space-between'}>
+-          {/* The count already sits under the title; say what the controls decide instead. */}
+-          <Text fontSize={13} type={'secondary'}>
+-            {t('connector.toolsHint')}
+-          </Text>
+-          {/* Reset permissions: restore all tools to auto (fully open) */}
+-          <ManageTooltip title={manageTooltip}>
+-            <Button
+-              disabled={!canManage}
+-              size="small"
+-              onClick={async () => {
+-                try {
+-                  await resetConnectorPermissions(connectorId);
+-                } catch (error) {
+-                  notifyActionError(error);
+-                }
++        <div
++          style={{
++            display: 'flex',
++            flex: 1,
++            flexDirection: 'column',
++            minHeight: 0,
++            padding: 16,
++          }}
++        >
++          {connectorDescription && (
++            <div
++              style={{
++                color: 'var(--ant-color-text-secondary)',
++                fontSize: 13,
++                lineHeight: 1.6,
++                marginBottom: 16,
+               }}
+             >
+-              {t('connector.resetPermissions', 'Reset permissions')}
+-            </Button>
+-          </ManageTooltip>
+-        </Flexbox>
+-        <div>
+-          <ToolPermissionGroup
+-            disabled={!canManage}
+-            label={t('connector.readOnlyTools', 'Read-only tools')}
+-            tools={readTools}
+-            onBatchPermission={handleBatchPermission}
+-            onPermissionChange={handlePermissionChange}
+-          />
+-          <ToolPermissionGroup
+-            disabled={!canManage}
+-            label={t('connector.createTools', 'Create tools')}
+-            tools={createTools}
+-            onBatchPermission={handleBatchPermission}
+-            onPermissionChange={handlePermissionChange}
+-          />
+-          <ToolPermissionGroup
+-            disabled={!canManage}
+-            label={t('connector.updateTools', 'Update tools')}
+-            tools={updateTools}
+-            onBatchPermission={handleBatchPermission}
+-            onPermissionChange={handlePermissionChange}
+-          />
+-          <ToolPermissionGroup
+-            disabled={!canManage}
+-            label={t('connector.deleteTools', 'Delete tools')}
+-            tools={deleteTools}
+-            onBatchPermission={handleBatchPermission}
+-            onPermissionChange={handlePermissionChange}
+-          />
+-        </div>
+-      </Flexbox>
+-    ) : (
+-      <div style={{ color: 'var(--lobe-colors-neutral-500)', fontSize: 14 }}>
+-        {t('connector.noTools', 'No tool permissions to configure.')}
+-      </div>
+-    );
+-
+-    return (
+-      <div {...stylex.props(styles.root)}>
+-        <Flexbox horizontal align={'center'} gap={16} {...stylex.props(styles.header)}>
+-          <ConnectorDetailIcon connector={connector} />
+-          <Flexbox gap={2} style={{ minWidth: 0 }}>
+-            <h2 {...stylex.props(styles.title)}>{connectorName}</h2>
+-            <Flexbox horizontal align={'center'} gap={6} {...stylex.props(styles.meta)}>
+-              <span>{t(`connector.kind.${getConnectorKind(connector)}`)}</span>
+-              {hasTools && (
+-                <>
+-                  <span aria-hidden>·</span>
+-                  <span>{t('connector.toolCount', { count: toolCount })}</span>
+-                </>
+-              )}
+-            </Flexbox>
+-          </Flexbox>
+-        </Flexbox>
+-
+-        {/* Overview (authorization / lifecycle) and Tools (permissions) are two separate jobs */}
+-        <div {...stylex.props(styles.tabs)}>
+-          <Tabs
+-            activeKey={tab}
+-            size={'middle'}
+-            variant={'point'}
+-            items={[
+-              { key: 'overview', label: t('connector.tab.overview') },
+-              {
+-                key: 'tools',
+-                label: (
+-                  <Flexbox horizontal align={'center'} gap={6}>
+-                    {t('connector.tab.tools')}
+-                    {toolCount > 0 && (
+-                      <Text fontSize={12} type={'secondary'}>
+-                        {toolCount}
+-                      </Text>
+-                    )}
+-                  </Flexbox>
+-                ),
+-              },
+-            ]}
+-            onChange={(key) => setTab(key as ConnectorDetailTab)}
+-          />
+-        </div>
++              {connectorDescription}
++            </div>
++          )}
+ 
+-        {/* Body */}
+-        <div {...stylex.props(styles.body)}>
+-          {tab === 'tools' ? tools : overview}
++          {middleSlot}
++
++          {hasTools ? (
++            <div style={{ flex: 1, overflowY: 'auto' }}>
++              <ToolPermissionGroup
++                disabled={!canManage}
++                label={t('connector.readOnlyTools', 'Read-only tools')}
++                tools={readTools}
++                onBatchPermission={handleBatchPermission}
++                onPermissionChange={handlePermissionChange}
++              />
++              <ToolPermissionGroup
++                disabled={!canManage}
++                label={t('connector.createTools', 'Create tools')}
++                tools={createTools}
++                onBatchPermission={handleBatchPermission}
++                onPermissionChange={handlePermissionChange}
++              />
++              <ToolPermissionGroup
++                disabled={!canManage}
++                label={t('connector.updateTools', 'Update tools')}
++                tools={updateTools}
++                onBatchPermission={handleBatchPermission}
++                onPermissionChange={handlePermissionChange}
++              />
++              <ToolPermissionGroup
++                disabled={!canManage}
++                label={t('connector.deleteTools', 'Delete tools')}
++                tools={deleteTools}
++                onBatchPermission={handleBatchPermission}
++                onPermissionChange={handlePermissionChange}
++              />
++            </div>
++          ) : (
++            <div style={{ color: 'var(--lobe-colors-neutral-500)', fontSize: 14 }}>
++              {t('connector.noTools', 'No tool permissions to configure.')}
++            </div>
++          )}
+ 
+-          {/* Edit modal — only http connectors have a server URL to edit */}
+           {isMcpConnector && connector?.mcpConnectionType === 'http' && (
+             <CustomConnectorModal
+               connectorId={connectorId}
