@@ -5,7 +5,7 @@ index 96e22407e09be8eaab28f2065709dc4382b4cb97..6ac0832a31c25ba43aca1d0d023e402b
 @@ -72,6 +72,141 @@ describe('SessionModel', () => {
      });
    });
- 
+
 +  describe('queryWithGroups', () => {
 +    it('should return sessions grouped by group', async () => {
 +      // Create test data
@@ -151,7 +151,7 @@ index 3098f4a21253e713726f47ed562785ff2a98d608..a89f8a01296a0c566963f2ea96a1c5ff
 @@ -128,6 +128,111 @@ export class SessionModel {
      return Array.from(groupedResults.values());
    };
- 
+
 +  queryWithGroups = async (): Promise<ChatSessionList> => {
 +    // Query all sessions (each session is joined with its agent)
 +    const result = await this.query();
@@ -450,14 +450,13 @@ index a7cbe1a1c1e150a6cf5293d65923c6eaf250c6d4..b9792e1d923ab21495778eb9116f99f0
 diff --git a/src/features/MobileHome/SessionListContent/List/Item/Actions.tsx b/src/features/MobileHome/SessionListContent/List/Item/Actions.tsx
 --- a/src/features/MobileHome/SessionListContent/List/Item/Actions.tsx
 +++ b/src/features/MobileHome/SessionListContent/List/Item/Actions.tsx
-@@ -1,189 +1,254 @@
+@@ -1,189 +1,253 @@
 -import { type SidebarAgentItem } from '@lobechat/types';
 -import { type DropdownItem, Icon, toast } from '@lobehub/ui';
 -import { ActionIcon, confirmModal, DropdownMenu } from '@lobehub/ui';
 -import { Check, Copy, ListTree, MoreVertical, Pin, PinOff, Plus, Trash } from 'lucide-react';
 -import { useState } from 'react';
-+import { ActionIcon, DropdownMenu, Icon } from '@lobehub/ui';
-+import { confirmModal, toast } from '@lobehub/ui/base-ui';
++import { ActionIcon, confirmModal, DropdownMenu, Icon, toast } from '@lobehub/ui';
 +import { type ItemType } from 'antd/es/menu/interface';
 +import isEqual from 'fast-deep-equal';
 +import {
@@ -473,7 +472,7 @@ diff --git a/src/features/MobileHome/SessionListContent/List/Item/Actions.tsx b/
 +} from 'lucide-react';
 +import { memo, useMemo } from 'react';
  import { useTranslation } from 'react-i18next';
- 
+
 -import { useResourceAccess } from '@/features/ResourcePermission/useResourceAccess';
 -import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 +import { isDesktop } from '@/const/index';
@@ -967,20 +966,20 @@ index 11e6c991f4a15b696b1a639cc09239a898939ea1..989aabb762dee50b280d0b72b138be86
  import { useGlobalStore } from '@/store/global';
  import { useHomeStore } from '@/store/home';
 +import { useSessionStore } from '@/store/session';
- 
+
  interface CreateGroupContentProps {
    id: string;
 -  itemType: 'agent' | 'group';
 -  visibility?: 'private' | 'public';
 +  isVirtualAgent?: boolean;
  }
- 
+
 -const CreateGroupContent = memo<CreateGroupContentProps>(({ id, itemType, visibility }) => {
 +const CreateGroupContent = memo<CreateGroupContentProps>(({ id, isVirtualAgent }) => {
    const { t } = useTranslation(['chat', 'common']);
    const { close } = useModalContext();
    const { allowed: canCreate } = usePermission('create_content');
- 
+
    const toggleExpandSessionGroup = useGlobalStore((s) => s.toggleExpandSessionGroup);
 -  const [updateAgentGroup, addCustomGroup] = useHomeStore((s) => [s.updateAgentGroup, s.addGroup]);
 +  const [updateSessionGroup, addCustomGroup] = useSessionStore((s) => [
@@ -988,11 +987,11 @@ index 11e6c991f4a15b696b1a639cc09239a898939ea1..989aabb762dee50b280d0b72b138be86
 +    s.addSessionGroup,
 +  ]);
 +  const updateAgentGroup = useHomeStore((s) => s.updateAgentGroup);
- 
+
    const [input, setInput] = useState('');
    const [loading, setLoading] = useState(false);
 @@ -43,11 +47,8 @@ const CreateGroupContent = memo<CreateGroupContentProps>(({ id, itemType, visibi
- 
+
      setLoading(true);
      try {
 -      const groupId = await addCustomGroup(input, visibility);
@@ -1006,9 +1005,9 @@ index 11e6c991f4a15b696b1a639cc09239a898939ea1..989aabb762dee50b280d0b72b138be86
        toast.success(t('sessionGroup.createSuccess'));
        close();
 @@ -80,13 +81,9 @@ const CreateGroupContent = memo<CreateGroupContentProps>(({ id, itemType, visibi
- 
+
  CreateGroupContent.displayName = 'MobileCreateGroupContent';
- 
+
 -export const openCreateGroupModal = (
 -  id: string,
 -  itemType: 'agent' | 'group',
@@ -1026,7 +1025,7 @@ index 58cb15d9b3d84b4d623d1d77acc39ccfab186eb1..a32ba20dc9ca3b084ce6af1871bd0120
 --- a/src/store/home/slices/sidebarUI/action.test.ts
 +++ b/src/store/home/slices/sidebarUI/action.test.ts
 @@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
- 
+
  import { getActiveWorkspaceId } from '@/business/client/hooks/useActiveWorkspaceId';
  import { INBOX_SESSION_ID } from '@/const/session';
 +import { mutate } from '@/libs/swr';
@@ -1037,43 +1036,43 @@ index 58cb15d9b3d84b4d623d1d77acc39ccfab186eb1..a32ba20dc9ca3b084ce6af1871bd0120
 @@ -59,6 +61,8 @@ afterEach(() => {
    vi.restoreAllMocks();
  });
- 
+
 +vi.mock('@/libs/swr', () => ({ mutate: vi.fn() }));
 +
  describe('createSidebarUISlice', () => {
    // ========== Agent Operations ==========
    describe('pinAgent', () => {
 @@ -75,6 +79,7 @@ describe('createSidebarUISlice', () => {
- 
+
        expect(agentService.updateAgentPinned).toHaveBeenCalledWith(mockAgentId, true);
        expect(spyOnRefresh).toHaveBeenCalled();
 +      expect(mutate).toHaveBeenCalledWith(sessionKeys.list(true));
      });
- 
+
      it('should unpin an agent and refresh agent list', async () => {
 @@ -182,6 +187,7 @@ describe('createSidebarUISlice', () => {
- 
+
        expect(agentService.removeAgent).toHaveBeenCalledWith(mockAgentId);
        expect(spyOnRefresh).toHaveBeenCalled();
 +      expect(mutate).toHaveBeenCalledWith(sessionKeys.list(true));
      });
- 
+
      it('should switch to inbox when removing the active session', async () => {
 @@ -228,6 +234,7 @@ describe('createSidebarUISlice', () => {
- 
+
        expect(agentService.duplicateAgent).toHaveBeenCalledWith(mockAgentId, 'Copied Agent');
        expect(spyOnRefresh).toHaveBeenCalled();
 +      expect(mutate).toHaveBeenCalledWith(sessionKeys.list(true));
        expect(mockSetActiveAgentId).toHaveBeenCalledWith(mockNewAgentId);
      });
- 
+
 @@ -283,6 +290,7 @@ describe('createSidebarUISlice', () => {
- 
+
        expect(homeService.updateAgentSessionGroupId).toHaveBeenCalledWith(mockAgentId, mockGroupId);
        expect(spyOnRefresh).toHaveBeenCalled();
 +      expect(mutate).toHaveBeenCalledWith(sessionKeys.list(true));
      });
- 
+
      it('should set group to default when groupId is null', async () => {
 diff --git a/src/store/home/slices/sidebarUI/action.ts b/src/store/home/slices/sidebarUI/action.ts
 index 03e407545ccaa0423914336333d63082f44adfeb..45f5e59cd0a929d51faa656c642d34d3bcd27ea2 100644
@@ -1082,7 +1081,7 @@ index 03e407545ccaa0423914336333d63082f44adfeb..45f5e59cd0a929d51faa656c642d34d3
 @@ -1,6 +1,8 @@
  import { toast } from '@lobehub/ui';
  import { t } from 'i18next';
- 
+
 +import { mutate } from '@/libs/swr';
 +import { sessionKeys } from '@/libs/swr/keys';
  import { agentService } from '@/services/agent';
@@ -1091,7 +1090,7 @@ index 03e407545ccaa0423914336333d63082f44adfeb..45f5e59cd0a929d51faa656c642d34d3
 @@ -28,7 +30,11 @@ export class SidebarUIActionImpl {
      this.#get = get;
    }
- 
+
 -  duplicateAgent = async (agentId: string, newTitle?: string): Promise<string | undefined> => {
 +  #refreshSidebar = async (): Promise<void> => {
 +    await Promise.all([this.#get().refreshAgentList(), mutate(sessionKeys.list(true))]);
@@ -1099,17 +1098,17 @@ index 03e407545ccaa0423914336333d63082f44adfeb..45f5e59cd0a929d51faa656c642d34d3
 +
 +  duplicateAgent = async (agentId: string, newTitle?: string): Promise<void> => {
      const loadingToast = toast.loading(t('duplicateSession.loading', { ns: 'chat' }));
- 
+
      const result = await agentService.duplicateAgent(agentId, newTitle);
 @@ -39,7 +45,7 @@ export class SidebarUIActionImpl {
        return;
      }
- 
+
 -    await this.#get().refreshAgentList();
 +    await this.#refreshSidebar();
      loadingToast.close();
      toast.success(t('duplicateSession.success', { ns: 'chat' }));
- 
+
 @@ -76,7 +82,7 @@ export class SidebarUIActionImpl {
    // want an item in their own sidebar hides it instead (personal layer).
    pinAgent = async (agentId: string, pinned: boolean): Promise<void> => {
@@ -1117,10 +1116,10 @@ index 03e407545ccaa0423914336333d63082f44adfeb..45f5e59cd0a929d51faa656c642d34d3
 -    await this.#get().refreshAgentList();
 +    await this.#refreshSidebar();
    };
- 
+
    pinAgentGroup = async (groupId: string, pinned: boolean): Promise<void> => {
 @@ -86,7 +92,7 @@ export class SidebarUIActionImpl {
- 
+
    removeAgent = async (agentId: string): Promise<void> => {
      await agentService.removeAgent(agentId);
 -    await this.#get().refreshAgentList();
@@ -1135,7 +1134,7 @@ index 03e407545ccaa0423914336333d63082f44adfeb..45f5e59cd0a929d51faa656c642d34d3
 -    await this.#get().refreshAgentList();
 +    await this.#refreshSidebar();
    };
- 
+
    addGroup = async (name: string, visibility?: 'private' | 'public'): Promise<string> => {
 diff --git a/src/libs/swr/keys.ts b/src/libs/swr/keys.ts
 index 3eb1505..5eb6b8f 100644
