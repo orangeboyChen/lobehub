@@ -181,7 +181,7 @@ index 2e529387bd6fd203e1991b7b83592022520c1700..db02b1eb743a45571c11ca57041786a6
    });
  });
 diff --git a/src/features/Connectors/ConnectorDetail/index.tsx b/src/features/Connectors/ConnectorDetail/index.tsx
-index b24e282..31e3d0c 100644
+index b24e282..f6f4dcc 100644
 --- a/src/features/Connectors/ConnectorDetail/index.tsx
 +++ b/src/features/Connectors/ConnectorDetail/index.tsx
 @@ -2,4 +2,3 @@ import { getComposioAppByIdentifier, getLobehubSkillProviderById } from '@lobech
@@ -192,10 +192,10 @@ index b24e282..31e3d0c 100644
 +import { Button, confirmModal, createStaticStyles, toast, Tooltip } from '@lobehub/ui';
 +import { useSize } from 'ahooks';
 +import { PencilIcon, RefreshCwIcon, Trash2, Unplug } from 'lucide-react';
-@@ -7 +7 @@ import type { ReactNode } from 'react';
+@@ -7 +6 @@ import type { ReactNode } from 'react';
 -import { memo, useCallback, useState } from 'react';
 +import { memo, useCallback, useRef, useState } from 'react';
-@@ -25,0 +26,50 @@ import ToolPermissionGroup from './ToolPermissionGroup';
+@@ -25,0 +25,50 @@ import ToolPermissionGroup from './ToolPermissionGroup';
 +const COMPACT_HEADER_WIDTH = 760;
 +
 +const styles = createStaticStyles(({ css, cssVar }) => ({
@@ -246,7 +246,7 @@ index b24e282..31e3d0c 100644
 +  `,
 +}));
 +
-@@ -58,57 +107,0 @@ const ManageTooltip = ({ children, title }: { children: ReactNode; title?: strin
+@@ -58,57 +106,0 @@ const ManageTooltip = ({ children, title }: { children: ReactNode; title?: strin
 -type ConnectorDetailTab = 'overview' | 'tools';
 -
 -const styles = stylex.create({
@@ -304,17 +304,17 @@ index b24e282..31e3d0c 100644
 -  </Flexbox>
 -);
 -
-@@ -119 +112 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+@@ -119 +111 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -
 +    const headerRef = useRef<HTMLDivElement | null>(null);
-@@ -121 +114 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+@@ -121 +113 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -    const [tab, setTab] = useState<ConnectorDetailTab>('overview');
 +    const headerSize = useSize(headerRef);
-@@ -143,0 +137 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+@@ -143,0 +136 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 +    const isCompactHeader = (headerSize?.width ?? Number.POSITIVE_INFINITY) < COMPACT_HEADER_WIDTH;
-@@ -278 +271,0 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+@@ -278 +270,0 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -    // Sync button label: re-sync tool list from manifest (does NOT reset permissions)
-@@ -307,33 +300,72 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+@@ -307,33 +299,72 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -    const actions = (
 -      <>
 -        {/* Sync/Refresh: re-sync tool list from manifest */}
@@ -420,7 +420,7 @@ index b24e282..31e3d0c 100644
 +            {lifecycleActions !== undefined ? (
 +              lifecycleActions
 +            ) : (
-@@ -341,29 +373,9 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+@@ -341,29 +372,9 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -                <ManageTooltip title={manageTooltip}>
 -                  <Button
 -                    danger
@@ -459,14 +459,14 @@ index b24e282..31e3d0c 100644
 +                        icon: <Unplug size={14} />,
 +                        label: t('connector.disconnect', 'Disconnect'),
 +                        onClick: async () => {
-@@ -371,2 +383 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+@@ -371,2 +382 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -                            await deleteConnector(connectorId);
 -                            onDelete?.();
 +                            await disconnectConnector(connectorId);
-@@ -374 +385 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+@@ -374 +384 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -                            notifyRemoveError(error);
 +                            notifyActionError(error);
-@@ -377,7 +388,39 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+@@ -377,7 +387,39 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -                        title: t('connector.deleteConfirm', 'Delete this connector?'),
 -                      });
 -                    }}
@@ -513,7 +513,7 @@ index b24e282..31e3d0c 100644
 +                    })}
 +                  </ManageTooltip>
 +                )}
-@@ -386,41 +429,2 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+@@ -386,41 +428,2 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -            {/* Uninstall for builtin and marketplace tools */}
 -            {(isBuiltin || isMarketplace) && (
 -              <ManageTooltip title={credentialsTooltip}>
@@ -557,7 +557,7 @@ index b24e282..31e3d0c 100644
 -    );
 +          </div>
 +        </div>
-@@ -428,18 +432,16 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+@@ -428,18 +431,16 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -    const tools = hasTools ? (
 -      <Flexbox gap={16}>
 -        <Flexbox horizontal align={'center'} gap={16} justify={'space-between'}>
@@ -592,7 +592,7 @@ index b24e282..31e3d0c 100644
 +                fontSize: 13,
 +                lineHeight: 1.6,
 +                marginBottom: 16,
-@@ -448,84 +450,3 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+@@ -448,84 +449,3 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -              {t('connector.resetPermissions', 'Reset permissions')}
 -            </Button>
 -          </ManageTooltip>
@@ -680,7 +680,7 @@ index b24e282..31e3d0c 100644
 +              {connectorDescription}
 +            </div>
 +          )}
-@@ -533,3 +454,38 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+@@ -533,3 +453,38 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -        {/* Body */}
 -        <div {...stylex.props(styles.body)}>
 -          {tab === 'tools' ? tools : overview}
@@ -722,5 +722,5 @@ index b24e282..31e3d0c 100644
 +              {t('connector.noTools', 'No tool permissions to configure.')}
 +            </div>
 +          )}
-@@ -537 +492,0 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
+@@ -537 +491,0 @@ const ConnectorDetail = memo<ConnectorDetailProps>(
 -          {/* Edit modal — only http connectors have a server URL to edit */}
