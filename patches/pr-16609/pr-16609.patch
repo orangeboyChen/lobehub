@@ -184,14 +184,13 @@ diff --git a/src/features/Connectors/ConnectorDetail/index.tsx b/src/features/Co
 index b24e282..31e3d0c 100644
 --- a/src/features/Connectors/ConnectorDetail/index.tsx
 +++ b/src/features/Connectors/ConnectorDetail/index.tsx
-@@ -2,4 +2,4 @@ import { getComposioAppByIdentifier, getLobehubSkillProviderById } from '@lobech
+@@ -2,4 +2,3 @@ import { getComposioAppByIdentifier, getLobehubSkillProviderById } from '@lobech
 -import { Button, confirmModal, Flexbox, Tabs, Text, toast, Tooltip } from '@lobehub/ui';
 -import { cssVar } from '@lobehub/ui/stylex/cssVar.stylex';
 -import * as stylex from '@stylexjs/stylex';
 -import { PencilIcon, RefreshCwIcon, Trash2 } from 'lucide-react';
-+import { Button, confirmModal, toast, Tooltip } from '@lobehub/ui';
++import { Button, confirmModal, createStaticStyles, toast, Tooltip } from '@lobehub/ui';
 +import { useSize } from 'ahooks';
-+import { createStaticStyles } from 'antd-style';
 +import { PencilIcon, RefreshCwIcon, Trash2, Unplug } from 'lucide-react';
 @@ -7 +7 @@ import type { ReactNode } from 'react';
 -import { memo, useCallback, useState } from 'react';
