@@ -3960,7 +3960,7 @@ index 9953600c4b62335fcc15baa4798a8694dc270722..53fd5f29137ae27af39475a9dd64aca2
 +  UIChatMessage,
 +} from '@lobechat/types';
 +import { applyTopicModelToHeterogeneousProvider, resolveAgentAgencyConfig } from '@lobechat/types';
-+import { toast } from '@lobehub/ui/base-ui';
++import { toast } from '@lobehub/ui';
  import { t } from 'i18next';
  import { type StateCreator } from 'zustand';
  
