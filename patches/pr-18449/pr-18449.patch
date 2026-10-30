@@ -452,3 +452,16 @@ index 9ad84b98ebd12475e4d7667bf125576194a479fb..2f71870383ac92e2c94b84aad067f468
    internal_dispatchSessions = (payload: SessionDispatch): void => {
      const nextSessions = sessionsReducer(this.#get().sessions, payload);
      this.#get().internal_processSessions(nextSessions, this.#get().sessionGroups);
+diff --git a/src/store/session/slices/session/action.ts b/src/store/session/slices/session/action.ts
+index 2f71870..079f1a6 100644
+--- a/src/store/session/slices/session/action.ts
++++ b/src/store/session/slices/session/action.ts
+@@ -0,0 +1,3 @@
++import isEqual from 'fast-deep-equal';
++import { type SWRResponse } from 'swr';
++import useSWR from 'swr';
+@@ -4,0 +8,2 @@ import { analyticsClient } from '@/libs/analytics/client';
++import { useClientDataSWR } from '@/libs/swr';
++import { sessionKeys } from '@/libs/swr/keys';
+@@ -11,0 +17 @@ import {
++  type ChatSessionList,

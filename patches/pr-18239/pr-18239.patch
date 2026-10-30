@@ -1066,3 +1066,26 @@ index 03e407545ccaa0423914336333d63082f44adfeb..45f5e59cd0a929d51faa656c642d34d3
    };
  
    addGroup = async (name: string, visibility?: 'private' | 'public'): Promise<string> => {
+diff --git a/src/libs/swr/keys.ts b/src/libs/swr/keys.ts
+index 3eb1505..5eb6b8f 100644
+--- a/src/libs/swr/keys.ts
++++ b/src/libs/swr/keys.ts
+@@ -889,0 +890,6 @@ export const onboardingKeys = {
++// ---- session list -------------------------------------------------------
++export const sessionKeys = {
++  list: def('session:list', (isLogin: boolean | undefined) => ['session:list', isLogin]),
++  search: def('session:search', (keyword?: string) => ['session:search', keyword]),
++};
++
+@@ -1014,0 +1021 @@ export const swrKeys = {
++  session: sessionKeys,
+diff --git a/packages/types/src/session/index.ts b/packages/types/src/session/index.ts
+index 04972cf..ca3555a 100644
+--- a/packages/types/src/session/index.ts
++++ b/packages/types/src/session/index.ts
+@@ -5,0 +6,5 @@ export * from './sessionGroup';
++export interface ChatSessionList {
++  sessionGroups: LobeSessionGroups;
++  sessions: LobeSessions;
++}
++
