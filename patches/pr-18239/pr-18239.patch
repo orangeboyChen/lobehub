@@ -448,13 +448,43 @@ index a7cbe1a1c1e150a6cf5293d65923c6eaf250c6d4..b9792e1d923ab21495778eb9116f99f0
    marketIdentifier?: string;
    meta: MetaData;
 diff --git a/src/features/MobileHome/SessionListContent/List/Item/Actions.tsx b/src/features/MobileHome/SessionListContent/List/Item/Actions.tsx
-index 45486591bead7ad3579101818ee8d5bc598e910e..1e7877c06399c38c07fa93119efe2212a6455a72 100644
 --- a/src/features/MobileHome/SessionListContent/List/Item/Actions.tsx
 +++ b/src/features/MobileHome/SessionListContent/List/Item/Actions.tsx
-@@ -14,157 +14,217 @@ import { useHomeStore } from '@/store/home';
- import { homeAgentListSelectors } from '@/store/home/selectors';
- import { getDeleteErrorMessageKey } from '@/utils/forbiddenError';
+@@ -1,189 +1,254 @@
+-import { type SidebarAgentItem } from '@lobechat/types';
+-import { type DropdownItem, Icon, toast } from '@lobehub/ui';
+-import { ActionIcon, confirmModal, DropdownMenu } from '@lobehub/ui';
+-import { Check, Copy, ListTree, MoreVertical, Pin, PinOff, Plus, Trash } from 'lucide-react';
+-import { useState } from 'react';
++import { ActionIcon, DropdownMenu, Icon } from '@lobehub/ui';
++import { confirmModal, toast } from '@lobehub/ui/base-ui';
++import { type ItemType } from 'antd/es/menu/interface';
++import isEqual from 'fast-deep-equal';
++import {
++  Check,
++  ExternalLink,
++  ListTree,
++  LucideCopy,
++  LucidePlus,
++  MoreVertical,
++  Pin,
++  PinOff,
++  Trash,
++} from 'lucide-react';
++import { memo, useMemo } from 'react';
+ import { useTranslation } from 'react-i18next';
  
+-import { useResourceAccess } from '@/features/ResourcePermission/useResourceAccess';
+-import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
++import { isDesktop } from '@/const/index';
+ import { usePermission } from '@/hooks/usePermission';
+-import { useResourceManageable } from '@/hooks/useResourceManageable';
+-import { chatGroupService } from '@/services/chatGroup';
++import { useGlobalStore } from '@/store/global';
+ import { useHomeStore } from '@/store/home';
+-import { homeAgentListSelectors } from '@/store/home/selectors';
+-import { getDeleteErrorMessageKey } from '@/utils/forbiddenError';
+-
 -import { openCreateGroupModal } from '../../Modals/CreateGroupModal';
 -
 -const Actions = ({
@@ -464,15 +494,25 @@ index 45486591bead7ad3579101818ee8d5bc598e910e..1e7877c06399c38c07fa93119efe2212
 -}: {
 -  item: SidebarAgentItem;
 -  groupId?: string | null;
++import { useSessionStore } from '@/store/session';
++import { sessionHelpers } from '@/store/session/helpers';
++import { sessionGroupSelectors, sessionSelectors } from '@/store/session/selectors';
++import { SessionDefaultGroup } from '@/types/index';
++import { isForbiddenError, isOwnerOnlyForbiddenError } from '@/utils/forbiddenError';
++
 +interface ActionProps {
 +  group: string | undefined;
 +  id: string;
 +  openCreateGroupModal: (isVirtualAgent: boolean) => void;
 +  parentType: 'agent' | 'group';
    setOpen: (open: boolean) => void;
- }) => {
-   const navigate = useWorkspaceAwareNavigate();
-   const { t } = useTranslation(['chat', 'common']);
+-}) => {
+-  const navigate = useWorkspaceAwareNavigate();
+-  const { t } = useTranslation(['chat', 'common']);
++}
++
++const Actions = memo<ActionProps>(({ group, id, openCreateGroupModal, parentType, setOpen }) => {
++  const { t } = useTranslation('chat');
    const { allowed: canCreate, reason: createReason } = usePermission('create_content');
    const { allowed: canEdit, reason: editReason } = usePermission('edit_own_content');
 -  const access = useResourceAccess(item.type === 'group' ? 'agentGroup' : 'agent', item.id);
@@ -482,42 +522,6 @@ index 45486591bead7ad3579101818ee8d5bc598e910e..1e7877c06399c38c07fa93119efe2212
 -    item.visibility === 'private'
 -      ? homeAgentListSelectors.privateAgentGroups
 -      : homeAgentListSelectors.agentGroups,
--  );
--  const [
--    pinAgent,
--    pinAgentGroup,
--    duplicateAgent,
--    duplicateAgentGroup,
--    removeAgent,
--    removeAgentGroup,
--    updateAgentGroup,
--    refreshAgentList,
--  ] = useHomeStore((s) => [
--    s.pinAgent,
--    s.pinAgentGroup,
--    s.duplicateAgent,
--    s.duplicateAgentGroup,
--    s.removeAgent,
--    s.removeAgentGroup,
--    s.updateAgentGroup,
--    s.refreshAgentList,
--  ]);
--  const [loading, setLoading] = useState(false);
--  const run = async (action: () => Promise<void>) => {
--    if (loading) return;
--    setLoading(true);
--    try {
--      await action();
--    } finally {
--      setLoading(false);
--    }
--  };
--  const move = (target: string | null) =>
--    run(async () => {
--      if (item.type === 'group') {
--        await chatGroupService.updateGroup(item.id, { groupId: target });
--        await refreshAgentList();
--      } else await updateAgentGroup(item.id, target);
 +
 +  const openAgentInNewWindow = useGlobalStore((s) => s.openAgentInNewWindow);
 +
@@ -534,94 +538,7 @@ index 45486591bead7ad3579101818ee8d5bc598e910e..1e7877c06399c38c07fa93119efe2212
 +        s.duplicateSession,
 +        s.updateSessionGroupId,
 +      ];
-     });
--  const items: DropdownItem[] = [
--    {
--      key: 'pin',
--      title: editReason,
--      disabled: !editable,
--      icon: <Icon icon={item.pinned ? PinOff : Pin} />,
--      label: t(item.pinned ? 'pinOff' : 'pin'),
--      onClick: () =>
--        run(() => (item.type === 'group' ? pinAgentGroup : pinAgent)(item.id, !item.pinned)),
--    },
--    {
--      key: 'duplicate',
--      title: createReason,
--      disabled:
--        !canCreate ||
--        !access.isAccessResolved ||
--        !(item.type === 'group' ? access.canEditResource : access.canUseResource),
--      icon: <Icon icon={Copy} />,
--      label: t('duplicate', { ns: 'common' }),
--      onClick: () =>
--        run(async () => {
--          const id = await (item.type === 'group' ? duplicateAgentGroup : duplicateAgent)(item.id);
--          if (id) navigate(`/${item.type === 'group' ? 'group' : 'agent'}/${id}`);
--        }),
--    },
--    { type: 'divider' },
--    {
--      key: 'moveGroup',
--      title: editReason,
--      disabled: !editable,
--      icon: <Icon icon={ListTree} />,
--      label: t('sessionGroup.moveGroup'),
--      children: [
--        ...groups.map((group) => ({
--          key: group.id,
--          icon: group.id === groupId ? <Icon icon={Check} /> : undefined,
--          label: group.name,
--          onClick: () => move(group.id),
--        })),
--        {
--          key: 'default',
--          icon: groupId === null ? <Icon icon={Check} /> : undefined,
--          label: t('defaultList'),
--          onClick: () => move(null),
--        },
--        { type: 'divider' },
--        {
--          key: 'createGroup',
--          title: createReason,
--          disabled: !canCreate,
--          icon: <Icon icon={Plus} />,
--          label: t('sessionGroup.createGroup'),
--          onClick: () => openCreateGroupModal(item.id, item.type, item.visibility),
--        },
--      ],
--    },
--    { type: 'divider' },
--    {
--      key: 'delete',
--      title: editReason,
--      danger: true,
--      disabled: !editable || !manageable || !access.canManageResource,
--      icon: <Icon icon={Trash} />,
--      label: t('delete', { ns: 'common' }),
--      onClick: () =>
--        confirmModal({
--          title: t('delete', { ns: 'common' }),
--          content: t(
--            item.type === 'group'
--              ? 'confirmRemoveChatGroupItemAlert'
--              : 'confirmRemoveSessionItemAlert',
--          ),
--          okText: t('delete', { ns: 'common' }),
--          okButtonProps: { danger: true },
--          onOk: () =>
--            run(async () => {
--              try {
--                await (item.type === 'group' ? removeAgentGroup : removeAgent)(item.id);
--                toast.success(
--                  t(
--                    item.type === 'group'
--                      ? 'confirmRemoveGroupSuccess'
--                      : 'confirmRemoveSessionSuccess',
--                  ),
--                );
--              } catch (error) {
--                toast.error(t(getDeleteErrorMessageKey(error), { ns: 'common' }));
++    });
 +
 +  const [pinAgentGroup, removeAgentGroup, pinAgent, duplicateAgent, removeAgent, updateAgentGroup] =
 +    useHomeStore((s) => [
@@ -653,11 +570,7 @@ index 45486591bead7ad3579101818ee8d5bc598e910e..1e7877c06399c38c07fa93119efe2212
 +                pinAgentGroup(id, !pin);
 +              } else {
 +                isVirtualAgent ? pinAgent(id, !pin) : pinSession(id, !pin);
-               }
--            }),
--        }),
--    },
--  ];
++              }
 +            },
 +          },
 +          {
@@ -807,11 +720,169 @@ index 45486591bead7ad3579101818ee8d5bc598e910e..1e7877c06399c38c07fa93119efe2212
 +      removeAgent,
 +      updateAgentGroup,
 +    ],
-+  );
+   );
+-  const [
+-    pinAgent,
+-    pinAgentGroup,
+-    duplicateAgent,
+-    duplicateAgentGroup,
+-    removeAgent,
+-    removeAgentGroup,
+-    updateAgentGroup,
+-    refreshAgentList,
+-  ] = useHomeStore((s) => [
+-    s.pinAgent,
+-    s.pinAgentGroup,
+-    s.duplicateAgent,
+-    s.duplicateAgentGroup,
+-    s.removeAgent,
+-    s.removeAgentGroup,
+-    s.updateAgentGroup,
+-    s.refreshAgentList,
+-  ]);
+-  const [loading, setLoading] = useState(false);
+-  const run = async (action: () => Promise<void>) => {
+-    if (loading) return;
+-    setLoading(true);
+-    try {
+-      await action();
+-    } finally {
+-      setLoading(false);
+-    }
+-  };
+-  const move = (target: string | null) =>
+-    run(async () => {
+-      if (item.type === 'group') {
+-        await chatGroupService.updateGroup(item.id, { groupId: target });
+-        await refreshAgentList();
+-      } else await updateAgentGroup(item.id, target);
+-    });
+-  const items: DropdownItem[] = [
+-    {
+-      key: 'pin',
+-      title: editReason,
+-      disabled: !editable,
+-      icon: <Icon icon={item.pinned ? PinOff : Pin} />,
+-      label: t(item.pinned ? 'pinOff' : 'pin'),
+-      onClick: () =>
+-        run(() => (item.type === 'group' ? pinAgentGroup : pinAgent)(item.id, !item.pinned)),
+-    },
+-    {
+-      key: 'duplicate',
+-      title: createReason,
+-      disabled:
+-        !canCreate ||
+-        !access.isAccessResolved ||
+-        !(item.type === 'group' ? access.canEditResource : access.canUseResource),
+-      icon: <Icon icon={Copy} />,
+-      label: t('duplicate', { ns: 'common' }),
+-      onClick: () =>
+-        run(async () => {
+-          const id = await (item.type === 'group' ? duplicateAgentGroup : duplicateAgent)(item.id);
+-          if (id) navigate(`/${item.type === 'group' ? 'group' : 'agent'}/${id}`);
+-        }),
+-    },
+-    { type: 'divider' },
+-    {
+-      key: 'moveGroup',
+-      title: editReason,
+-      disabled: !editable,
+-      icon: <Icon icon={ListTree} />,
+-      label: t('sessionGroup.moveGroup'),
+-      children: [
+-        ...groups.map((group) => ({
+-          key: group.id,
+-          icon: group.id === groupId ? <Icon icon={Check} /> : undefined,
+-          label: group.name,
+-          onClick: () => move(group.id),
+-        })),
+-        {
+-          key: 'default',
+-          icon: groupId === null ? <Icon icon={Check} /> : undefined,
+-          label: t('defaultList'),
+-          onClick: () => move(null),
+-        },
+-        { type: 'divider' },
+-        {
+-          key: 'createGroup',
+-          title: createReason,
+-          disabled: !canCreate,
+-          icon: <Icon icon={Plus} />,
+-          label: t('sessionGroup.createGroup'),
+-          onClick: () => openCreateGroupModal(item.id, item.type, item.visibility),
+-        },
+-      ],
+-    },
+-    { type: 'divider' },
+-    {
+-      key: 'delete',
+-      title: editReason,
+-      danger: true,
+-      disabled: !editable || !manageable || !access.canManageResource,
+-      icon: <Icon icon={Trash} />,
+-      label: t('delete', { ns: 'common' }),
+-      onClick: () =>
+-        confirmModal({
+-          title: t('delete', { ns: 'common' }),
+-          content: t(
+-            item.type === 'group'
+-              ? 'confirmRemoveChatGroupItemAlert'
+-              : 'confirmRemoveSessionItemAlert',
+-          ),
+-          okText: t('delete', { ns: 'common' }),
+-          okButtonProps: { danger: true },
+-          onOk: () =>
+-            run(async () => {
+-              try {
+-                await (item.type === 'group' ? removeAgentGroup : removeAgent)(item.id);
+-                toast.success(
+-                  t(
+-                    item.type === 'group'
+-                      ? 'confirmRemoveGroupSuccess'
+-                      : 'confirmRemoveSessionSuccess',
+-                  ),
+-                );
+-              } catch (error) {
+-                toast.error(t(getDeleteErrorMessageKey(error), { ns: 'common' }));
+-              }
+-            }),
+-        }),
+-    },
+-  ];
 +
    return (
-     <div
-       role="presentation"
+-    <div
+-      role="presentation"
+-      onClick={(e) => {
+-        if (e.currentTarget.contains(e.target as Node)) {
+-          e.preventDefault();
+-          e.stopPropagation();
+-        }
+-      }}
+-    >
+-      <DropdownMenu items={items} onOpenChange={setOpen}>
+-        <ActionIcon
+-          icon={MoreVertical}
+-          loading={loading}
+-          size={{ blockSize: 28, size: 16 }}
+-          title={t('more', { ns: 'common' })}
+-        />
+-      </DropdownMenu>
+-    </div>
++    <DropdownMenu items={items} onOpenChange={setOpen}>
++      <ActionIcon
++        icon={MoreVertical}
++        size={{
++          blockSize: 28,
++          size: 16,
++        }}
++      />
++    </DropdownMenu>
+   );
+-};
++});
++
+ export default Actions;
 diff --git a/src/features/MobileHome/SessionListContent/List/Item/index.tsx b/src/features/MobileHome/SessionListContent/List/Item/index.tsx
 index 6c97dba96a55333513fc080da9ff9216fac38c38..0fddc8c3cd525e794647b40ee8e65bd617e4614d 100644
 --- a/src/features/MobileHome/SessionListContent/List/Item/index.tsx
