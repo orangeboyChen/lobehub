@@ -1140,13 +1140,15 @@ diff --git a/src/libs/swr/keys.ts b/src/libs/swr/keys.ts
 index 3eb1505..5eb6b8f 100644
 --- a/src/libs/swr/keys.ts
 +++ b/src/libs/swr/keys.ts
-@@ -889,0 +890,6 @@ export const onboardingKeys = {
+@@ -890,2 +890,8 @@ export const onboardingKeys = {
+   understandingTopic: def('onboarding:understandingTopic', () => ['onboarding:understandingTopic']),
+ };
++
 +// ---- session list -------------------------------------------------------
 +export const sessionKeys = {
 +  list: def('session:list', (isLogin: boolean | undefined) => ['session:list', isLogin]),
 +  search: def('session:search', (keyword?: string) => ['session:search', keyword]),
 +};
-+
 @@ -1014,0 +1021 @@ export const swrKeys = {
 +  session: sessionKeys,
 diff --git a/packages/types/src/session/index.ts b/packages/types/src/session/index.ts

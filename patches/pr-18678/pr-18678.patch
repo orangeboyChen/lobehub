@@ -2,14 +2,19 @@ diff --git a/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.t
 index 302de55..670b72c 100644
 --- a/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
 +++ b/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
-@@ -1555,0 +1556,7 @@ export class GatewayActionImpl {
-+      onRunTerminal: ({ succeeded }) =>
-+        this.settleTopicOperation({
-+          context: resolvedMessageContext,
-+          operationId: result.operationId,
-+          succeeded,
-+          topicId: result.topicId,
-+        }),
+@@ -1571,5 +1571,12 @@ export class GatewayActionImpl {
+       runLifecycle: buildRunLifecycle(this.#get, {
+         context: resolvedMessageContext,
+         parentMessageId: result.assistantMessageId,
+         parentMessageType: 'assistant',
+         runId: gatewayOpId,
++        onRunTerminal: ({ succeeded }) =>
++          this.settleTopicOperation({
++            context: resolvedMessageContext,
++            operationId: result.operationId,
++            succeeded,
++            topicId: result.topicId,
++          }),
 @@ -1607,22 +1614,3 @@ export class GatewayActionImpl {
 -
 -        // An external hetero producer does not run on this socket: the CLI
@@ -81,9 +86,14 @@ index 302de55..670b72c 100644
 -            topicId: result.topicId,
 -          });
 -        }
-@@ -1937,0 +1885,2 @@ export class GatewayActionImpl {
-+      onRunTerminal: ({ succeeded }) =>
-+        this.settleTopicOperation({ context, operationId, succeeded, topicId }),
+@@ -1949,5 +1904,7 @@ export class GatewayActionImpl {
+       runLifecycle: buildRunLifecycle(this.#get, {
+         context,
+         parentMessageId: assistantMessageId,
+         parentMessageType: 'assistant',
+         runId: gatewayOpId,
++        onRunTerminal: ({ succeeded }) =>
++          this.settleTopicOperation({ context, operationId, succeeded, topicId }),
 @@ -1989,5 +1938,4 @@ export class GatewayActionImpl {
 -        const effectiveSucceeded = isSuccessfulGatewayCompletion({
 -          authFailed,
@@ -143,7 +153,12 @@ index 302de55..670b72c 100644
 -          topicId,
 -        });
 +        void this.settleTopicOperation({ context, operationId, succeeded, topicId });
-@@ -2097,0 +2000,44 @@ export class GatewayActionImpl {
+@@ -2105,4 +2000,48 @@ export class GatewayActionImpl {
+         parentOperationId,
+         refreshGroup,
+       });
+   };
++
 +  private settleTopicOperation = async (params: {
 +    context: ConversationContext;
 +    operationId: string;
@@ -187,7 +202,6 @@ index 302de55..670b72c 100644
 +      },
 +    });
 +  };
-+
 diff --git a/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts b/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts
 index 8b94b2c..7cd37c6 100644
 --- a/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler.ts
