@@ -1,11 +1,11 @@
 diff --git a/apps/server/src/services/aiAgent/__tests__/execAgent.resume.test.ts b/apps/server/src/services/aiAgent/__tests__/execAgent.resume.test.ts
-index 59ba9729ad2d4b82e8ee1a14eed127900c548029..a05af03cb21571390f14fa2e50ffecbc728a2bad 100644
+index 59ba972..a05af03 100644
 --- a/apps/server/src/services/aiAgent/__tests__/execAgent.resume.test.ts
 +++ b/apps/server/src/services/aiAgent/__tests__/execAgent.resume.test.ts
 @@ -3,14 +3,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
-
+ 
  import { AiAgentService } from '../index';
-
+ 
 -const { mockCreateOperation, mockFindById, mockMessageCreate, mockMessageQuery, mockQueryTree } =
 -  vi.hoisted(() => ({
 -    mockCreateOperation: vi.fn(),
@@ -29,12 +29,12 @@ index 59ba9729ad2d4b82e8ee1a14eed127900c548029..a05af03cb21571390f14fa2e50ffecbc
 +  mockMessageUpdate: vi.fn(),
 +  mockQueryTree: vi.fn(),
 +}));
-
+ 
  vi.mock('@/libs/trusted-client', () => ({
    generateTrustedClientToken: vi.fn().mockReturnValue(undefined),
 @@ -19,17 +26,15 @@ vi.mock('@/libs/trusted-client', () => ({
  }));
-
+ 
  vi.mock('@/database/models/message', () => ({
 -  MessageModel: vi.fn().mockImplementation(function () {
 -    return {
@@ -57,12 +57,12 @@ index 59ba9729ad2d4b82e8ee1a14eed127900c548029..a05af03cb21571390f14fa2e50ffecbc
 +    update: mockMessageUpdate,
 +  })),
  }));
-
+ 
  vi.mock('@/database/models/agent', () => ({
 @@ -40,6 +45,13 @@ vi.mock('@/database/models/agent', () => ({
    }),
  }));
-
+ 
 +vi.mock('@/database/models/chatGroup', () => ({
 +  ChatGroupModel: vi.fn().mockImplementation(() => ({
 +    findById: vi.fn().mockResolvedValue(undefined),
@@ -75,16 +75,16 @@ index 59ba9729ad2d4b82e8ee1a14eed127900c548029..a05af03cb21571390f14fa2e50ffecbc
      return {
 @@ -188,6 +200,7 @@ describe('AiAgentService.execAgent - resume mode', () => {
      ]);
-
+ 
      mockMessageCreate.mockResolvedValue({ id: 'assistant-msg-new' });
 +    mockMessageUpdate.mockResolvedValue({ success: true });
      mockQueryTree.mockResolvedValue([]);
-
+ 
      service = new AiAgentService({} as any, 'user-1');
 @@ -248,6 +261,140 @@ describe('AiAgentService.execAgent - resume mode', () => {
      );
    });
-
+ 
 +  it.each([null, 'thread-1'])(
 +    'reuses an existing member assistant in thread %s without removing its council siblings',
 +    async (threadId) => {
@@ -223,10 +223,10 @@ index 59ba9729ad2d4b82e8ee1a14eed127900c548029..a05af03cb21571390f14fa2e50ffecbc
      await expect(
        service.execAgent({
 diff --git a/apps/server/src/services/aiAgent/pipeline/execTurn.ts b/apps/server/src/services/aiAgent/pipeline/execTurn.ts
-index c3f6529a..52148fb9 100644
+index ee13b5b..34e72a0 100644
 --- a/apps/server/src/services/aiAgent/pipeline/execTurn.ts
 +++ b/apps/server/src/services/aiAgent/pipeline/execTurn.ts
-@@ -134,6 +134,7 @@ export const execAgentTurn = async (
+@@ -136,6 +136,7 @@ export const execAgentTurn = async (
      queueRetryDelay,
      parentMessageId,
      parentOperationId,
@@ -234,7 +234,7 @@ index c3f6529a..52148fb9 100644
      resume,
      resumeApproval,
      resumeApprovals,
-@@ -180,7 +181,8 @@ export const execAgentTurn = async (
+@@ -182,7 +183,8 @@ export const execAgentTurn = async (
      !!resumeApproval ||
      !!resumeApprovals?.length ||
      !!resumeToolResult ||
@@ -242,30 +242,30 @@ index c3f6529a..52148fb9 100644
 +    !!parentMessageId ||
 +    !!replaceAssistantMessageId;
    const clientIds = isResumeLike ? undefined : params.clientIds;
-
+ 
    // Validate that either agentId or slug is provided
-@@ -283,6 +285,7 @@ export const execAgentTurn = async (
+@@ -285,6 +287,7 @@ export const execAgentTurn = async (
    if (shareGate) applyShareGateToAgentConfig(agentConfig);
-
+ 
    let resumeParentMessage: Awaited<ReturnType<MessageModel['findById']>>;
 +  let replacementAssistantMessage: Awaited<ReturnType<MessageModel['findById']>>;
-
+ 
    // `resumeApproval` implies the same "load parent message + skip user
    // message creation" semantics as `resume`. Callers that go through the
-@@ -298,7 +301,8 @@ export const execAgentTurn = async (
+@@ -300,7 +303,8 @@ export const execAgentTurn = async (
        ? [resumeApproval]
        : [];
-
+ 
 -  const effectiveResume = resume || approvalDecisions.length > 0 || !!resumeToolResult;
 +  const effectiveResume =
 +    resume || approvalDecisions.length > 0 || !!resumeToolResult || !!replaceAssistantMessageId;
-
+ 
    // Both resume and suppressUserMessage run the turn off existing history
    // instead of appending a new user message — share the message-construction
-@@ -313,6 +317,33 @@ export const execAgentTurn = async (
+@@ -315,6 +319,33 @@ export const execAgentTurn = async (
      );
    }
-
+ 
 +  if (replaceAssistantMessageId) {
 +    if (!parentMessageId || !appContext?.topicId) {
 +      throw new Error(
@@ -296,16 +296,16 @@ index c3f6529a..52148fb9 100644
    // Stages 2.6–2.7 — claim the human decision(s) before anything below reads
    // message history (see `pipeline/approvalResume`).
    const {
-@@ -426,6 +457,7 @@ export const execAgentTurn = async (
+@@ -430,6 +461,7 @@ export const execAgentTurn = async (
          prompt,
          providerOverride,
          requestedDeviceId,
 +        replacementAssistantMessage,
+         requireDevice,
          resolvedAgentId,
          resume,
-         runFromHistory,
 diff --git a/apps/server/src/services/aiAgent/pipeline/turnSetup.ts b/apps/server/src/services/aiAgent/pipeline/turnSetup.ts
-index bef35840..63f6e2ba 100644
+index 573c19b..3333d06 100644
 --- a/apps/server/src/services/aiAgent/pipeline/turnSetup.ts
 +++ b/apps/server/src/services/aiAgent/pipeline/turnSetup.ts
 @@ -361,6 +361,7 @@ export interface TurnSetupInput {
@@ -313,21 +313,21 @@ index bef35840..63f6e2ba 100644
    providerOverride?: string;
    requestedDeviceId?: string;
 +  replacementAssistantMessage?: Awaited<ReturnType<MessageModel['findById']>>;
+   /** See `InternalExecAgentParams.requireDevice`. */
+   requireDevice?: boolean;
    resolvedAgentId: string;
-   /** Raw resume flag — a resume run must land on an existing topic. */
-   resume?: boolean;
-@@ -459,6 +460,7 @@ export const setupTurn = async (
+@@ -471,6 +472,7 @@ export const setupTurn = async (
      prompt,
      providerOverride,
      requestedDeviceId,
 +    replacementAssistantMessage,
+     requireDevice,
      resolvedAgentId,
      resume,
-     runFromHistory,
-@@ -988,33 +990,54 @@ export const setupTurn = async (
+@@ -1022,33 +1024,54 @@ export const setupTurn = async (
          );
        }
-
+ 
 -      const assistantMessageRecord =
 -        existingContinuationAssistant ??
 -        (await deps.messageModel.create(
@@ -404,10 +404,10 @@ index bef35840..63f6e2ba 100644
        log('execAgent: created assistant message %s', assistantMessageRecord.id);
        return { assistantMessageRecord, selfMessageIds, userMessageRecord };
 diff --git a/packages/builtin-agents/src/agents/group-supervisor/systemRole.ts b/packages/builtin-agents/src/agents/group-supervisor/systemRole.ts
-index cfc9ddc0e154cedd945fef47e3aebe6318288d0d..f3a193f873b1674c69e26bbfc71a169eaa253f8b 100644
+index cb7c70d..0d9d5fc 100644
 --- a/packages/builtin-agents/src/agents/group-supervisor/systemRole.ts
 +++ b/packages/builtin-agents/src/agents/group-supervisor/systemRole.ts
-@@ -53,5 +53,6 @@ export const supervisorSystemRole = `You are LobeAI, an intelligent team coordin
+@@ -58,5 +58,6 @@ export const supervisorSystemRole = `You are ${promptAssistantName('LobeAI')}, a
  - Respect each agent's defined role boundaries
  - NEVER expose or display agent IDs to users in your responses - agent IDs are internal identifiers only for tool invocation
  - Always refer to agents by their names, never by their IDs
@@ -415,7 +415,7 @@ index cfc9ddc0e154cedd945fef47e3aebe6318288d0d..f3a193f873b1674c69e26bbfc71a169e
  </constraints>
  `;
 diff --git a/packages/builtin-tool-group-management/src/systemRole.ts b/packages/builtin-tool-group-management/src/systemRole.ts
-index 4f0c45b8ec269826c806a8ab5b374bbed8815f0b..9c1810f099343e3aef27eb8c6afb71c6415048fb 100644
+index 4f0c45b..9c1810f 100644
 --- a/packages/builtin-tool-group-management/src/systemRole.ts
 +++ b/packages/builtin-tool-group-management/src/systemRole.ts
 @@ -4,7 +4,7 @@
@@ -424,7 +424,7 @@ index 4f0c45b8ec269826c806a8ab5b374bbed8815f0b..9c1810f099343e3aef27eb8c6afb71c6
   */
 -export const systemPrompt = `You are a Group Supervisor with tools to orchestrate multi-agent collaboration. Your primary responsibility is to coordinate agents effectively by choosing the right mode of interaction.
 +export const systemPrompt = `You coordinate a multi-agent group with tools for collaboration. Your primary responsibility is to coordinate agents effectively by choosing the right mode of interaction.
-
+ 
  <core_decision_framework>
  ## Communication Mode Selection
 @@ -347,6 +347,7 @@ The \`tasks\` parameter MUST be a proper JSON array, NOT a stringified JSON stri
@@ -433,14 +433,14 @@ index 4f0c45b8ec269826c806a8ab5b374bbed8815f0b..9c1810f099343e3aef27eb8c6afb71c6
  5. **Explain your choices**: Tell users why you chose speak vs broadcast
 +6. **Keep orchestration internal**: "Supervisor" is an internal role label. Never introduce or refer to yourself as Supervisor; speak naturally on behalf of the group.
  </best_practices>
-
+ 
  <response_format>
 diff --git a/packages/context-engine/src/providers/__tests__/__snapshots__/GroupContextInjector.test.ts.snap b/packages/context-engine/src/providers/__tests__/__snapshots__/GroupContextInjector.test.ts.snap
-index 461a142806d75ac2bd68ba08862dc1cea64e7cd6..b9e4eb28c9e7514cdf675e05b1d79ce632f5fefe 100644
+index 461a142..b9e4eb2 100644
 --- a/packages/context-engine/src/providers/__tests__/__snapshots__/GroupContextInjector.test.ts.snap
 +++ b/packages/context-engine/src/providers/__tests__/__snapshots__/GroupContextInjector.test.ts.snap
 @@ -17,6 +17,7 @@ Empty group description
-
+ 
  <identity_rules>
  - NEVER expose or display agent IDs to users - always refer to agents by their names
 +- Role labels such as "supervisor" and "participant" are internal orchestration metadata. Never introduce yourself using those labels; use your agent name, or speak naturally on behalf of the group when coordinating it.
@@ -448,7 +448,7 @@ index 461a142806d75ac2bd68ba08862dc1cea64e7cd6..b9e4eb28c9e7514cdf675e05b1d79ce6
  </group_context>"
  `;
 @@ -38,6 +39,7 @@ Your internal agent ID is  (for system use only, never expose to users).
-
+ 
  <identity_rules>
  - NEVER expose or display agent IDs to users - always refer to agents by their names
 +- Role labels such as "supervisor" and "participant" are internal orchestration metadata. Never introduce yourself using those labels; use your agent name, or speak naturally on behalf of the group when coordinating it.
@@ -456,7 +456,7 @@ index 461a142806d75ac2bd68ba08862dc1cea64e7cd6..b9e4eb28c9e7514cdf675e05b1d79ce6
  </group_context>"
  `;
 @@ -59,6 +61,7 @@ Test group description
-
+ 
  <identity_rules>
  - NEVER expose or display agent IDs to users - always refer to agents by their names
 +- Role labels such as "supervisor" and "participant" are internal orchestration metadata. Never introduce yourself using those labels; use your agent name, or speak naturally on behalf of the group when coordinating it.
@@ -464,7 +464,7 @@ index 461a142806d75ac2bd68ba08862dc1cea64e7cd6..b9e4eb28c9e7514cdf675e05b1d79ce6
  </group_context>"
  `;
 @@ -80,6 +83,7 @@ Your internal agent ID is agt_editor (for system use only, never expose to users
-
+ 
  <identity_rules>
  - NEVER expose or display agent IDs to users - always refer to agents by their names
 +- Role labels such as "supervisor" and "participant" are internal orchestration metadata. Never introduce yourself using those labels; use your agent name, or speak naturally on behalf of the group when coordinating it.
@@ -472,7 +472,7 @@ index 461a142806d75ac2bd68ba08862dc1cea64e7cd6..b9e4eb28c9e7514cdf675e05b1d79ce6
  </group_context>"
  `;
 @@ -101,6 +105,7 @@ Your internal agent ID is  (for system use only, never expose to users).
-
+ 
  <identity_rules>
  - NEVER expose or display agent IDs to users - always refer to agents by their names
 +- Role labels such as "supervisor" and "participant" are internal orchestration metadata. Never introduce yourself using those labels; use your agent name, or speak naturally on behalf of the group when coordinating it.
@@ -480,13 +480,13 @@ index 461a142806d75ac2bd68ba08862dc1cea64e7cd6..b9e4eb28c9e7514cdf675e05b1d79ce6
  </group_context>"
  `;
 diff --git a/packages/conversation-flow/src/__tests__/parse.test.ts b/packages/conversation-flow/src/__tests__/parse.test.ts
-index 3bc73e3ec5a416ce4b081ed3492b52708edab541..4b2dcd69daca17586cb1a2c1221624242d121478 100644
+index 3bc73e3..4b2dcd6 100644
 --- a/packages/conversation-flow/src/__tests__/parse.test.ts
 +++ b/packages/conversation-flow/src/__tests__/parse.test.ts
 @@ -1072,6 +1072,47 @@ describe('parse', () => {
        expect(findCouncilBlock(result)?.council).toHaveLength(3);
      });
-
+ 
 +    it('keeps all council columns when switching back from a regenerated user branch', () => {
 +      const skillCall = {
 +        apiName: 'runSkill',
@@ -532,13 +532,13 @@ index 3bc73e3ec5a416ce4b081ed3492b52708edab541..4b2dcd69daca17586cb1a2c122162424
      // member it parents to. Broadcast agents finish near-simultaneously (tied createdAt), so
      // the writer's createdAt-last member can differ from the array order; previously the reader
 diff --git a/packages/conversation-flow/src/transformation/FlatListBuilder.ts b/packages/conversation-flow/src/transformation/FlatListBuilder.ts
-index 803f908703f81d8ed13c2db508ae55f18a5872df..ccce18899fa401c738b3a56381a8d74bfa30276b 100644
+index b2df228..f3181d8 100644
 --- a/packages/conversation-flow/src/transformation/FlatListBuilder.ts
 +++ b/packages/conversation-flow/src/transformation/FlatListBuilder.ts
 @@ -471,11 +471,16 @@ export class FlatListBuilder {
                processedIds,
              );
-
+ 
 +            const council = this.collectCouncilMembers(allToolMessages, allMessages, processedIds);
 +
              // Create assistantGroup virtual message with branch metadata
@@ -555,7 +555,7 @@ index 803f908703f81d8ed13c2db508ae55f18a5872df..ccce18899fa401c738b3a56381a8d74b
 @@ -489,7 +494,13 @@ export class FlatListBuilder {
              assistantChain.forEach((m) => processedIds.add(m.id));
              allToolMessages.forEach((m) => processedIds.add(m.id));
-
+ 
 -            yield this.continueAfterAssistantGroup(
 +            if (council) {
 +              for (const memberId of council.memberIds) {
@@ -567,8 +567,8 @@ index 803f908703f81d8ed13c2db508ae55f18a5872df..ccce18899fa401c738b3a56381a8d74b
                assistantChain,
                allToolMessages,
                flatList,
-@@ -828,14 +839,10 @@ export class FlatListBuilder {
-
+@@ -824,14 +835,10 @@ export class FlatListBuilder {
+ 
      const supervisorId = councilTool.parentId;
      let memberIds = supervisorId
 -      ? this.councilMemberChildIds(this.childrenMap.get(supervisorId) ?? []).filter(
@@ -583,32 +583,32 @@ index 803f908703f81d8ed13c2db508ae55f18a5872df..ccce18899fa401c738b3a56381a8d74b
 +      memberIds = this.councilMemberChildIds(this.childrenMap.get(councilTool.id) ?? []);
      }
      if (memberIds.length <= 1) return undefined;
-
+ 
 diff --git a/packages/prompts/src/prompts/agentGroup/__snapshots__/index.test.ts.snap b/packages/prompts/src/prompts/agentGroup/__snapshots__/index.test.ts.snap
-index 7d4affed6c6254a238128779997cc00e8bd425cf..0fc2a9c59a41a584e1b20b7a1a7c73a0f2ab5207 100644
+index 7d4affe..0fc2a9c 100644
 --- a/packages/prompts/src/prompts/agentGroup/__snapshots__/index.test.ts.snap
 +++ b/packages/prompts/src/prompts/agentGroup/__snapshots__/index.test.ts.snap
 @@ -77,5 +77,6 @@ Your internal agent ID is {{AGENT_ID}} (for system use only, never expose to use
-
+ 
  <identity_rules>
  - NEVER expose or display agent IDs to users - always refer to agents by their names
 +- Role labels such as "supervisor" and "participant" are internal orchestration metadata. Never introduce yourself using those labels; use your agent name, or speak naturally on behalf of the group when coordinating it.
  </identity_rules>"
  `;
 diff --git a/packages/prompts/src/prompts/agentGroup/groupContext.ts b/packages/prompts/src/prompts/agentGroup/groupContext.ts
-index b31754e93ef0876ccebd528cd4569235bddafaae..1063cc3ba6c945011e893800ac14416c3b913e99 100644
+index b31754e..1063cc3 100644
 --- a/packages/prompts/src/prompts/agentGroup/groupContext.ts
 +++ b/packages/prompts/src/prompts/agentGroup/groupContext.ts
 @@ -31,6 +31,7 @@ Your internal agent ID is {{AGENT_ID}} (for system use only, never expose to use
-
+ 
  <identity_rules>
  - NEVER expose or display agent IDs to users - always refer to agents by their names
 +- Role labels such as "supervisor" and "participant" are internal orchestration metadata. Never introduce yourself using those labels; use your agent name, or speak naturally on behalf of the group when coordinating it.
  </identity_rules>`;
-
+ 
  /**
 diff --git a/packages/prompts/src/prompts/agentGroup/index.test.ts b/packages/prompts/src/prompts/agentGroup/index.test.ts
-index 358e2fb49c85b1537216a8d9a107c56286c49a13..27a93e438b3e6d8e2212e06cb1ce866d83939ca4 100644
+index 358e2fb..27a93e4 100644
 --- a/packages/prompts/src/prompts/agentGroup/index.test.ts
 +++ b/packages/prompts/src/prompts/agentGroup/index.test.ts
 @@ -64,6 +64,11 @@ describe('groupContextTemplate', () => {
@@ -621,10 +621,10 @@ index 358e2fb49c85b1537216a8d9a107c56286c49a13..27a93e438b3e6d8e2212e06cb1ce866d
 +    expect(groupContextTemplate).toContain('Never introduce yourself using those labels');
 +  });
  });
-
+ 
  describe('formatGroupMembers', () => {
 diff --git a/packages/types/src/agentExecution/index.ts b/packages/types/src/agentExecution/index.ts
-index e87ae7ef18d858b6d5213081d988d4567e3642b2..790d9e5a11bfeb1b82e5519a36d5e5defb305bd7 100644
+index e87ae7e..790d9e5 100644
 --- a/packages/types/src/agentExecution/index.ts
 +++ b/packages/types/src/agentExecution/index.ts
 @@ -375,6 +375,8 @@ export interface ExecAgentParams {
@@ -637,35 +637,35 @@ index e87ae7ef18d858b6d5213081d988d4567e3642b2..790d9e5a11bfeb1b82e5519a36d5e5de
     * Existing topic operation this fresh turn atomically supersedes. The server
     * accepts the handoff only while the topic marker still belongs to this id.
 diff --git a/src/features/Conversation/Messages/CompressedGroup/index.tsx b/src/features/Conversation/Messages/CompressedGroup/index.tsx
-index d45e03435b78baa2e5fa2f175eac1b89ac74fbff..58df11179b15789f16b87cf1012b0c22b0576e1b 100644
+index 90af352..06f445b 100644
 --- a/src/features/Conversation/Messages/CompressedGroup/index.tsx
 +++ b/src/features/Conversation/Messages/CompressedGroup/index.tsx
-@@ -77,7 +77,7 @@ const CompressedGroupMessage = memo<CompressedGroupMessageProps>(({ id }) => {
+@@ -65,7 +65,7 @@ const CompressedGroupMessage = memo<CompressedGroupMessageProps>(({ id }) => {
      });
    }, [id, cancelCompression, t]);
-
+ 
 -  const content = message?.content;
 +  const content = message?.content ?? '';
    const rawCompressedMessages = (message as UIChatMessage)?.compressedMessages;
-
+ 
    // Filter out placeholder assistant message (content === '...' without tools)
 diff --git a/src/features/Conversation/Messages/components/PendingRetryTurn.tsx b/src/features/Conversation/Messages/components/PendingRetryTurn.tsx
-index 797a3b6c5f3a6d577484c23bced415d9be56aca2..d75fac9fce3c1e2708898e11bb6b8ffb963d3f8d 100644
+index 797a3b6..d75fac9 100644
 --- a/src/features/Conversation/Messages/components/PendingRetryTurn.tsx
 +++ b/src/features/Conversation/Messages/components/PendingRetryTurn.tsx
 @@ -1,8 +1,14 @@
  'use client';
-
+ 
 +import { Tag } from '@lobehub/ui';
 +import isEqual from 'fast-deep-equal';
  import { memo } from 'react';
 +import { useTranslation } from 'react-i18next';
-
+ 
 +import AgentGroupAvatar from '@/features/AgentGroupAvatar';
  import { ChatItem } from '@/features/Conversation/ChatItem';
 +import { useAgentGroupStore } from '@/store/agentGroup';
 +import { agentGroupSelectors } from '@/store/agentGroup/selectors';
-
+ 
  import { useAgentMeta } from '../../hooks';
  import ContentLoading from './ContentLoading';
 @@ -28,19 +34,38 @@ interface PendingRetryTurnProps {
@@ -681,9 +681,9 @@ index 797a3b6c5f3a6d577484c23bced415d9be56aca2..d75fac9fce3c1e2708898e11bb6b8ffb
 +    isEqual,
 +  );
 +  const { t } = useTranslation('chat');
-
+ 
    if (!showPendingTurn) return null;
-
+ 
 +  const isGroupRetry = !!groupId;
 +
    return (
@@ -711,13 +711,13 @@ index 797a3b6c5f3a6d577484c23bced415d9be56aca2..d75fac9fce3c1e2708898e11bb6b8ffb
        <ContentLoading id={userMessageId} />
      </ChatItem>
 diff --git a/src/features/Conversation/Messages/components/usePendingRetryTurn.test.ts b/src/features/Conversation/Messages/components/usePendingRetryTurn.test.ts
-index dfbafdc85ffe328b881bf5109729a917d62a4637..0ba025a4db2e51920873ab5f28102807c39e3fb7 100644
+index dfbafdc..0ba025a 100644
 --- a/src/features/Conversation/Messages/components/usePendingRetryTurn.test.ts
 +++ b/src/features/Conversation/Messages/components/usePendingRetryTurn.test.ts
 @@ -2,7 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
-
+ 
  import { usePendingRetryTurn } from './usePendingRetryTurn';
-
+ 
 -const state = vi.hoisted(() => ({ agentId: 'agt-1', hasNoReply: true, isRetrying: false }));
 +const state = vi.hoisted(() => ({
 +  agentId: 'agt-1',
@@ -725,7 +725,7 @@ index dfbafdc85ffe328b881bf5109729a917d62a4637..0ba025a4db2e51920873ab5f28102807
 +  hasNoReply: true,
 +  isRetrying: false,
 +}));
-
+ 
  vi.mock('../../store', () => ({
    dataSelectors: {
 @@ -12,12 +17,14 @@ vi.mock('../../store', () => ({
@@ -736,7 +736,7 @@ index dfbafdc85ffe328b881bf5109729a917d62a4637..0ba025a4db2e51920873ab5f28102807
 +  useConversationStore: (selector: (s: any) => any) =>
 +    selector({ context: { groupId: state.groupId } }),
  }));
-
+ 
  describe('usePendingRetryTurn', () => {
    beforeEach(() => {
      state.agentId = 'agt-1';
@@ -747,7 +747,7 @@ index dfbafdc85ffe328b881bf5109729a917d62a4637..0ba025a4db2e51920873ab5f28102807
 @@ -29,7 +36,21 @@ describe('usePendingRetryTurn', () => {
    it('shows a stand-in while a retry runs and the old reply is already gone', () => {
      state.isRetrying = true;
-
+ 
 -    expect(usePendingRetryTurn('user-1')).toEqual({ agentId: 'agt-1', showPendingTurn: true });
 +    expect(usePendingRetryTurn('user-1')).toEqual({
 +      agentId: 'agt-1',
@@ -765,10 +765,10 @@ index dfbafdc85ffe328b881bf5109729a917d62a4637..0ba025a4db2e51920873ab5f28102807
 +      showPendingTurn: true,
 +    });
    });
-
+ 
    it('stops as soon as the replacement reply exists', () => {
 diff --git a/src/features/Conversation/Messages/components/usePendingRetryTurn.ts b/src/features/Conversation/Messages/components/usePendingRetryTurn.ts
-index bf177692e2196be4b28ab31c9fc495d37050175e..d43dcec0215daed000f1c3bb77e8d7d4ab9a7d1f 100644
+index bf17769..d43dcec 100644
 --- a/src/features/Conversation/Messages/components/usePendingRetryTurn.ts
 +++ b/src/features/Conversation/Messages/components/usePendingRetryTurn.ts
 @@ -21,6 +21,7 @@ export const usePendingRetryTurn = (userMessageId: string) => {
@@ -776,18 +776,18 @@ index bf177692e2196be4b28ab31c9fc495d37050175e..d43dcec0215daed000f1c3bb77e8d7d4
      (s) => dataSelectors.getDisplayMessageById(userMessageId)(s)?.agentId,
    );
 +  const groupId = useConversationStore((s) => s.context.groupId);
-
+ 
 -  return { agentId, showPendingTurn: isRetrying && hasNoReply };
 +  return { agentId, groupId, showPendingTurn: isRetrying && hasNoReply };
  };
 diff --git a/src/features/Conversation/store/slices/data/action.test.ts b/src/features/Conversation/store/slices/data/action.test.ts
-index a5304911fa0055f951418675d4294c8033e3afcd..3add2bd3a3fcff6b64354e6f7a1508e6a96f01b2 100644
+index a530491..3add2bd 100644
 --- a/src/features/Conversation/store/slices/data/action.test.ts
 +++ b/src/features/Conversation/store/slices/data/action.test.ts
 @@ -726,6 +726,39 @@ describe('DataSlice', () => {
        expect(notFound).toBeUndefined();
      });
-
+ 
 +    it('getDisplayMessageById should find an in-bubble council member', () => {
 +      const store = createTestStore();
 +
@@ -823,15 +823,15 @@ index a5304911fa0055f951418675d4294c8033e3afcd..3add2bd3a3fcff6b64354e6f7a1508e6
 +
      it('getBlockContent should find assistant blocks in compressed messages', () => {
        const store = createTestStore();
-
+ 
 diff --git a/src/features/Conversation/store/slices/data/selectors.ts b/src/features/Conversation/store/slices/data/selectors.ts
-index adec0d9d6cb096849f983a347367374d928a5c30..7c5c207ecefb85f0269deba6a1bc076e72456e35 100644
+index adec0d9..7c5c207 100644
 --- a/src/features/Conversation/store/slices/data/selectors.ts
 +++ b/src/features/Conversation/store/slices/data/selectors.ts
 @@ -19,21 +19,34 @@ const messagesInit = (s: State) => s.messagesInit;
  const skipFetch = (s: State) => s.skipFetch;
  const hasLaterMessages = (s: State) => s.hasLaterMessages;
-
+ 
 -const getDisplayMessageById = (id: string) => (s: State) => {
 -  // First, try to find in top-level displayMessages
 -  const topLevelMessage = s.displayMessages.find((m) => m.id === id);
@@ -842,7 +842,7 @@ index adec0d9d6cb096849f983a347367374d928a5c30..7c5c207ecefb85f0269deba6a1bc076e
 +): UIChatMessage | undefined => {
 +  for (const message of messages) {
 +    if (message.id === id) return message;
-
+ 
 -  // If not found, search in agentCouncil members
 -  for (const message of s.displayMessages) {
 -    if (message.role === 'agentCouncil' && (message as any).members) {
@@ -863,7 +863,7 @@ index adec0d9d6cb096849f983a347367374d928a5c30..7c5c207ecefb85f0269deba6a1bc076e
 +      if (councilMember) return councilMember;
      }
    }
-
+ 
    return undefined;
  };
 +
@@ -873,15 +873,14 @@ index adec0d9d6cb096849f983a347367374d928a5c30..7c5c207ecefb85f0269deba6a1bc076e
  const getDbMessageByToolCallId = (id: string) => (s: State) =>
    s.dbMessages.find((m) => m.tool_call_id === id);
 diff --git a/src/features/Conversation/store/slices/generation/action.ts b/src/features/Conversation/store/slices/generation/action.ts
-index 9953600c4b62335fcc15baa4798a8694dc270722..53fd5f29137ae27af39475a9dd64aca295204068 100644
+index 9953600..0bebd52 100644
 --- a/src/features/Conversation/store/slices/generation/action.ts
 +++ b/src/features/Conversation/store/slices/generation/action.ts
-@@ -1,8 +1,15 @@
+@@ -1,7 +1,14 @@
  import { AgentManagementIdentifier } from '@lobechat/builtin-tool-agent-management';
  import { collectHeteroAttachedFiles } from '@lobechat/heterogeneous-agents';
  import { shouldDropUnsupportedClaudeAssistantPrefill } from '@lobechat/model-runtime/providers/anthropic/modelId';
 -import type { ConversationContext } from '@lobechat/types';
--import { toast } from '@lobehub/ui';
 +import type {
 +  ChatImageItem,
 +  ChatTTS,
@@ -890,10 +889,9 @@ index 9953600c4b62335fcc15baa4798a8694dc270722..53fd5f29137ae27af39475a9dd64aca2
 +  UIChatMessage,
 +} from '@lobechat/types';
 +import { applyTopicModelToHeterogeneousProvider, resolveAgentAgencyConfig } from '@lobechat/types';
-+import { toast } from '@lobehub/ui';
+ import { toast } from '@lobehub/ui';
  import { t } from 'i18next';
  import { type StateCreator } from 'zustand';
-
 @@ -11,7 +18,9 @@ import { saveDraft } from '@/features/ChatInput/draftStorage';
  import { isHeterogeneousAgentStatusGuideError } from '@/features/Conversation/Error/heterogeneous';
  import { getEffectiveConversationModel } from '@/features/Conversation/store/utils/effectiveModel';
@@ -908,7 +906,7 @@ index 9953600c4b62335fcc15baa4798a8694dc270722..53fd5f29137ae27af39475a9dd64aca2
 @@ -69,13 +78,214 @@ const buildRetryInitialContext = (editorData: Record<string, any> | null | undef
    };
  };
-
+ 
 -export {
 -  ensureEffectiveAgencyAccess,
 -  getEffectiveAgencyConfig,
@@ -1124,13 +1122,13 @@ index 9953600c4b62335fcc15baa4798a8694dc270722..53fd5f29137ae27af39475a9dd64aca2
 +
 +  return assistantMsgId;
 +};
-
+ 
  export interface HeteroContinuationScheduleParams {
    failedAssistantMessageId: string;
 @@ -92,6 +302,122 @@ interface RegenerateUserMessageSource {
    readDbMessages: () => ConversationStore['dbMessages'];
  }
-
+ 
 +type RetryExecutionContext = Pick<
 +  ConversationContext,
 +  'agentId' | 'groupId' | 'scope' | 'subAgentId' | 'isSupervisor' | 'orchestrationRole' | 'threadId'
@@ -1253,7 +1251,7 @@ index 9953600c4b62335fcc15baa4798a8694dc270722..53fd5f29137ae27af39475a9dd64aca2
 @@ -111,11 +437,178 @@ const captureRegenerateUserMessageSource = (
    };
  };
-
+ 
 +const collectMessageDescendantIds = (messageId: string, messages: UIChatMessage[]): string[] => {
 +  const childIdsByParent = new Map<string, string[]>();
 +  for (const message of messages) {
@@ -1428,7 +1426,7 @@ index 9953600c4b62335fcc15baa4798a8694dc270722..53fd5f29137ae27af39475a9dd64aca2
 -  const { context, displayMessages, hooks, readDbMessages } = source;
 +  const { context: sourceContext, displayMessages, hooks, readDbMessages } = source;
    const chatStore = useChatStore.getState();
-
+ 
    // Block a genuine double-regenerate, and ONLY that. The guard used to be
 @@ -136,6 +629,20 @@ const regenerateUserMessageFromSource = async (
    const currentIndex = displayMessages.findIndex((c) => c.id === messageId);
@@ -1490,12 +1488,12 @@ index 9953600c4b62335fcc15baa4798a8694dc270722..53fd5f29137ae27af39475a9dd64aca2
 +      (message) => message.parentId === messageId && message.role !== 'tool',
 +    ).length;
      const nextBranchIndex = childrenCount;
-
+ 
      // Switch to the new branch so the UI shows the incoming response immediately
 @@ -197,19 +734,15 @@ const regenerateUserMessageFromSource = async (
      const postSwitchOp = operationSelectors.getOperationById(operationId)(useChatStore.getState());
      if (postSwitchOp && postSwitchOp.status !== 'running') return;
-
+ 
 -    await ensureEffectiveAgencyAccess(context.agentId);
 -    const { agencyConfig, isWorkspaceAgent, workspaceScoped } = getEffectiveAgencyConfig(
 -      context.agentId,
@@ -1540,7 +1538,7 @@ index 9953600c4b62335fcc15baa4798a8694dc270722..53fd5f29137ae27af39475a9dd64aca2
 @@ -778,8 +1311,103 @@ export const generationSlice: StateCreator<
      }
    },
-
+ 
 -  continueHeteroAfterError: (groupMessageId: string) =>
 -    continueHeteroAfterError(get, groupMessageId),
 +  continueHeteroAfterError: async (groupMessageId: string) => {
@@ -1640,30 +1638,30 @@ index 9953600c4b62335fcc15baa4798a8694dc270722..53fd5f29137ae27af39475a9dd64aca2
 +      throw error;
 +    }
 +  },
-
+ 
    scheduleHeteroContinuation: async ({ failedAssistantMessageId, rateLimit }) => {
      const { context, dbMessages } = get();
 @@ -1032,7 +1660,10 @@ export const generationSlice: StateCreator<
    },
-
+ 
    regenerateAssistantMessage: async (messageId: string) => {
 -    const { displayMessages } = get();
 +    const { dbMessages, displayMessages } = get();
 +    const source = captureRegenerateUserMessageSource(get);
 +
 +    if (await regenerateGroupMemberMessageFromSource(messageId, source)) return;
-
+ 
      // Find the assistant message
      const currentIndex = displayMessages.findIndex((c) => c.id === messageId);
 @@ -1040,12 +1671,15 @@ export const generationSlice: StateCreator<
-
+ 
      if (!currentMessage) return;
-
+ 
 -    // Find the parent user message
 -    const userId = currentMessage.parentId;
 +    const userId = findUserMessageId(currentMessage, [...dbMessages, ...displayMessages]);
      if (!userId) return;
-
+ 
      // Delegate to regenerateUserMessage with the parent user message
 -    await get().regenerateUserMessage(userId);
 +    await regenerateUserMessageFromSource(
@@ -1672,10 +1670,10 @@ index 9953600c4b62335fcc15baa4798a8694dc270722..53fd5f29137ae27af39475a9dd64aca2
 +      getRetryExecutionContext(currentMessage, source.context),
 +    );
    },
-
+ 
    regenerateUserMessage: async (messageId: string, edit?: CodexMessageEdit) => {
 diff --git a/src/features/Conversation/store/slices/generation/continueHeteroAfterError.test.ts b/src/features/Conversation/store/slices/generation/continueHeteroAfterError.test.ts
-index 4fe5fd2cca8db05624be9f24a617862980fa6f30..7de3bbd0f3ab18cc7c8704826f3cea2438f4ba96 100644
+index 4fe5fd2..7de3bbd 100644
 --- a/src/features/Conversation/store/slices/generation/continueHeteroAfterError.test.ts
 +++ b/src/features/Conversation/store/slices/generation/continueHeteroAfterError.test.ts
 @@ -34,16 +34,10 @@ let mockAgentVisibility: 'private' | 'public' = 'public';
@@ -1696,7 +1694,7 @@ index 4fe5fd2cca8db05624be9f24a617862980fa6f30..7de3bbd0f3ab18cc7c8704826f3cea24
 +  getNativeHeteroSessionBindingKey: () => undefined,
 +  resolveHeteroResume: () => ({ cwdChanged: false, resumeSessionId: mockResumeSessionId }),
 +}));
-
+ 
  vi.mock('@/store/chat/utils/activeTopicDocumentContext', () => ({
    mergeAgentRuntimeInitialContexts: () => undefined,
 @@ -98,11 +92,8 @@ vi.mock('@/store/agent/selectors', () => ({
@@ -1712,7 +1710,7 @@ index 4fe5fd2cca8db05624be9f24a617862980fa6f30..7de3bbd0f3ab18cc7c8704826f3cea24
 +    getTopicModelById: () => () => undefined,
    },
  }));
-
+ 
 @@ -180,7 +171,6 @@ describe('continueHeteroAfterError', () => {
      mockResumeSessionId = 'sess-1';
      mockIsWorkspaceAgent = false;
@@ -1720,11 +1718,11 @@ index 4fe5fd2cca8db05624be9f24a617862980fa6f30..7de3bbd0f3ab18cc7c8704826f3cea24
 -    mockTopic = undefined;
      mockWorkspaceOverride = undefined;
    });
-
+ 
 @@ -212,20 +202,62 @@ describe('continueHeteroAfterError', () => {
      expect(executorParams().message).not.toBe(USER_MESSAGE.content);
    });
-
+ 
 -  it('continues with the topic-pinned heterogeneous model', async () => {
 -    mockTopic = { id: 'topic-1', model: 'opus', provider: 'claude-code' };
 -    const store = buildGroupStore([
@@ -1770,11 +1768,11 @@ index 4fe5fd2cca8db05624be9f24a617862980fa6f30..7de3bbd0f3ab18cc7c8704826f3cea24
 +        ],
 +      } as any);
 +    });
-
+ 
      await act(async () => {
        await store.getState().continueHeteroAfterError('step-1');
      });
-
+ 
 -    expect(executorParams().heterogeneousProvider).toMatchObject({
 -      model: 'opus',
 -      type: 'claude-code',
@@ -1792,7 +1790,7 @@ index 4fe5fd2cca8db05624be9f24a617862980fa6f30..7de3bbd0f3ab18cc7c8704826f3cea24
 +      subAgentId: 'member-agent',
      });
    });
-
+ 
 @@ -301,7 +333,6 @@ describe('continueHeteroAfterError', () => {
          boundDeviceId: 'personal-device',
          executionTarget: 'local',
@@ -1818,7 +1816,7 @@ index 4fe5fd2cca8db05624be9f24a617862980fa6f30..7de3bbd0f3ab18cc7c8704826f3cea24
      );
    });
 diff --git a/src/services/aiAgent.ts b/src/services/aiAgent.ts
-index 29d9e2274db2cba31eb1de19f6ce966222129e07..2226d4b6085131358d7b89e2e4970a550702fbe8 100644
+index 29d9e22..2226d4b 100644
 --- a/src/services/aiAgent.ts
 +++ b/src/services/aiAgent.ts
 @@ -167,6 +167,8 @@ export interface ExecAgentTaskParams {
@@ -1831,11 +1829,11 @@ index 29d9e2274db2cba31eb1de19f6ce966222129e07..2226d4b6085131358d7b89e2e4970a55
    replacesOperationId?: string;
    /** Resume a previous op paused on `human_approve_required` instead of starting from a fresh user prompt. */
 diff --git a/src/store/chat/agents/GroupOrchestration/__tests__/call-supervisor.test.ts b/src/store/chat/agents/GroupOrchestration/__tests__/call-supervisor.test.ts
-index c624026afc562ef540783920890b76e17a4fd116..7d8a51954641c16800aac07490aee423bcfe136f 100644
+index c624026..7d8a519 100644
 --- a/src/store/chat/agents/GroupOrchestration/__tests__/call-supervisor.test.ts
 +++ b/src/store/chat/agents/GroupOrchestration/__tests__/call-supervisor.test.ts
 @@ -80,6 +80,65 @@ const createInitialState = (overrides: Partial<AgentState> = {}): AgentState =>
-
+ 
  describe('createGroupOrchestrationExecutors', () => {
    describe('call_supervisor executor', () => {
 +    it('starts a retried supervisor turn from the requested User branch', async () => {
@@ -1901,7 +1899,7 @@ index c624026afc562ef540783920890b76e17a4fd116..7d8a51954641c16800aac07490aee423
        const mockStore = createMockStore({
          dbMessagesMap: {
 diff --git a/src/store/chat/agents/GroupOrchestration/createGroupOrchestrationExecutors.ts b/src/store/chat/agents/GroupOrchestration/createGroupOrchestrationExecutors.ts
-index 158bf733537eae4dfa38666853372f258c8733eb..73529856b3aacabd49ead4c6a1af16b8e64ae2fb 100644
+index 158bf73..7352985 100644
 --- a/src/store/chat/agents/GroupOrchestration/createGroupOrchestrationExecutors.ts
 +++ b/src/store/chat/agents/GroupOrchestration/createGroupOrchestrationExecutors.ts
 @@ -66,6 +66,7 @@ export interface GroupOrchestrationExecutorsContext {
@@ -1911,7 +1909,7 @@ index 158bf733537eae4dfa38666853372f258c8733eb..73529856b3aacabd49ead4c6a1af16b8
 +  parentMessageId?: string;
    supervisorAgentId: string;
  }
-
+ 
 @@ -110,10 +111,12 @@ export interface GroupOrchestrationExecutorsContext {
  export const createGroupOrchestrationExecutors = (
    context: GroupOrchestrationExecutorsContext,
@@ -1919,17 +1917,17 @@ index 158bf733537eae4dfa38666853372f258c8733eb..73529856b3aacabd49ead4c6a1af16b8
 -  const { get, messageContext, orchestrationOperationId, supervisorAgentId } = context;
 +  const { get, messageContext, orchestrationOperationId, parentMessageId, supervisorAgentId } =
 +    context;
-
+ 
    // Pre-compute the chat key for message fetching
    const chatKey = messageMapKey(messageContext);
 +  let initialSupervisorParentMessageId = parentMessageId;
-
+ 
    /**
     * Helper to get current messages for the group conversation
 @@ -138,8 +141,16 @@ export const createGroupOrchestrationExecutors = (
        const sessionLogId = `${state.operationId}:call_supervisor`;
        log(`[${sessionLogId}] Starting supervisor agent: ${agentId}`);
-
+ 
 -      const messages = getMessages();
 -      const lastMessage = messages.at(-1);
 +      const allMessages = getMessages();
@@ -1942,17 +1940,17 @@ index 158bf733537eae4dfa38666853372f258c8733eb..73529856b3aacabd49ead4c6a1af16b8
 +        ? allMessages[parentMessageIndex]
 +        : messages.at(-1);
 +      initialSupervisorParentMessageId = undefined;
-
+ 
        if (!lastMessage) {
          log(`[${sessionLogId}] No messages found, cannot execute supervisor`);
 diff --git a/src/store/chat/slices/agentRun/actions/__tests__/conversationLifecycle.test.ts b/src/store/chat/slices/agentRun/actions/__tests__/conversationLifecycle.test.ts
-index ce554f316ff4bb2f73a45e496400e4cc818c8270..db622264d516e65e02b890c720ebc0a07599a4e4 100644
+index 7c52f79..833e21e 100644
 --- a/src/store/chat/slices/agentRun/actions/__tests__/conversationLifecycle.test.ts
 +++ b/src/store/chat/slices/agentRun/actions/__tests__/conversationLifecycle.test.ts
 @@ -3595,6 +3595,47 @@ describe('ConversationLifecycle actions', () => {
          expect(enqueueMessageSpy).not.toHaveBeenCalled();
        });
-
+ 
 +      it('should replace a completed gateway operation whose server marker is still busy', async () => {
 +        const { result } = renderHook(() => useChatStore());
 +        const context = { ...createTestContext(), topicId: TEST_IDS.TOPIC_ID };
@@ -1998,13 +1996,13 @@ index ce554f316ff4bb2f73a45e496400e4cc818c8270..db622264d516e65e02b890c720ebc0a0
          // Stop flips the composer back to Send immediately via `isAborting`. The
          // queue drains on success only, so queueing behind an aborting run would
 diff --git a/src/store/chat/slices/agentRun/actions/__tests__/heterogeneousAgentExecutor.test.ts b/src/store/chat/slices/agentRun/actions/__tests__/heterogeneousAgentExecutor.test.ts
-index 481ec70dcaab0740b4aa5dabeb9b2a3728b223f7..2ac7b80c896e813d1985a6f7c5a02313ec1e2fe6 100644
+index 2830379..a9ce98f 100644
 --- a/src/store/chat/slices/agentRun/actions/__tests__/heterogeneousAgentExecutor.test.ts
 +++ b/src/store/chat/slices/agentRun/actions/__tests__/heterogeneousAgentExecutor.test.ts
-@@ -1555,6 +1555,41 @@ describe('heterogeneousAgentExecutor DB persistence', () => {
+@@ -1547,6 +1547,41 @@ describe('heterogeneousAgentExecutor DB persistence', () => {
        expect(dispatched![0].value.metadata.usage).toBeUndefined();
      });
-
+ 
 +    it('keeps group member ownership when persisting heterogeneous usage', async () => {
 +      await runWithEvents(
 +        [
@@ -2044,10 +2042,10 @@ index 481ec70dcaab0740b4aa5dabeb9b2a3728b223f7..2ac7b80c896e813d1985a6f7c5a02313
        await runWithEvents([
          ccInit(),
 diff --git a/src/store/chat/slices/agentRun/actions/transports/client/streamingExecutor.ts b/src/store/chat/slices/agentRun/actions/transports/client/streamingExecutor.ts
-index 281ffb677e291a02dab8e6644647b8a7cf02e593..d42ec8419ce671557d410c052a46551b4314fb4e 100644
+index 3c9b99f..cbfcedd 100644
 --- a/src/store/chat/slices/agentRun/actions/transports/client/streamingExecutor.ts
 +++ b/src/store/chat/slices/agentRun/actions/transports/client/streamingExecutor.ts
-@@ -502,6 +502,8 @@ export class StreamingExecutorActionImpl {
+@@ -470,6 +470,8 @@ export class StreamingExecutorActionImpl {
      parentMessageId: string;
      parentMessageType: 'user' | 'assistant' | 'tool';
      parentOperationId?: string;
@@ -2056,10 +2054,10 @@ index 281ffb677e291a02dab8e6644647b8a7cf02e593..d42ec8419ce671557d410c052a46551b
      skipCreateFirstMessage?: boolean;
      isSubAgent?: boolean;
      /**
-@@ -558,8 +560,12 @@ export class StreamingExecutorActionImpl {
+@@ -526,8 +528,12 @@ export class StreamingExecutorActionImpl {
        });
        operationId = newOperationId;
-
+ 
 -      // Associate message with operation
 -      this.#get().associateMessageWithOperation(parentMessageId, operationId);
 +      // Associate the visible assistant being replaced when present. Its
@@ -2069,12 +2067,12 @@ index 281ffb677e291a02dab8e6644647b8a7cf02e593..d42ec8419ce671557d410c052a46551b
 +        operationId,
 +      );
      }
-
+ 
      log(
-@@ -659,11 +665,14 @@ export class StreamingExecutorActionImpl {
+@@ -627,11 +633,14 @@ export class StreamingExecutorActionImpl {
        chatConfigOverride: params.chatConfigOverride,
      });
-
+ 
 -    if (params.skipCreateFirstMessage) {
 -      initialAgentState.pendingAssistantMessageId = params.parentMessageId;
 +    const existingAssistantMessageId =
@@ -2088,12 +2086,12 @@ index 281ffb677e291a02dab8e6644647b8a7cf02e593..d42ec8419ce671557d410c052a46551b
 +        assistantMessageId: existingAssistantMessageId,
        };
      }
-
+ 
 diff --git a/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts b/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
-index 683b0ab267089b16f3ea8f3abf66189115ecdbb2..302de559d89a4f4fcd51f2756e68c32fef243aec 100644
+index c19f28b..deae152 100644
 --- a/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
 +++ b/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
-@@ -969,8 +969,8 @@ export class GatewayActionImpl {
+@@ -960,8 +960,8 @@ export class GatewayActionImpl {
      projectWorkingDirectoryId?: string;
      /** Server operation whose visible output ended before this fresh turn. */
      replacesOperationId?: string;
@@ -2104,174 +2102,30 @@ index 683b0ab267089b16f3ea8f3abf66189115ecdbb2..302de559d89a4f4fcd51f2756e68c32f
      /**
       * Caller-owned operation that should be completed once the gateway side
       * has finished phase-1 init (network round-trip + child
-@@ -1047,8 +1047,7 @@ export class GatewayActionImpl {
-       optimisticTopic,
-       parentMessageId,
-       parentOperationId,
--      precreatedResult,
--      projectWorkingDirectoryId,
+@@ -1041,6 +1041,7 @@ export class GatewayActionImpl {
+       precreatedResult,
+       projectId,
+       projectWorkingDirectoryId,
 +      replaceAssistantMessageId,
        replacesOperationId,
        resumeApproval,
        resumeApprovals,
-@@ -1140,87 +1139,68 @@ export class GatewayActionImpl {
-       throw abortSignal.reason ?? new DOMException('Aborted', 'AbortError');
-     }
-
--    // Agent-share visitor surface: dispatch through the share-authorized mirror.
--    // It accepts only the share-safe subset (prompt / topic / clientIds /
--    // the visitor's share-uploaded fileIds, plus the visitor's own approval
--    // mode and their answers to this run's pending interventions) — everything
--    // else (tools, devices, mentions) is decided server-side by the share
--    // config, never by this client.
--    const agentShareId = executionContext.agentShareId;
--
--    const serverResult =
--      precreatedResult ??
--      (agentShareId
--        ? await awaitStartRequest(
--            shareChatService.execAgentTask({
--              clientIds,
--              fileIds,
--              parentMessageId,
--              prompt: message,
--              resumeApproval,
--              resumeApprovals,
--              resumeToolResult,
--              shareId: agentShareId,
--              steer: metadata?.steer,
--              topicId: executionContext.topicId,
--              userInterventionConfig,
--            }),
--            abortSignal,
--            (abandoned) =>
--              shareChatService.interruptTask(
--                agentShareId,
--                abandoned.topicId,
--                abandoned.operationId,
--              ),
--          )
--        : await awaitStartRequest(
--            aiAgentService.execAgentTask({
--              agentId: executionContext.agentId,
--              // Fresh sends only — resume flows never pass this, and the server drops
--              // it defensively on resume-like params anyway.
--              clientIds,
--              appContext: buildExecAppContext(this.#get, {
--                executionContext,
--                initialTopicMetadata,
--                messageContext,
--                projectWorkingDirectoryId: isCreateNewTopic ? projectWorkingDirectoryId : undefined,
--              }),
--              ...desktopDeviceHints,
--              clientOperations,
--              fileIds,
--              replacesOperationId,
--              mentionedAgents,
--              parentMessageId,
--              prompt: message,
--              resumeApproval,
--              resumeApprovals,
--              resumeToolResult,
--              selectedSkillIds,
--              selectedToolIds,
--              // A queued follow-up keeps its continuation mark on the row the
--              // server persists, which replaces the optimistic one.
--              steer: metadata?.steer,
--              trigger: metadata?.trigger,
--              userInterventionConfig,
--              userMessage,
--              // Dual-write for servers that predate `userMessage` (they read only these
--              // top-level fields and strip the rest); a current server folds them in.
--              contextSelections: userMessage?.metadata?.contextSelections,
--              pageSelections: userMessage?.metadata?.pageSelections,
--            }),
--            abortSignal,
--            (abandoned) =>
--              interruptGatewayTaskOrThrow({
--                operationId: abandoned.operationId,
--                topicId: abandoned.topicId,
--              }),
--          ));
--    // A member continuation names the supervisor's run as `operationId` (safe
--    // for older clients); this run is the member's continuation.
--    const result: ExecAgentResult =
--      serverResult.groupMemberContinuation && serverResult.memberOperationId
--        ? { ...serverResult, operationId: serverResult.memberOperationId }
--        : serverResult;
-+    const result = await aiAgentService.execAgentTask(
-+      {
-+        agentId: executionContext.agentId,
-+        // Fresh sends only — resume flows never pass this, and the server drops
-+        // it defensively on resume-like params anyway.
-+        clientIds,
-+        appContext: {
-+          agentDocumentId: executionContext.agentDocumentId,
-+          ...(messageContext.agentId !== executionContext.agentId && {
-+            conversationAgentId: messageContext.agentId,
-+          }),
-+          defaultTaskAssigneeAgentId: executionContext.defaultTaskAssigneeAgentId,
-+          documentId: executionContext.documentId,
-+          // When AgentBuilder runs, context.agentId is the builtin builder agent.
-+          // The actual editing target is chatStore.activeAgentId (kept in sync by
-+          // AgentBuilderProvider). Pass it so the server can route tool calls to
-+          // the correct agent rather than the builder itself.
-+          ...(executionContext.scope === 'agent_builder' && {
-+            editingAgentId: this.#get().activeAgentId ?? undefined,
-+          }),
-+          // Same shape as `editingAgentId`, for the Group Agent Builder panel on
-+          // the group Profile page. The builder conversation is keyed by the
-+          // builtin builder agent (no groupId in its ConversationContext, so the
-+          // message map key and the group's own chat stay separate), which left
-+          // the server runtime with no idea which group it was editing.
-+          // The context value wins, and every surface that opens this scope sets
-+          // it from its own route/group: it is fixed for the run, so a mid-run
-+          // navigation cannot make the server stamp a different group than the
-+          // panel is reading from. The `activeGroupId` fallback is a last resort
-+          // for a caller that forgot — it is sampled here, AFTER the async
-+          // preflight above, so it can already be stale by this point.
-+          ...(executionContext.scope === 'group_agent_builder' && {
-+            editingGroupId: executionContext.editingGroupId ?? this.#get().activeGroupId,
-+          }),
-+          groupId: executionContext.groupId,
-+          ...(initialTopicMetadata && { initialTopicMetadata }),
-+          // Forward the group orchestration role so the server can stamp it onto
-+          // the assistant message metadata. Without this the gateway-created
-+          // supervisor turn loses its role on the step_start snapshot / refetch
-+          // and renders as a generic assistant.
-+          orchestrationRole: executionContext.orchestrationRole,
-+          scope: executionContext.scope,
-+          taskId,
-+          threadId: executionContext.threadId,
-+          topicId: executionContext.topicId,
-+        },
-+        ...desktopDeviceHints,
-+        fileIds,
-+        replacesOperationId,
-+        mentionedAgents,
-+        parentMessageId,
-+        prompt: message,
-+        replaceAssistantMessageId,
-+        resumeApproval,
-+        resumeApprovals,
-+        resumeToolResult,
-+        selectedToolIds,
-+        trigger: metadata?.trigger,
-+        userInterventionConfig,
-+      },
-+      { signal: abortSignal },
-+    );
-
-     // Persistence is the ownership boundary. Notify before later UI synchronization awaits and
-     // before handling a late abort so callers never delete a file already attached server-side.
+@@ -1149,6 +1150,7 @@ export class GatewayActionImpl {
+               fileIds,
+               parentMessageId,
+               prompt: message,
++              replaceAssistantMessageId,
+               resumeApproval,
+               resumeApprovals,
+               resumeToolResult,
 diff --git a/src/store/chat/slices/agentRun/actions/transports/hetero/heterogeneousAgentExecutor.ts b/src/store/chat/slices/agentRun/actions/transports/hetero/heterogeneousAgentExecutor.ts
-index 4bf5b73a8d05ad43610a62d631fb1b25155e8b17..5e10e999424429b7c6942d95b6ffbfae9f295d3e 100644
+index e3585ae..bb73893 100644
 --- a/src/store/chat/slices/agentRun/actions/transports/hetero/heterogeneousAgentExecutor.ts
 +++ b/src/store/chat/slices/agentRun/actions/transports/hetero/heterogeneousAgentExecutor.ts
-@@ -695,6 +695,20 @@ export const executeHeterogeneousAgent = async (
+@@ -694,6 +694,20 @@ export const executeHeterogeneousAgent = async (
      return out;
    };
-
+ 
 +  const groupOrchestrationMetadata =
 +    context.groupId && (context.isSupervisor || context.orchestrationRole || context.subAgentId)
 +      ? {
@@ -2286,11 +2140,11 @@ index 4bf5b73a8d05ad43610a62d631fb1b25155e8b17..5e10e999424429b7c6942d95b6ffbfae
 +    ...metadata,
 +  });
 +
-   /**
-    * Global `tool_use.id → tool message DB id` lookup, shared across the
-    * main agent and every subagent run. `tool_result` events identify
-@@ -833,7 +847,11 @@ export const executeHeterogeneousAgent = async (
-
+   // Run-global persisted tools retain their message and thread ownership after
+   // a subagent finalizes, so unscoped bridge requests cannot create main copies.
+   const toolMsgIdByCallId: Map<string, string> = new Map();
+@@ -824,7 +838,11 @@ export const executeHeterogeneousAgent = async (
+ 
      data.assistantMessage = {
        agentId: context.agentId,
 +      ...(context.groupId && { groupId: context.groupId }),
@@ -2301,7 +2155,7 @@ index 4bf5b73a8d05ad43610a62d631fb1b25155e8b17..5e10e999424429b7c6942d95b6ffbfae
        model: data.model,
        provider: data.provider,
        role: 'assistant',
-@@ -954,6 +972,7 @@ export const executeHeterogeneousAgent = async (
+@@ -945,6 +963,7 @@ export const executeHeterogeneousAgent = async (
    const updateMessageOrThrow = async (messageId: string, update: Record<string, any>) => {
      const result = await messageService.updateMessage(messageId, update, {
        agentId: context.agentId,
@@ -2309,7 +2163,7 @@ index 4bf5b73a8d05ad43610a62d631fb1b25155e8b17..5e10e999424429b7c6942d95b6ffbfae
        topicId: context.topicId,
      });
      if (result?.success === false) {
-@@ -962,6 +981,7 @@ export const executeHeterogeneousAgent = async (
+@@ -953,6 +972,7 @@ export const executeHeterogeneousAgent = async (
    };
    const messageWriteCtx: MessageQueryContext = {
      agentId: context.agentId,
@@ -2317,9 +2171,9 @@ index 4bf5b73a8d05ad43610a62d631fb1b25155e8b17..5e10e999424429b7c6942d95b6ffbfae
      topicId: context.topicId,
    };
    const messageWriteBatcher = createMessageWriteBatcher({
-@@ -1585,11 +1605,14 @@ export const executeHeterogeneousAgent = async (
-   const applyMainIntent = async (intent: MainAgentIntent) => {
-     switch (intent.kind) {
+@@ -1527,11 +1547,14 @@ export const executeHeterogeneousAgent = async (
+       }
+ 
        case 'createAssistant': {
 -        const createMetadata: Record<string, any> = { ...heteroProvenance(intent.mainMessageId) };
 +        const createMetadata: Record<string, any> = withGroupOrchestrationMetadata(
@@ -2333,7 +2187,7 @@ index 4bf5b73a8d05ad43610a62d631fb1b25155e8b17..5e10e999424429b7c6942d95b6ffbfae
            id: intent.messageId,
            ...(Object.keys(createMetadata).length > 0 ? { metadata: createMetadata } : {}),
            model: intent.model,
-@@ -1615,7 +1638,7 @@ export const executeHeterogeneousAgent = async (
+@@ -1557,7 +1580,7 @@ export const executeHeterogeneousAgent = async (
          if (intent.reasoning !== undefined) update.reasoning = { content: intent.reasoning };
          if (intent.model) update.model = intent.model;
          if (intent.provider) update.provider = intent.provider;
@@ -2342,9 +2196,9 @@ index 4bf5b73a8d05ad43610a62d631fb1b25155e8b17..5e10e999424429b7c6942d95b6ffbfae
          if (Object.keys(update).length === 0) return;
          messageWriteBatcher.enqueueUpdateMessage(
            intent.messageId,
-@@ -1671,10 +1694,13 @@ export const executeHeterogeneousAgent = async (
+@@ -1613,10 +1636,13 @@ export const executeHeterogeneousAgent = async (
          };
-
+ 
          const buildToolMessage = (x: (typeof intent.tools)[number]) => {
 -          const toolMetadata = heteroProvenance(mainState.currentMainMessageId);
 +          const toolMetadata = withGroupOrchestrationMetadata(
@@ -2357,7 +2211,7 @@ index 4bf5b73a8d05ad43610a62d631fb1b25155e8b17..5e10e999424429b7c6942d95b6ffbfae
              id: x.toolMessageId,
              ...(Object.keys(toolMetadata).length > 0 ? { metadata: toolMetadata } : {}),
              parentId: intent.assistantMessageId,
-@@ -1812,7 +1838,9 @@ export const executeHeterogeneousAgent = async (
+@@ -1751,7 +1777,9 @@ export const executeHeterogeneousAgent = async (
            usage: intent.usage as ModelUsage,
            // Wholesale metadata overwrite — re-stamp the provenance the
            // createAssistant write put there.
@@ -2369,7 +2223,7 @@ index 4bf5b73a8d05ad43610a62d631fb1b25155e8b17..5e10e999424429b7c6942d95b6ffbfae
            ...(intent.provider && { provider: intent.provider }),
          };
 diff --git a/src/store/chat/slices/aiAgent/actions/__tests__/groupOrchestration.test.ts b/src/store/chat/slices/aiAgent/actions/__tests__/groupOrchestration.test.ts
-index bee332d45e5ecd35ccb66cd41c3b8f209b57487c..1792ea3f6902a8971327100de5cba21e06759a46 100644
+index bee332d..1792ea3 100644
 --- a/src/store/chat/slices/aiAgent/actions/__tests__/groupOrchestration.test.ts
 +++ b/src/store/chat/slices/aiAgent/actions/__tests__/groupOrchestration.test.ts
 @@ -47,6 +47,7 @@ describe('groupOrchestration actions', () => {
@@ -2409,10 +2263,10 @@ index bee332d45e5ecd35ccb66cd41c3b8f209b57487c..1792ea3f6902a8971327100de5cba21e
 +      });
 +    });
    });
-
+ 
    describe('useEnablePollingTaskStatus', () => {
 diff --git a/src/store/chat/slices/aiAgent/actions/groupOrchestration.ts b/src/store/chat/slices/aiAgent/actions/groupOrchestration.ts
-index 6dec93239320cc24d0b175b729a439fdc62ffcef..9328e0588fbecaecb6d2b0999d7866587b37419a 100644
+index 6dec932..9328e05 100644
 --- a/src/store/chat/slices/aiAgent/actions/groupOrchestration.ts
 +++ b/src/store/chat/slices/aiAgent/actions/groupOrchestration.ts
 @@ -33,6 +33,7 @@ export interface GroupOrchestrationParams {
@@ -2429,7 +2283,7 @@ index 6dec93239320cc24d0b175b729a439fdc62ffcef..9328e0588fbecaecb6d2b0999d786658
    ): Promise<AgentState> => {
 -    const { groupId, topicId, initialResult, supervisorAgentId } = params;
 +    const { groupId, topicId, initialResult, parentMessageId, supervisorAgentId } = params;
-
+ 
      log(
        '[internal_execGroupOrchestration] Starting orchestration for group: %s, supervisorAgentId: %s, initialResult: %s',
 @@ -292,6 +293,7 @@ export class GroupOrchestrationActionImpl {
@@ -2439,11 +2293,11 @@ index 6dec93239320cc24d0b175b729a439fdc62ffcef..9328e0588fbecaecb6d2b0999d786658
 +      parentMessageId,
        supervisorAgentId: groupConfig.supervisorAgentId,
      });
-
+ 
 @@ -384,6 +386,16 @@ export class GroupOrchestrationActionImpl {
        log('[internal_execGroupOrchestration] Operation failed');
      }
-
+ 
 +    if (topicId && (this.#get().activeTopicId === topicId || state.status === 'error')) {
 +      void this.#get().updateTopicStatus?.({
 +        agentId: supervisorAgentId,
@@ -2456,4 +2310,4 @@ index 6dec93239320cc24d0b175b729a439fdc62ffcef..9328e0588fbecaecb6d2b0999d786658
 +
      return state;
    };
-
+ 
