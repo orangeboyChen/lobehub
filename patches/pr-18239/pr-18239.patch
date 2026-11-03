@@ -2,7 +2,12 @@ diff --git a/packages/database/src/repositories/home/index.test.ts b/packages/da
 index 34d85ff78..e5858f237 100644
 --- a/packages/database/src/repositories/home/index.test.ts
 +++ b/packages/database/src/repositories/home/index.test.ts
-@@ -84,0 +85,24 @@ describe('HomeRepository', () => {
+@@ -83,4 +83,28 @@ describe('HomeRepository', () => {
+         title: 'Test Agent',
+         type: 'agent',
+       });
+     });
++
 +    it('should return non-virtual agents without a linked session', async () => {
 +      const [agent] = await serverDB
 +        .insert(agents)
@@ -26,4 +31,3 @@ index 34d85ff78..e5858f237 100644
 +        type: 'agent',
 +      });
 +    });
-+
