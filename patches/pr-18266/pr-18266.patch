@@ -244,14 +244,9 @@ index ee13b5b..34e72a0 100644
    const clientIds = isResumeLike ? undefined : params.clientIds;
  
    // Validate that either agentId or slug is provided
-@@ -285,6 +287,7 @@ export const execAgentTurn = async (
-   if (shareGate) applyShareGateToAgentConfig(agentConfig);
- 
+@@ -295,1 +297,2 @@ export const execAgentTurn = async (
    let resumeParentMessage: Awaited<ReturnType<MessageModel['findById']>>;
 +  let replacementAssistantMessage: Awaited<ReturnType<MessageModel['findById']>>;
- 
-   // `resumeApproval` implies the same "load parent message + skip user
-   // message creation" semantics as `resume`. Callers that go through the
 @@ -300,7 +303,8 @@ export const execAgentTurn = async (
        ? [resumeApproval]
        : [];
