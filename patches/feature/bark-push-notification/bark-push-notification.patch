@@ -1,72 +1,32 @@
 diff --git a/.env.example b/.env.example
-index ae6934c83c6b5da55b5fc4c9b8d497ad3f619a1a..976295e6d7499cf1308019f7f1174f2cf167c9b2 100644
+index 8a98e8b757..2cbe7e390d 100644
 --- a/.env.example
 +++ b/.env.example
-@@ -527,12 +527,33 @@ OPENAI_API_KEY=sk-xxxxxxxxx
- # Verify-im link token TTL in seconds (default 1800 = 30 min)
- # LOBE_LINK_TOKEN_TTL_SECONDS=1800
- 
--########################################
--######### Skills Installation ##########
--########################################
--
--# Optional public Market origin used only for Skill installation instruction links.
--# Example: https://market.example.com generates https://market.example.com/s/skills/<identifier>.
--# Leave unset to keep official lobehub.com links, even when MARKET_BASE_URL is configured.
--# This does not change the Market API endpoint or authentication.
--# MARKET_SKILL_INSTALL_BASE_URL=https://market.example.com
+@@ -551,0 +552,12 @@ OPENAI_API_KEY=sk-xxxxxxxxx
 +# #######################################
 +# ####### Push Notifications (Bark) #####
 +# #######################################
 +
-+# Self-hosted deployment push channel. The OSS notification slots are no-ops by
-+# default (Cloud overrides them with its own multi-channel service); set
-+# BARK_KEY to get inbox rows plus an iOS push without Expo/APNs credentials.
-+#
-+# Only the device is configured here. How a notification presents itself —
-+# interruption level, collapse group, icon — is decided per scenario in code
-+# (packages/business-server/src/notification/levels.ts), not by the deployment.
-+#
-+# Requires APP_URL to be your reachable public origin: the deep link tapped on
-+# the phone is built from it, and its unset fallback (http://localhost:3210)
-+# resolves against the phone itself.
-+#
-+# Bark device key — the path segment of https://api.day.app/<key>
++# Self-hosted deployment push channel. Set BARK_KEY to deliver iOS pushes.
++# APP_URL must be the reachable public origin used for notification deep links.
 +# BARK_KEY=
 +# Self-hosted Bark server. Defaults to the public Bark service.
 +# BARK_SERVER_URL=https://api.day.app
-+# Restricts delivery to one account. Leave unset only on single-user instances:
-+# without it every user's notifications land on the configured phone.
-+# Find the id with `lh whoami`, or: select id from users where email = 'you@example.com';
++# Optional account restriction, recommended for multi-user instances.
 +# BARK_USER_ID=
-+#
-+# To check the channel itself, bypass LobeHub entirely:
-+#   curl -X POST https://api.day.app/<BARK_KEY> -H 'Content-Type: application/json' \
-+#     -d '{"title":"LobeHub","body":"test"}'
-+# A silent deployment usually means BARK_USER_ID does not match the account that
-+# triggered the run — run with DEBUG=lobe-notification to see why a push was skipped.
++
 diff --git a/apps/server/src/services/agentRuntime/CompletionLifecycle/index.ts b/apps/server/src/services/agentRuntime/CompletionLifecycle/index.ts
-index bac36b017b072cfa0c944dabbe6ed4c6e141d7e0..3f8b5b2ee60f1110462b512c23be91f9f8872a7c 100644
+index e250a03e02..8628bd06e7 100644
 --- a/apps/server/src/services/agentRuntime/CompletionLifecycle/index.ts
 +++ b/apps/server/src/services/agentRuntime/CompletionLifecycle/index.ts
-@@ -25,7 +25,7 @@ import {
- import { buildLifecycleEvent, extractErrorMessage } from './lifecycleEvent';
- import { extractOutboundAttachments, extractTextFromMessageContent } from './messageContent';
- import { persistCompletion } from './persistence';
+@@ -37 +37 @@ import { type CompletionTransition, persistCompletion, settleRunThread } from '.
 -import { recallUserOnCompletion } from './recall';
 +import { recallUserOnCompletion, recallUserOnFailure } from './recall';
- import { emitSignalEvents, isAgentShareRun } from './signals';
- import type {
-   CompleteOperationOptions,
-@@ -409,15 +409,22 @@ export class CompletionLifecycle {
-       // repeatedly running the shared agent, and the notification would deep-link
-       // into a visitor topic (`topics.senderId`) that is deliberately excluded
-       // from creator-facing surfaces.
+@@ -559,2 +559 @@ export class CompletionLifecycle {
 -      if (
 -        isSuccessLikeCompletionReason(reason) &&
 +      const isUserFacingRun =
-         runOrigin.lineage?.isSubAgent !== true &&
-         runOrigin.lineage?.orchestrationRole !== 'member' &&
+@@ -563,5 +562,13 @@ export class CompletionLifecycle {
 -        !isAgentShareRun(state)
 -      ) {
 -        void this.recallUserOnCompletion(operationId, event, runOrigin).catch((error) =>
@@ -85,38 +45,18 @@ index bac36b017b072cfa0c944dabbe6ed4c6e141d7e0..3f8b5b2ee60f1110462b512c23be91f9
 +          void recallUserOnFailure(this.deps(), operationId, event, runOrigin).catch((error) =>
 +            log('[%s] Failure notification failed (non-fatal): %O', operationId, error),
 +          );
-       }
- 
-       const settledTopicId = typeof runOrigin.topicId === 'string' ? runOrigin.topicId : undefined;
 diff --git a/apps/server/src/services/agentRuntime/CompletionLifecycle/recall.ts b/apps/server/src/services/agentRuntime/CompletionLifecycle/recall.ts
-index 3d5bcf77bff09fdb0d4258c739cb95e48dbefd01..0b694222131ed2dc05dcc625e2f363f775665864 100644
+index cafce18875..1691ca9947 100644
 --- a/apps/server/src/services/agentRuntime/CompletionLifecycle/recall.ts
 +++ b/apps/server/src/services/agentRuntime/CompletionLifecycle/recall.ts
-@@ -1,10 +1,11 @@
- /**
-  * Completion push recall for runs the user is waiting on.
-  */
+@@ -4 +4 @@
 -import { RequestTrigger } from '@lobechat/types';
 +import { type ChatMessageErrorAttribution, RequestTrigger } from '@lobechat/types';
- import debug from 'debug';
- 
- import { notifyAgentRunCompleted } from '@/business/server/agent-run/notifyAgentRunCompleted';
+@@ -7,0 +8 @@ import { notifyAgentRunCompleted } from '@/business/server/agent-run/notifyAgent
 +import { notifyAgentRunFailed } from '@/business/server/agent-run/notifyAgentRunFailed';
- 
- import type { CompletionLifecycleDeps } from './types';
- 
-@@ -78,7 +79,6 @@ export async function recallUserOnCompletion(
- 
-   await notifyAgentRunCompleted({
-     agentId: event.agentId || undefined,
+@@ -83 +83,0 @@ export async function recallUserOnCompletion(
 -    duration: event.duration,
-     lastAssistantContent: event.lastAssistantContent,
-     operationId,
-     topicId: event.topicId,
-@@ -88,3 +88,41 @@ export async function recallUserOnCompletion(
-     workspaceId: deps.workspaceId,
-   });
- }
+@@ -92,0 +93,38 @@ export async function recallUserOnCompletion(
 +
 +/**
 + * Recall the user when an interactive run ends with a genuine failure.
@@ -157,7 +97,7 @@ index 3d5bcf77bff09fdb0d4258c739cb95e48dbefd01..0b694222131ed2dc05dcc625e2f363f7
 +}
 diff --git a/apps/server/src/services/notification/__tests__/bark.test.ts b/apps/server/src/services/notification/__tests__/bark.test.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..33e8c4be996cafba651ece0ebcfeedfaf9a216cb
+index 0000000000..33e8c4be99
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/bark.test.ts
 @@ -0,0 +1,257 @@
@@ -420,7 +360,7 @@ index 0000000000000000000000000000000000000000..33e8c4be996cafba651ece0ebcfeedfa
 +});
 diff --git a/apps/server/src/services/notification/__tests__/categories.test.ts b/apps/server/src/services/notification/__tests__/categories.test.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..240db0ace93d1af405b3e1098e621e0604d5afd1
+index 0000000000..240db0ace9
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/categories.test.ts
 @@ -0,0 +1,45 @@
@@ -471,7 +411,7 @@ index 0000000000000000000000000000000000000000..240db0ace93d1af405b3e1098e621e06
 +});
 diff --git a/apps/server/src/services/notification/__tests__/config.test.ts b/apps/server/src/services/notification/__tests__/config.test.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..ea201ce7d39d77600a03e005ec25eba8889f7df7
+index 0000000000..ea201ce7d3
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/config.test.ts
 @@ -0,0 +1,35 @@
@@ -512,7 +452,7 @@ index 0000000000000000000000000000000000000000..ea201ce7d39d77600a03e005ec25eba8
 +});
 diff --git a/apps/server/src/services/notification/__tests__/format.test.ts b/apps/server/src/services/notification/__tests__/format.test.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..3c4951c10feaf4a39dfcbf4967c4c1802dbac997
+index 0000000000..3c4951c10f
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/format.test.ts
 @@ -0,0 +1,112 @@
@@ -630,7 +570,7 @@ index 0000000000000000000000000000000000000000..3c4951c10feaf4a39dfcbf4967c4c180
 +});
 diff --git a/apps/server/src/services/notification/__tests__/notifyUser.test.ts b/apps/server/src/services/notification/__tests__/notifyUser.test.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..39d3f7cf956c47c8a902bce1a453de4c997227d7
+index 0000000000..39d3f7cf95
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/notifyUser.test.ts
 @@ -0,0 +1,500 @@
@@ -1136,7 +1076,7 @@ index 0000000000000000000000000000000000000000..39d3f7cf956c47c8a902bce1a453de4c
 +});
 diff --git a/apps/server/src/services/notification/__tests__/settings.test.ts b/apps/server/src/services/notification/__tests__/settings.test.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..9b2253ad1210939cf073930c2bbb5ba1041b9ced
+index 0000000000..9b2253ad12
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/settings.test.ts
 @@ -0,0 +1,100 @@
@@ -1242,7 +1182,7 @@ index 0000000000000000000000000000000000000000..9b2253ad1210939cf073930c2bbb5ba1
 +});
 diff --git a/apps/server/src/services/notification/__tests__/slots.test.ts b/apps/server/src/services/notification/__tests__/slots.test.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..35cea9a6e7c0b07359ec50c5010e71d0282d58a5
+index 0000000000..35cea9a6e7
 --- /dev/null
 +++ b/apps/server/src/services/notification/__tests__/slots.test.ts
 @@ -0,0 +1,312 @@
@@ -1559,38 +1499,25 @@ index 0000000000000000000000000000000000000000..35cea9a6e7c0b07359ec50c5010e71d0
 +  });
 +});
 diff --git a/packages/business-server/package.json b/packages/business-server/package.json
-index 20d659af0b9facf937e693b26160e7bb5fc07c2e..5877272c489bcc1bfafbaec6844940391a20905e 100644
+index 20d659af0b..5877272c48 100644
 --- a/packages/business-server/package.json
 +++ b/packages/business-server/package.json
-@@ -11,6 +11,8 @@
-     "@lobechat/database": "workspace:*",
-     "@lobechat/model-runtime": "workspace:*",
-     "@lobechat/trpc": "workspace:*",
+@@ -14 +14,3 @@
 -    "@lobechat/types": "workspace:*"
 +    "@lobechat/types": "workspace:*",
 +    "@lobechat/utils": "workspace:*",
 +    "debug": "^4.4.3"
-   }
- }
 diff --git a/packages/business-server/src/agent-run/agentInterventionReview.ts b/packages/business-server/src/agent-run/agentInterventionReview.ts
-index 9ae9850dfa28587859d1958b37d55da630218639..6d0211076a24d5a68d0a6a984781e17413a612a4 100644
+index 9ae9850dfa..6d0211076a 100644
 --- a/packages/business-server/src/agent-run/agentInterventionReview.ts
 +++ b/packages/business-server/src/agent-run/agentInterventionReview.ts
-@@ -1,5 +1,10 @@
- import type { MessageMapScope } from '@lobechat/types';
- 
+@@ -2,0 +3,5 @@ import type { MessageMapScope } from '@lobechat/types';
 +import { notifyUser } from '../notification';
 +import { NOTIFICATION_CATEGORY, NOTIFICATION_TYPE } from '../notification/categories';
 +import { renderCopy } from '../notification/copy';
 +import { buildConversationPath, previewText } from '../notification/format';
 +
- export type AgentInterventionReviewStatus =
-   | 'approved'
-   | 'cancelled'
-@@ -625,8 +630,42 @@ export async function acknowledgeAgentInterventionProducerResolution(
-  * Push / Live Activity fanout happens only after that create boundary and must
-  * be caught, logged, or durably retried inside the Cloud implementation. A
-  * downstream delivery failure must never reject this slot after persistence.
+@@ -628 +633,6 @@ export async function acknowledgeAgentInterventionProducerResolution(
 - * OSS deliberately has no durable store and therefore keeps the no-op default.
 + *
 + * OSS has no Live Activity to drive, so this slot only recalls the user: one
@@ -1598,8 +1525,7 @@ index 9ae9850dfa28587859d1958b37d55da630218639..6d0211076a24d5a68d0a6a984781e174
 + * the durable boundary here, so — matching the contract above — a failure to
 + * persist it is re-thrown for the parked lifecycle to retry, while a push
 + * failure after persistence is swallowed.
-  */
- export async function notifyAgentInterventionRequired(
+@@ -631,2 +641,31 @@ export async function notifyAgentInterventionRequired(
 -  _params: NotifyAgentInterventionRequiredParams,
 -): Promise<void> {}
 +  params: NotifyAgentInterventionRequiredParams,
@@ -1634,25 +1560,18 @@ index 9ae9850dfa28587859d1958b37d55da630218639..6d0211076a24d5a68d0a6a984781e174
 +  );
 +}
 diff --git a/packages/business-server/src/agent-run/notifyAgentRunCompleted.ts b/packages/business-server/src/agent-run/notifyAgentRunCompleted.ts
-index ef570beac5978856a853554d75bda23bcf1d60bf..5c0cb69c35f329dc5915eecaf89109b61177d8af 100644
+index ef570beac5..5c0cb69c35 100644
 --- a/packages/business-server/src/agent-run/notifyAgentRunCompleted.ts
 +++ b/packages/business-server/src/agent-run/notifyAgentRunCompleted.ts
-@@ -1,6 +1,10 @@
+@@ -0,0 +1,5 @@
 +import { notifyUser } from '../notification';
 +import { NOTIFICATION_CATEGORY, NOTIFICATION_TYPE } from '../notification/categories';
 +import { renderCopy } from '../notification/copy';
 +import { buildConversationPath, previewText } from '../notification/format';
 +
- export interface NotifyAgentRunCompletedParams {
-   agentId?: string;
+@@ -3 +7,0 @@ export interface NotifyAgentRunCompletedParams {
 -  duration?: number;
-   lastAssistantContent?: string;
-   operationId: string;
-   topicId?: string;
-@@ -8,6 +12,44 @@ export interface NotifyAgentRunCompletedParams {
-   workspaceId?: string;
- }
- 
+@@ -10,0 +15,22 @@ export interface NotifyAgentRunCompletedParams {
 +/**
 + * Recall the user when a run finishes while they may be away.
 + *
@@ -1675,7 +1594,7 @@ index ef570beac5978856a853554d75bda23bcf1d60bf..5c0cb69c35f329dc5915eecaf89109b6
 + * only trace was a debug log. Muting a scenario is the user's own switch in the
 + * notification settings, not the server's guess about elapsed time.
 + */
- export async function notifyAgentRunCompleted(
+@@ -12,2 +38,18 @@ export async function notifyAgentRunCompleted(
 -  _params: NotifyAgentRunCompletedParams,
 -): Promise<void> {}
 +  params: NotifyAgentRunCompletedParams,
@@ -1698,7 +1617,7 @@ index ef570beac5978856a853554d75bda23bcf1d60bf..5c0cb69c35f329dc5915eecaf89109b6
 +}
 diff --git a/packages/business-server/src/agent-run/notifyAgentRunFailed.ts b/packages/business-server/src/agent-run/notifyAgentRunFailed.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..f557dbbddc4d148c3937f152cfc1d007397d9e71
+index 0000000000..f557dbbddc
 --- /dev/null
 +++ b/packages/business-server/src/agent-run/notifyAgentRunFailed.ts
 @@ -0,0 +1,84 @@
@@ -1787,22 +1706,16 @@ index 0000000000000000000000000000000000000000..f557dbbddc4d148c3937f152cfc1d007
 +  });
 +}
 diff --git a/packages/business-server/src/image-generation/notifyImageCompleted.ts b/packages/business-server/src/image-generation/notifyImageCompleted.ts
-index 9ce4cc2b4504b56ad11beb8a10a5555933fe5b71..48668f95f19d81731dba8ac25d99031598c66ac4 100644
+index 9ce4cc2b45..48668f95f1 100644
 --- a/packages/business-server/src/image-generation/notifyImageCompleted.ts
 +++ b/packages/business-server/src/image-generation/notifyImageCompleted.ts
-@@ -1,3 +1,8 @@
+@@ -0,0 +1,5 @@
 +import { notifyUser } from '../notification';
 +import { NOTIFICATION_CATEGORY, NOTIFICATION_TYPE } from '../notification/categories';
 +import { renderCopy } from '../notification/copy';
 +import { clampText, previewText } from '../notification/format';
 +
- interface NotifyImageCompletedParams {
-   duration: number;
-   generationBatchId: string;
-@@ -9,4 +14,23 @@ interface NotifyImageCompletedParams {
-   workspaceId?: string;
- }
- 
+@@ -12 +17,20 @@ interface NotifyImageCompletedParams {
 -export async function notifyImageCompleted(_params: NotifyImageCompletedParams): Promise<void> {}
 +/**
 + * A generation batch finished. The prompt is the most useful preview, and it is
@@ -1826,7 +1739,7 @@ index 9ce4cc2b4504b56ad11beb8a10a5555933fe5b71..48668f95f19d81731dba8ac25d990315
 +}
 diff --git a/packages/business-server/src/notification/agentMeta.ts b/packages/business-server/src/notification/agentMeta.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..d90e78cf5cf0cd875cf9b1bd7ce42244062c3e16
+index 0000000000..d90e78cf5c
 --- /dev/null
 +++ b/packages/business-server/src/notification/agentMeta.ts
 @@ -0,0 +1,89 @@
@@ -1921,7 +1834,7 @@ index 0000000000000000000000000000000000000000..d90e78cf5cf0cd875cf9b1bd7ce42244
 +};
 diff --git a/packages/business-server/src/notification/bark.ts b/packages/business-server/src/notification/bark.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..91b99294a084aaabbf2b1da4f9afe76845b6a30b
+index 0000000000..91b99294a0
 --- /dev/null
 +++ b/packages/business-server/src/notification/bark.ts
 @@ -0,0 +1,144 @@
@@ -2071,7 +1984,7 @@ index 0000000000000000000000000000000000000000..91b99294a084aaabbf2b1da4f9afe768
 +};
 diff --git a/packages/business-server/src/notification/categories.ts b/packages/business-server/src/notification/categories.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..64686e2a42fd452cf834b4c99640cf1da4fca864
+index 0000000000..64686e2a42
 --- /dev/null
 +++ b/packages/business-server/src/notification/categories.ts
 @@ -0,0 +1,30 @@
@@ -2107,7 +2020,7 @@ index 0000000000000000000000000000000000000000..64686e2a42fd452cf834b4c99640cf1d
 +} as const;
 diff --git a/packages/business-server/src/notification/config.ts b/packages/business-server/src/notification/config.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..ff88ded2005245ee1289769a009dbff75f481b30
+index 0000000000..ff88ded200
 --- /dev/null
 +++ b/packages/business-server/src/notification/config.ts
 @@ -0,0 +1,28 @@
@@ -2141,7 +2054,7 @@ index 0000000000000000000000000000000000000000..ff88ded2005245ee1289769a009dbff7
 +};
 diff --git a/packages/business-server/src/notification/copy.ts b/packages/business-server/src/notification/copy.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..14cccfcbfc6c0433fa7d9279bab0acdf0bcd07da
+index 0000000000..14cccfcbfc
 --- /dev/null
 +++ b/packages/business-server/src/notification/copy.ts
 @@ -0,0 +1,20 @@
@@ -2167,7 +2080,7 @@ index 0000000000000000000000000000000000000000..14cccfcbfc6c0433fa7d9279bab0acdf
 +  });
 diff --git a/packages/business-server/src/notification/format.ts b/packages/business-server/src/notification/format.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..7316390d5befc5b1f7f86be1df136a10ebd52a4d
+index 0000000000..7316390d5b
 --- /dev/null
 +++ b/packages/business-server/src/notification/format.ts
 @@ -0,0 +1,95 @@
@@ -2268,7 +2181,7 @@ index 0000000000000000000000000000000000000000..7316390d5befc5b1f7f86be1df136a10
 +};
 diff --git a/packages/business-server/src/notification/index.ts b/packages/business-server/src/notification/index.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..16cda6150879c6217b773962cb6f1e58e74efd5d
+index 0000000000..16cda61508
 --- /dev/null
 +++ b/packages/business-server/src/notification/index.ts
 @@ -0,0 +1,146 @@
@@ -2420,7 +2333,7 @@ index 0000000000000000000000000000000000000000..16cda6150879c6217b773962cb6f1e58
 +};
 diff --git a/packages/business-server/src/notification/levels.ts b/packages/business-server/src/notification/levels.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..22ded8361521641845032ac6f494bc7723034ebb
+index 0000000000..22ded83615
 --- /dev/null
 +++ b/packages/business-server/src/notification/levels.ts
 @@ -0,0 +1,65 @@
@@ -2491,7 +2404,7 @@ index 0000000000000000000000000000000000000000..22ded8361521641845032ac6f494bc77
 +  PRESENTATION[`${category}/${type}`] ?? DEFAULT_PRESENTATION;
 diff --git a/packages/business-server/src/notification/settings.ts b/packages/business-server/src/notification/settings.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..5a439718f1dd48792c801b18ba713b6d73f7383f
+index 0000000000..5a439718f1
 --- /dev/null
 +++ b/packages/business-server/src/notification/settings.ts
 @@ -0,0 +1,50 @@
@@ -2546,22 +2459,16 @@ index 0000000000000000000000000000000000000000..5a439718f1dd48792c801b18ba713b6d
 +  return push?.items?.[params.category]?.[params.type] !== false;
 +};
 diff --git a/packages/business-server/src/task/notifyScheduledTaskResult.ts b/packages/business-server/src/task/notifyScheduledTaskResult.ts
-index 2ff1aa017d3a22c4f50464ab87694820fb7d7373..342e2e99f4a1a175e1b801a02744d520564dbd22 100644
+index 2ff1aa017d..342e2e99f4 100644
 --- a/packages/business-server/src/task/notifyScheduledTaskResult.ts
 +++ b/packages/business-server/src/task/notifyScheduledTaskResult.ts
-@@ -1,3 +1,8 @@
+@@ -0,0 +1,5 @@
 +import { notifyUser } from '../notification';
 +import { NOTIFICATION_CATEGORY, NOTIFICATION_TYPE } from '../notification/categories';
 +import { renderCopy } from '../notification/copy';
 +import { buildConversationPath, previewText } from '../notification/format';
 +
- export interface NotifyScheduledTaskCompletedParams {
-   /** Agent executing the task — lets inbox surfaces render its avatar. */
-   agentId?: string;
-@@ -33,10 +38,66 @@ export interface NotifyScheduledTaskFailedParams {
-   workspaceId?: string;
- }
- 
+@@ -35,0 +41,13 @@ export interface NotifyScheduledTaskFailedParams {
 +/** Task names are free text — cap them before they land in a push payload. */
 +const jobName = (params: { taskIdentifier: string; taskName?: string }) =>
 +  previewText(params.taskName, params.taskIdentifier, 80);
@@ -2575,7 +2482,7 @@ index 2ff1aa017d3a22c4f50464ab87694820fb7d7373..342e2e99f4a1a175e1b801a02744d520
 + * which `CompletionLifecycle` does not recall, so an operation never reaches
 + * both slots.
 + */
- export async function notifyScheduledTaskCompleted(
+@@ -37,2 +55,15 @@ export async function notifyScheduledTaskCompleted(
 -  _params: NotifyScheduledTaskCompletedParams,
 -): Promise<void> {}
 +  params: NotifyScheduledTaskCompletedParams,
@@ -2593,13 +2500,13 @@ index 2ff1aa017d3a22c4f50464ab87694820fb7d7373..342e2e99f4a1a175e1b801a02744d520
 +    workspaceId: params.workspaceId,
 +  });
 +}
- 
+@@ -39,0 +71,5 @@ export async function notifyScheduledTaskCompleted(
 +/**
 + * A scheduled tick failed. `taskLifecycle` fires this for heartbeat ticks too,
 + * but only once the failure fuse trips and pauses the task — an ordinary
 + * heartbeat failure is expected to be transient and stays silent.
 + */
- export async function notifyScheduledTaskFailed(
+@@ -41,2 +77,27 @@ export async function notifyScheduledTaskFailed(
 -  _params: NotifyScheduledTaskFailedParams,
 -): Promise<void> {}
 +  params: NotifyScheduledTaskFailedParams,
@@ -2630,22 +2537,16 @@ index 2ff1aa017d3a22c4f50464ab87694820fb7d7373..342e2e99f4a1a175e1b801a02744d520
 +  });
 +}
 diff --git a/packages/business-server/src/video-generation/notifyVideoCompleted.ts b/packages/business-server/src/video-generation/notifyVideoCompleted.ts
-index 55decfd1fcf035e208a9e43e6ba467c676019301..1332fb54570b3bbbb6e727e0fd7f3a47f150e0ef 100644
+index 55decfd1fc..1332fb5457 100644
 --- a/packages/business-server/src/video-generation/notifyVideoCompleted.ts
 +++ b/packages/business-server/src/video-generation/notifyVideoCompleted.ts
-@@ -1,3 +1,8 @@
+@@ -0,0 +1,5 @@
 +import { notifyUser } from '../notification';
 +import { NOTIFICATION_CATEGORY, NOTIFICATION_TYPE } from '../notification/categories';
 +import { renderCopy } from '../notification/copy';
 +import { clampText, previewText } from '../notification/format';
 +
- interface NotifyVideoCompletedParams {
-   generationBatchId: string;
-   model: string;
-@@ -8,4 +13,23 @@ interface NotifyVideoCompletedParams {
-   workspaceId?: string;
- }
- 
+@@ -11 +16,20 @@ interface NotifyVideoCompletedParams {
 -export async function notifyVideoCompleted(_params: NotifyVideoCompletedParams): Promise<void> {}
 +/**
 + * A generation batch finished. Video takes far longer than a chat turn, so this
@@ -2669,7 +2570,7 @@ index 55decfd1fcf035e208a9e43e6ba467c676019301..1332fb54570b3bbbb6e727e0fd7f3a47
 +}
 diff --git a/packages/env/src/notification.ts b/packages/env/src/notification.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..9ab7ec0c5e5832176f7ef3ae33e9b082babdfb2a
+index 0000000000..9ab7ec0c5e
 --- /dev/null
 +++ b/packages/env/src/notification.ts
 @@ -0,0 +1,49 @@
@@ -2723,29 +2624,15 @@ index 0000000000000000000000000000000000000000..9ab7ec0c5e5832176f7ef3ae33e9b082
 +  });
 +};
 diff --git a/packages/locales/src/default/notification.ts b/packages/locales/src/default/notification.ts
-index d8f44b299295b1495b1ab71c6328da987cf72cbf..75a02a262a02e81da803c0cadb34acf4edfbb24e 100644
+index 10de494b46..feb88da96d 100644
 --- a/packages/locales/src/default/notification.ts
 +++ b/packages/locales/src/default/notification.ts
-@@ -16,14 +16,8 @@ export default {
-   'agent_intervention_required_title': '{{agent}} needs your review',
-   'agent_run_completed': '{{preview}}',
-   'agent_run_completed_title': 'Agent task completed',
--  'agent_task_run_failed': 'Your task "{{jobName}}" failed. Open the task to see the full error.',
--  'agent_task_run_failed_heartbeat_timeout':
--    'Your task "{{jobName}}" stopped responding and was marked as failed. Open the task to run it again.',
--  'agent_task_run_failed_heartbeat_timeout_title': 'Task timed out',
--  'agent_task_run_failed_insufficient_budget':
--    'Your task "{{jobName}}" couldn\'t run because your account is out of credits. Top up or upgrade your plan to continue.',
--  'agent_task_run_failed_insufficient_budget_title': 'Task failed: insufficient credits',
--  'agent_task_run_failed_title': 'Task failed',
+@@ -18,0 +19,2 @@ export default {
 +  'agent_run_failed': 'The run failed: {{error}}',
 +  'agent_run_failed_title': 'Agent run failed',
-   'agent_transfer_reassigned':
-     'A workspace owner transferred your agent "{{agentTitle}}" to {{recipientLabel}}.',
-   'agent_transfer_reassigned_title': 'Agent reassigned',
 diff --git a/src/app/(backend)/webapi/agent/avatar/[id]/renderAgentAvatarPng.ts b/src/app/(backend)/webapi/agent/avatar/[id]/renderAgentAvatarPng.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..64ac24599ad40447174418b34b0dd8cb7ad5da67
+index 0000000000..64ac24599a
 --- /dev/null
 +++ b/src/app/(backend)/webapi/agent/avatar/[id]/renderAgentAvatarPng.ts
 @@ -0,0 +1,138 @@
@@ -2889,7 +2776,7 @@ index 0000000000000000000000000000000000000000..64ac24599ad40447174418b34b0dd8cb
 +};
 diff --git a/src/app/(backend)/webapi/agent/avatar/[id]/route.ts b/src/app/(backend)/webapi/agent/avatar/[id]/route.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..eca81ba66cd436f0f7b1f5dce18957630819832b
+index 0000000000..eca81ba66c
 --- /dev/null
 +++ b/src/app/(backend)/webapi/agent/avatar/[id]/route.ts
 @@ -0,0 +1,46 @@
