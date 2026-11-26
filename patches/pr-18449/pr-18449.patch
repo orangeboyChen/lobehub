@@ -234,54 +234,25 @@ index 7026a0ec6a481226eb852a852233b729cedeb39f..f4ebac421f3921a5a1d35ea1657f9bf2
    // revalidates in the background. Workspace topics are shared, so "mine" is
    // narrowed server-side (see `HOME_TOPIC_RECENTS_PARAMS`).
 diff --git a/src/features/Portal/GroupThread/Header/index.tsx b/src/features/Portal/GroupThread/Header/index.tsx
-index 244658bdba36486239220ab798aca324078609a7..c605502423b29b956f5f6fc5283bf0afa8629edb 100644
+index 244658bdba..4db6418834 100644
 --- a/src/features/Portal/GroupThread/Header/index.tsx
 +++ b/src/features/Portal/GroupThread/Header/index.tsx
-@@ -14,23 +14,36 @@ import { useGroupThreadClose } from './useClose';
- const Header = memo<{ onClose?: () => void }>(({ onClose }) => {
-   const { t } = useTranslation('common');
-   const activeThreadAgentId = useAgentGroupStore((s) => s.activeThreadAgentId);
+@@ -16,0 +17,3 @@ const Header = memo<{ onClose?: () => void }>(({ onClose }) => {
 +  const groupMeta = useAgentGroupStore((s) =>
 +    s.activeGroupId ? s.groupMap[s.activeGroupId] : undefined,
 +  );
- 
-   const agents = useSessionStore(sessionSelectors.currentGroupAgents);
-   const currentAgent = agents?.find((agent) => agent.id === activeThreadAgentId);
+@@ -19,0 +23 @@ const Header = memo<{ onClose?: () => void }>(({ onClose }) => {
 +  const isSupervisor = groupMeta?.supervisorAgentId === currentAgent?.id;
- 
-   const close = useGroupThreadClose(onClose);
- 
-   return (
--    <PortalHeader
--      title={
--        <Flexbox horizontal align={'center'} gap={8} style={{ minWidth: 0 }}>
--          <AgentAvatar
--            agentId={currentAgent?.id}
+@@ -29,2 +33 @@ const Header = memo<{ onClose?: () => void }>(({ onClose }) => {
 -            avatar={currentAgent?.avatar}
 -            background={currentAgent?.backgroundColor ?? undefined}
--            name={agentDisplayName(currentAgent, t('defaultSession'))}
-+    <NavHeader
-+      paddingBlock={6}
-+      paddingInline={8}
-+      showTogglePanelButton={false}
-+      left={
-+        <Flexbox horizontal align={'center'} gap={8}>
-+          <Avatar
-             shape={'square'}
-             size={20}
-+            avatar={
-+              isSupervisor
-+                ? groupMeta?.avatar || DEFAULT_AVATAR
-+                : currentAgent?.avatar || DEFAULT_AVATAR
-+            }
++            avatar={isSupervisor ? groupMeta?.avatar : currentAgent?.avatar}
+@@ -33,0 +37,5 @@ const Header = memo<{ onClose?: () => void }>(({ onClose }) => {
 +            background={
 +              isSupervisor
 +                ? (groupMeta?.backgroundColor ?? undefined)
 +                : (currentAgent?.backgroundColor ?? undefined)
 +            }
-           />
-           <Text ellipsis weight={600}>
-             {agentDisplayName(currentAgent, t('defaultSession'))}
 diff --git a/src/routes/(main)/group/profile/features/Header/index.tsx b/src/routes/(main)/group/profile/features/Header/index.tsx
 index 86493860255bc064eaaa62e222965f33b51fea68..e56819c6392b68ff6910d76331a97a2a739089bf 100644
 --- a/src/routes/(main)/group/profile/features/Header/index.tsx

@@ -1,15 +1,203 @@
+diff --git a/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts b/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
+index 8a333be3bc..e771ab0144 100644
+--- a/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
++++ b/src/store/chat/slices/agentRun/actions/transports/gateway/gateway.ts
+@@ -1518,0 +1519 @@ export class GatewayActionImpl {
++    let terminalTopicSettle: Promise<boolean> | undefined;
+@@ -1525,0 +1527,10 @@ export class GatewayActionImpl {
++      onRunTerminal: ({ succeeded }) => {
++        if (!result.topicId || continuesGroupMember) return;
++        terminalTopicSettle = this.settleTopicOperation({
++          agentShareId,
++          context: resolvedMessageContext,
++          operationId: result.operationId,
++          succeeded,
++          topicId: result.topicId,
++        });
++      },
+@@ -1572 +1583 @@ export class GatewayActionImpl {
+-      onSessionComplete: ({ authFailed, completion, succeeded, terminalReceived }) => {
++      onSessionComplete: async ({ authFailed, completion, succeeded, terminalReceived }) => {
+@@ -1602 +1613,5 @@ export class GatewayActionImpl {
+-        if (result.topicId && !continuesGroupMember) {
++        if (
++          result.topicId &&
++          !continuesGroupMember &&
++          !(terminalTopicSettle && (await terminalTopicSettle))
++        ) {
+@@ -1906,0 +1922 @@ export class GatewayActionImpl {
++    let terminalTopicSettle: Promise<boolean> | undefined;
+@@ -1913,0 +1930,9 @@ export class GatewayActionImpl {
++      onRunTerminal: ({ succeeded }) => {
++        terminalTopicSettle = this.settleTopicOperation({
++          agentShareId,
++          context,
++          operationId,
++          succeeded,
++          topicId,
++        });
++      },
+@@ -1950 +1975 @@ export class GatewayActionImpl {
+-      onSessionComplete: ({ authFailed, completion, succeeded, terminalReceived }) => {
++      onSessionComplete: async ({ authFailed, completion, succeeded, terminalReceived }) => {
+@@ -1962,0 +1988 @@ export class GatewayActionImpl {
++        if (terminalTopicSettle && (await terminalTopicSettle)) return;
+@@ -2486,0 +2513,34 @@ export class GatewayActionImpl {
++  /** Settle a terminal event before the Gateway session disconnects. */
++  private settleTopicOperation = (params: {
++    agentShareId?: string;
++    context: ConversationContext;
++    operationId: string;
++    succeeded: boolean;
++    topicId: string;
++  }): Promise<boolean> => {
++    const { agentShareId, context, operationId, succeeded, topicId } = params;
++    const viewing = this.#get().activeTopicId === topicId;
++    const status = viewing || !succeeded ? 'active' : 'unread';
++    const settle = agentShareId
++      ? undefined
++      : topicService.settleRunningOperation(topicId, operationId, status);
++    const settledWithoutMarker = this.clearLocalRunningOperation({
++      agentId: context.agentId,
++      groupId: context.groupId,
++      operationId,
++      status: viewing || !succeeded ? 'active' : undefined,
++      topicId,
++    });
++    this.#restoreRunningOnSettleConflict(settle, settledWithoutMarker, {
++      agentId: context.agentId,
++      groupId: context.groupId,
++      topicId,
++    });
++    return settle
++      ? settle.then(
++          () => true,
++          () => false,
++        )
++      : Promise.resolve(true);
++  };
++
+diff --git a/src/store/chat/slices/agentRun/actions/__tests__/gateway.test.ts b/src/store/chat/slices/agentRun/actions/__tests__/gateway.test.ts
+index 15c5c99c32..6c67462be9 100644
+--- a/src/store/chat/slices/agentRun/actions/__tests__/gateway.test.ts
++++ b/src/store/chat/slices/agentRun/actions/__tests__/gateway.test.ts
+@@ -1022,0 +1023,62 @@ describe('GatewayActionImpl', () => {
++    it('retries topic settlement on close when the terminal request fails', async () => {
++      const { action, connectToGateway, state } = createExecuteTestAction();
++      state.activeTopicId = 'topic-1';
++      state.completeOperation = vi.fn();
++      state.drainQueuedMessages = vi.fn(() => []);
++      state.internal_toggleToolCallingStreaming = vi.fn();
++      state.markTopicUnread = vi.fn();
++      state.messagesMap = {};
++      state.operations = {};
++      vi.mocked(aiAgentService.execAgentTask).mockResolvedValue({
++        agentId: 'agent-1',
++        assistantMessageId: 'assistant-1',
++        autoStarted: true,
++        createdAt: new Date().toISOString(),
++        message: 'ok',
++        operationId: 'server-op-1',
++        status: 'created',
++        success: true,
++        timestamp: new Date().toISOString(),
++        token: 'token',
++        topicId: 'topic-1',
++        userMessageId: 'user-1',
++      });
++      let rejectEarlySettle!: (error: Error) => void;
++      const settle = vi
++        .mocked(topicService.settleRunningOperation)
++        .mockReturnValueOnce(
++          new Promise((_, reject) => {
++            rejectEarlySettle = reject;
++          }),
++        )
++        .mockResolvedValueOnce({ status: 'corrected' } as never);
++      vi.spyOn(console, 'error').mockImplementation(() => {});
++
++      await action.executeGatewayAgent({
++        context: { agentId: 'agent-1', scope: 'main', topicId: 'topic-1' },
++        message: 'run it',
++      });
++      const { onEvent, onSessionComplete } = connectToGateway.mock.calls[0][0];
++      onEvent({
++        data: { reason: 'completed' },
++        id: 'terminal-1',
++        operationId: 'server-op-1',
++        stepIndex: 0,
++        timestamp: Date.now(),
++        type: 'agent_runtime_end',
++      });
++      await vi.waitFor(() => expect(settle).toHaveBeenCalledTimes(1));
++
++      const closed = onSessionComplete({
++        authFailed: false,
++        succeeded: true,
++        terminalReceived: true,
++      });
++      expect(settle).toHaveBeenCalledTimes(1);
++      rejectEarlySettle(new Error('temporary failure'));
++      await closed;
++
++      expect(settle).toHaveBeenCalledTimes(2);
++      expect(settle).toHaveBeenLastCalledWith('topic-1', 'server-op-1', 'active');
++    });
++
+diff --git a/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler/index.terminal.test.ts b/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler/index.terminal.test.ts
+index 63efb05bbb..af7f54bb8e 100644
+--- a/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler/index.terminal.test.ts
++++ b/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler/index.terminal.test.ts
+@@ -73,0 +74,20 @@ describe('createGatewayEventHandler — terminal and error events', () => {
++  it('settles a terminal topic before the Gateway session disconnects', async () => {
++    const onRunTerminal = vi.fn();
++    const handler = createHandler(createMockStore(), { onRunTerminal });
++
++    handler(makeEvent('agent_runtime_end', { reason: 'completed' }));
++    await flush();
++
++    expect(onRunTerminal).toHaveBeenCalledWith({ succeeded: true });
++  });
++
++  it('settles a failed runtime event before the Gateway session disconnects', async () => {
++    const onRunTerminal = vi.fn();
++    const handler = createHandler(createMockStore(), { onRunTerminal });
++
++    handler(makeEvent('error', { message: 'run failed' }));
++    await flush();
++
++    expect(onRunTerminal).toHaveBeenCalledWith({ succeeded: false });
++  });
++
 diff --git a/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler/index.ts b/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler/index.ts
-index 8693bf817901bf998791a22389a8ae3dc7dfbafe..5df5d4b0ca1f9b08ce981ec30cc16890b1a2fd79 100644
+index 8693bf8179..f013add9cc 100644
 --- a/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler/index.ts
 +++ b/src/store/chat/slices/agentRun/actions/transports/gateway/gatewayEventHandler/index.ts
-@@ -1258,7 +1258,9 @@ export const createGatewayEventHandler = (
-               .catch(console.error);
-           }
- 
+@@ -301,0 +302,2 @@ export const createGatewayEventHandler = (
++    /** Settle the topic row when the runtime ends, even if the session remains connected. */
++    onRunTerminal?: (event: { succeeded: boolean }) => void;
+@@ -323 +325 @@ export const createGatewayEventHandler = (
+-  const { context, operationId, runLifecycle } = params;
++  const { context, onRunTerminal, operationId, runLifecycle } = params;
+@@ -1261 +1263,3 @@ export const createGatewayEventHandler = (
 -          // Terminal run lifecycle. `isCompletedRuntimeEnd` is the clean-vs-not
 +          // Terminal run lifecycle. This completion also synchronizes the desktop topic row's
 +          // terminal status; do not defer it until the gateway session disconnects.
 +          // `isCompletedRuntimeEnd` is the clean-vs-not
-           // gate (a mid-stream cancel 'interrupted' or deferred-tool park
-           // 'waiting_for_async_tool' is NOT a clean completion):
-           //   • completed → completeRun completes the op, marks the topic unread,
+@@ -1276,0 +1281 @@ export const createGatewayEventHandler = (
++            onRunTerminal?.({ succeeded: status === 'completed' });
+@@ -1374,0 +1380 @@ export const createGatewayEventHandler = (
++            onRunTerminal?.({ succeeded: false });
+diff --git a/src/store/chat/slices/agentRun/actions/transports/gateway/testUtils.ts b/src/store/chat/slices/agentRun/actions/transports/gateway/testUtils.ts
+index d746c2edb4..a590f584f5 100644
+--- a/src/store/chat/slices/agentRun/actions/transports/gateway/testUtils.ts
++++ b/src/store/chat/slices/agentRun/actions/transports/gateway/testUtils.ts
+@@ -45 +45,5 @@ export function createHandler(
+-  overrides?: { assistantMessageId?: string; gatewayOperationId?: string },
++  overrides?: {
++    assistantMessageId?: string;
++    gatewayOperationId?: string;
++    onRunTerminal?: (event: { succeeded: boolean }) => void;
++  },
+@@ -54,0 +59 @@ export function createHandler(
++    onRunTerminal: overrides?.onRunTerminal,
